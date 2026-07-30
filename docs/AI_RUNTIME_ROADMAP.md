@@ -1988,8 +1988,8 @@ evidence.
 
 Status: **Phases A-D through Phase E2b are integrated experimental
 host-process lifecycle evidence; the Phase F1 concurrent-transport production
-path and deterministic native-loopback correctness are retained, while its
-real-process campaign remains pending**.
+path and deterministic same-process plus native POSIX child-process loopback
+correctness are retained**.
 
 `ManagedLifecycleV1` adds one nonzero process generation and exact accepted,
 completed, failed, and active connection counts around the unchanged serial
@@ -2123,7 +2123,8 @@ retry. The retained client still performs no automatic retry.
 
 Phase F1 adds the production-path concurrent transport entry points
 `serveManagedConcurrentListenerV1`,
-`serveManagedConcurrentListenerWithObserverV1`, and
+`serveManagedConcurrentListenerWithObserverV1`,
+`serveManagedConcurrentListenerWithControlsV1`, and
 `requestManagedConcurrentDrainAndWakeV1` around
 `ManagedConcurrentLifecycleV1`. `ManagedConcurrentConfigV1` admits a fixed
 `1..16` workers and a fixed `1..64` FIFO of already accepted connections
@@ -2211,9 +2212,23 @@ cannot prove and restore the caller's original `FIONBIO` mode. Native Windows
 serving therefore remains pending and unproven. Cross-compilation cannot
 establish those runtime properties.
 
-The retained process fixture below still stops at Phase E2b. It does not
-exercise the Phase F1 worker/FIFO/watchdog path and must not be cited as its
-real-process or load evidence.
+The retained process fixture below separately exercises the Phase F1
+worker/FIFO/watchdog path in native POSIX child processes over real loopback
+sockets. Its four profiles cover queued receive timeout while active terminal
+work completes plus a healthy successor; queued full-request timeout plus a
+healthy successor; simultaneous two-caller drain over one active receive and
+one queued socket; and stale-owner rejection after exact slot reuse with
+fail-closed queued/running cleanup. The receive-timeout profile closes with
+accepted/completed/failed `3/2/1` and two completed service records. The
+full-request-timeout profile closes at `3/1/2` with one completed and one
+cancelled service record. The stale-owner profile deliberately corrupts only
+retained owner metadata as a white-box fault injection; exact
+generation-mismatch rejection and cleanup use the production drain and failure
+paths. Every profile checks aggregate event/cause conservation, unique
+contiguous event ordinals, thread joins, and final zero connection, Service,
+Scheduler, and Bank ownership. The campaign uses real child processes and TCP
+loopback over a generated synthetic tiny-model fixture; it is not load evidence
+and establishes no native Windows concurrent-serving behavior.
 
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
@@ -2295,7 +2310,7 @@ serving support there. A unary-kernel implementation change selects the
 service, HTTP, and process roots. A shared server adapter/API change selects
 the HTTP and process roots without the service-only root. A
 process-fixture-only change selects the process root alone. All selected host
-roots share one Zig invocation. Phases B-E2b reuse the same dual-mode
+roots share one Zig invocation. Phases B-F1 reuse the same dual-mode
 executable and existing targets; they add no compile root. Ordinary pull
 requests and `main` pushes run only the bounded Debug `affected-fast` host
 plan. Complete affected, exhaustive, retained-target, and hardware
@@ -2316,15 +2331,15 @@ FIN abandonment, preempt an in-flight model drive or kernel call, prove peer
 receipt, or turn the logical Scheduler deadline into wall time. The retained
 A-D through E2b process slice adds no durable or process-death recovery,
 streaming, early EOS, authentication, authorization, TLS, quota, GPU
-execution, load evidence, or performance claim, and it does not exercise the
-Phase F1 concurrent entry points. The Phase F1 implementation supplies the
-bounded queue and passive overload policy, and the separate HTTP root now
-retains deterministic native-loopback correctness; real-process promotion
-evidence remains open. Retained-target compile closure is not native serving
-proof on Windows or FreeBSD; native reset,
+execution, load evidence, or performance claim. The Phase F1 production path,
+separate same-process HTTP gate, and native POSIX child-process profiles now
+supply bounded queue/passive overload correctness, deterministic loopback
+coverage, and fail-closed ownership cleanup. They add no concurrent model
+execution, load, latency, or throughput result. Retained-target compile closure
+is not native serving proof on Windows or FreeBSD; native reset,
 response-write, deadline, queue, watchdog, and drain behavior on those systems
-remains unproven. The next serving order is Phase F1 real-process validation,
-followed by separate native-load evidence using HTTP first-byte and
+remains unproven. The next serving order is separate native-load evidence using
+HTTP first-byte and
 terminal-response latency for this non-streaming unary profile.
 Orderly-FIN abandonment remains a separate open boundary. The current evidence
 does not meet the full serving promotion gate.
@@ -2415,8 +2430,8 @@ state, crash recovery, a bounded concurrent queue, load behavior, or the full
 serving lifecycle. The separate Phase F1 runtime implementation now supplies
 that bounded transport queue, fixed worker pool, shared watchdog, passive
 accept backpressure, joined drain, and retained deterministic native-loopback
-correctness, but still adds no Phase F1 real-process, concurrent model
-execution, or load result. Production artifacts,
+correctness, including its native POSIX child-process profiles, but still adds
+no concurrent model execution or load result. Production artifacts,
 remote delivery,
 broader tokenizers/models, GPU package execution, and native multi-OS runtime
 requirements remain open. The combined

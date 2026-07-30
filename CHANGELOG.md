@@ -112,9 +112,11 @@ before the first stable release.
   logical Scheduler deadline.
 - R1k-b8 Phase F1 now has a production-path concurrent transport
   implementation behind `ManagedConcurrentLifecycleV1`,
-  `serveManagedConcurrentListenerV1`, and
-  `requestManagedConcurrentDrainAndWakeV1`, with deterministic native-loopback
-  correctness retained. `ManagedConcurrentConfigV1` fixes `1..16` workers and
+  `serveManagedConcurrentListenerV1`,
+  `serveManagedConcurrentListenerWithControlsV1`, and
+  `requestManagedConcurrentDrainAndWakeV1`, with deterministic same-process
+  and native POSIX child-process loopback correctness retained.
+  `ManagedConcurrentConfigV1` fixes `1..16` workers and
   a `1..64` FIFO of already accepted connections, for at most 80
   generation-fenced registry slots. One lifecycle mutex linearizes the FIFO,
   slot phases, snapshots, and exact counters, while one shared watchdog applies
@@ -149,9 +151,22 @@ before the first stable release.
   four deterministic native-loopback scenarios: sibling liveness beside a
   partial request, one-worker/one-pending FIFO pause/resume, exact queued
   accept-origin full-request timeout, and repeated drain over one running plus
-  one queued socket. A Phase F1 real-process campaign and separate native-load
-  evidence remain follow-up work. Phase F1 concurrent serving is explicitly
-  unsupported on Windows today: the entrypoint returns
+  one queued socket. The existing `unary-server-process-test` root now adds
+  four Phase F1 native POSIX child profiles over real loopback sockets. Queued
+  receive timeout closes with accepted/completed/failed `3/2/1`, including the
+  active terminal completion and healthy successor, with two completed service
+  records. Queued full-request timeout closes at `3/1/2`, including the
+  healthy successor, with one completed and one cancelled service record. Two
+  other profiles prove simultaneous two-caller drain and exact slot-reuse
+  stale-owner rejection with fail-closed queued/running cleanup. The latter
+  deliberately corrupts only retained owner metadata as a white-box fault
+  injection; rejection and cleanup use production paths. All four require
+  aggregate event/cause conservation, unique contiguous event ordinals, thread
+  joins, and zero connection, Service, Scheduler, and Bank ownership. The
+  campaign uses real child processes and TCP loopback over a generated
+  synthetic tiny-model fixture; separate native-load evidence remains
+  follow-up work. Phase F1 concurrent
+  serving is explicitly unsupported on Windows today: the entrypoint returns
   `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
   cannot prove and restore the caller's original `FIONBIO` mode. Native Windows
   serving therefore remains pending and unproven.

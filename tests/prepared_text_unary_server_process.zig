@@ -34,6 +34,8 @@ const drain_response_writing_command =
     "drain-response-writing\n";
 const complete_response_writing_command =
     "complete-response-writing\n";
+const concurrent_release_command = "concurrent-release\n";
+const concurrent_fault_command = "concurrent-stale-owner-failure\n";
 const prompt = "http-probe-6";
 const generation_a: u64 = 0x4753_5052_0000_0101;
 const generation_partial_head: u64 = 0x4753_5052_0000_0102;
@@ -60,7 +62,16 @@ const generation_full_request_timeout_response_ready: u64 =
 const generation_full_request_timeout_response_writing: u64 =
     0x4753_5052_0000_010f;
 const generation_b: u64 = 0x4753_5052_0000_0110;
-const frame_max_bytes = 512;
+const generation_concurrent_queued_receive_timeout: u64 =
+    0x4753_5052_0000_0111;
+const generation_concurrent_queued_full_request_timeout: u64 =
+    0x4753_5052_0000_0112;
+const generation_concurrent_drain: u64 =
+    0x4753_5052_0000_0113;
+const generation_concurrent_stale_owner_failure: u64 =
+    0x4753_5052_0000_0114;
+const frame_max_bytes = 1024;
+const concurrent_event_capacity = 64;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
 const retained_receive_timeout_ns =
@@ -92,6 +103,10 @@ const WorkerProfile = enum {
     full_request_timeout_request_admitted,
     full_request_timeout_response_ready,
     full_request_timeout_response_writing,
+    concurrent_queued_receive_timeout,
+    concurrent_queued_full_request_timeout,
+    concurrent_drain,
+    concurrent_stale_owner_failure,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -109,6 +124,10 @@ const WorkerProfile = enum {
             .full_request_timeout_request_admitted => "full-request-timeout-request-admitted",
             .full_request_timeout_response_ready => "full-request-timeout-response-ready",
             .full_request_timeout_response_writing => "full-request-timeout-response-writing",
+            .concurrent_queued_receive_timeout => "concurrent-queued-receive-timeout",
+            .concurrent_queued_full_request_timeout => "concurrent-queued-full-request-timeout",
+            .concurrent_drain => "concurrent-drain",
+            .concurrent_stale_owner_failure => "concurrent-stale-owner-failure",
         };
     }
 
@@ -136,6 +155,10 @@ const WorkerProfile = enum {
             .full_request_timeout_request_admitted,
             .full_request_timeout_response_ready,
             .full_request_timeout_response_writing,
+            .concurrent_queued_receive_timeout,
+            .concurrent_queued_full_request_timeout,
+            .concurrent_drain,
+            .concurrent_stale_owner_failure,
             => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
@@ -157,7 +180,11 @@ const WorkerProfile = enum {
             .full_request_timeout_request_admitted,
             .full_request_timeout_response_ready,
             .full_request_timeout_response_writing,
+            .concurrent_queued_full_request_timeout,
+            .concurrent_drain,
+            .concurrent_stale_owner_failure,
             => 0,
+            .concurrent_queued_receive_timeout => retained_receive_timeout_ns,
         };
     }
 
@@ -173,6 +200,8 @@ const WorkerProfile = enum {
     }
 
     fn fullRequestTimeoutNs(self: WorkerProfile) u64 {
+        if (self == .concurrent_queued_full_request_timeout)
+            return retained_full_request_timeout_ns;
         if (self.isFullRequestTimeout())
             return retained_full_request_timeout_ns;
         if (self == .complete_response_writing)
@@ -222,6 +251,17 @@ const WorkerProfile = enum {
         return self == .peer_reset_work or
             self.usesResponseBarrier() or
             self.isFullRequestTimeout();
+    }
+
+    fn isConcurrent(self: WorkerProfile) bool {
+        return switch (self) {
+            .concurrent_queued_receive_timeout,
+            .concurrent_queued_full_request_timeout,
+            .concurrent_drain,
+            .concurrent_stale_owner_failure,
+            => true,
+            else => false,
+        };
     }
 };
 
@@ -474,9 +514,171 @@ const ServeContext = struct {
     }
 };
 
+const ConcurrentServeContext = struct {
+    listener: *std.net.Server,
+    runtime: *http_server.RuntimeV1,
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+    config: server_api.ServerConfig,
+    event_observer: ?server_api.ManagedConcurrentObserverV1 = null,
+    work_observer: ?http_server.RequestWorkControlV1 = null,
+    thread_error: ?anyerror = null,
+
+    fn run(self: *ConcurrentServeContext) void {
+        server_api.serveManagedConcurrentListenerWithControlsV1(
+            self.listener,
+            self.config,
+            self.runtime,
+            self.lifecycle,
+            .{
+                .event_observer = self.event_observer,
+                .work_control = self.work_observer,
+            },
+        ) catch |err| {
+            self.thread_error = err;
+        };
+    }
+};
+
+const ConcurrentEventLog = struct {
+    mutex: std.Thread.Mutex = .{},
+    changed: std.Thread.Condition = .{},
+    events: [concurrent_event_capacity]server_api.ManagedConcurrentEventV1 =
+        undefined,
+    event_count: usize = 0,
+    overflowed: bool = false,
+
+    fn observer(
+        self: *ConcurrentEventLog,
+    ) server_api.ManagedConcurrentObserverV1 {
+        return .{
+            .context = self,
+            .event_fn = eventOpaque,
+        };
+    }
+
+    fn eventOpaque(
+        context: *anyopaque,
+        event: server_api.ManagedConcurrentEventV1,
+    ) void {
+        const self: *ConcurrentEventLog =
+            @ptrCast(@alignCast(context));
+        self.mutex.lock();
+        if (self.event_count == self.events.len) {
+            self.overflowed = true;
+        } else {
+            self.events[self.event_count] = event;
+            self.event_count += 1;
+        }
+        self.changed.broadcast();
+        self.mutex.unlock();
+    }
+
+    fn waitForKind(
+        self: *ConcurrentEventLog,
+        kind: server_api.ManagedConcurrentEventKindV1,
+        occurrence: usize,
+    ) !server_api.ManagedConcurrentEventV1 {
+        if (occurrence == 0)
+            return error.InvalidConcurrentEventOccurrence;
+        var timer = try std.time.Timer.start();
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        while (true) {
+            if (self.overflowed)
+                return error.ConcurrentEventLogOverflow;
+            var seen: usize = 0;
+            for (self.events[0..self.event_count]) |event| {
+                if (event.kind != kind) continue;
+                seen += 1;
+                if (seen == occurrence) return event;
+            }
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= worker_timeout_ns)
+                return error.ConcurrentEventTimedOut;
+            self.changed.timedWait(
+                &self.mutex,
+                worker_timeout_ns - elapsed_ns,
+            ) catch return error.ConcurrentEventTimedOut;
+        }
+    }
+
+    fn countKind(
+        self: *ConcurrentEventLog,
+        kind: server_api.ManagedConcurrentEventKindV1,
+    ) !usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.ConcurrentEventLogOverflow;
+        var count: usize = 0;
+        for (self.events[0..self.event_count]) |event| {
+            if (event.kind == kind) count += 1;
+        }
+        return count;
+    }
+
+    fn totalCount(self: *ConcurrentEventLog) !usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.ConcurrentEventLogOverflow;
+        return self.event_count;
+    }
+
+    fn validateOrdinals(self: *ConcurrentEventLog) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.ConcurrentEventLogOverflow;
+        var seen = [_]bool{false} ** concurrent_event_capacity;
+        for (self.events[0..self.event_count]) |event| {
+            if (event.ordinal == 0 or
+                event.ordinal > self.event_count)
+            {
+                return error.InvalidConcurrentEventOrdinal;
+            }
+            const index: usize =
+                @intCast(event.ordinal - 1);
+            if (seen[index])
+                return error.DuplicateConcurrentEventOrdinal;
+            seen[index] = true;
+        }
+        for (seen[0..self.event_count]) |present| {
+            if (!present)
+                return error.MissingConcurrentEventOrdinal;
+        }
+    }
+};
+
+const ConcurrentDrainRequest = struct {
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+    runtime: *http_server.RuntimeV1,
+    listen_address: std.net.Address,
+    start: *std.Thread.ResetEvent,
+    ready: std.Thread.ResetEvent = .{},
+    entered: std.Thread.ResetEvent = .{},
+    done: std.Thread.ResetEvent = .{},
+    thread_error: ?anyerror = null,
+
+    fn run(self: *ConcurrentDrainRequest) void {
+        self.ready.set();
+        self.start.wait();
+        self.entered.set();
+        server_api.requestManagedConcurrentDrainAndWakeV1(
+            self.lifecycle,
+            self.runtime,
+            self.listen_address,
+        ) catch |err| {
+            self.thread_error = err;
+        };
+        self.done.set();
+    }
+};
+
 const WorkAdmissionBarrierV1 = struct {
     reached: std.Thread.ResetEvent = .{},
     release: std.Thread.ResetEvent = .{},
+    passthrough_after_first: bool = false,
     identity: ?http_server.WorkIdentityV1 = null,
     retired: bool = false,
     retire_identity_mismatch: bool = false,
@@ -492,8 +694,11 @@ const WorkAdmissionBarrierV1 = struct {
     ) anyerror!http_server.WorkDispositionV1 {
         const self: *WorkAdmissionBarrierV1 =
             @ptrCast(@alignCast(context));
-        if (self.identity != null)
+        if (self.identity != null) {
+            if (self.passthrough_after_first)
+                return .proceed;
             return error.DuplicateWorkAdmission;
+        }
         self.identity = identity;
         self.reached.set();
         self.release.wait();
@@ -511,6 +716,7 @@ const WorkAdmissionBarrierV1 = struct {
             return;
         };
         if (!std.meta.eql(admitted_identity, identity)) {
+            if (self.passthrough_after_first) return;
             self.retire_identity_mismatch = true;
             return;
         }
@@ -530,9 +736,13 @@ const WorkAdmissionBarrierV1 = struct {
             self.checkpoint_result_reached.set();
             return;
         };
-        if (!std.meta.eql(admitted_identity, identity) or
-            self.cancellation != null)
-        {
+        if (!std.meta.eql(admitted_identity, identity)) {
+            if (self.passthrough_after_first) return;
+            self.cancellation_identity_mismatch = true;
+            self.checkpoint_result_reached.set();
+            return;
+        }
+        if (self.cancellation != null) {
             self.cancellation_identity_mismatch = true;
             self.checkpoint_result_reached.set();
             return;
@@ -681,9 +891,6 @@ fn runWorker(
     generation: u64,
     profile: WorkerProfile,
 ) !void {
-    var lifecycle =
-        try server_api.ManagedLifecycleV1.initV1(generation);
-
     const package_bytes = try engine.bounded_file_input.readAllocV1(
         allocator,
         package_path,
@@ -743,7 +950,17 @@ fn runWorker(
         license_byte_count,
         license_sha256,
     );
+    if (profile.isConcurrent()) {
+        return runConcurrentWorker(
+            allocator,
+            binding,
+            generation,
+            profile,
+        );
+    }
 
+    var lifecycle =
+        try server_api.ManagedLifecycleV1.initV1(generation);
     var harness: ServiceHarness(1, 4) = .{};
     try harness.init(
         allocator,
@@ -1068,6 +1285,747 @@ fn runWorker(
     );
 }
 
+fn runConcurrentWorker(
+    allocator: std.mem.Allocator,
+    binding: unary.ModelBindingV1,
+    generation: u64,
+    profile: WorkerProfile,
+) !void {
+    if (!profile.isConcurrent())
+        return error.InvalidConcurrentWorkerProfile;
+
+    var harness: ServiceHarness(1, 4) = .{};
+    try harness.init(
+        allocator,
+        binding,
+        generation,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = harness.service.closeV1() catch {};
+    };
+    var runtime = try http_server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            generation,
+            .{
+                .worker_count = 1,
+                .pending_connection_capacity = 1,
+            },
+        );
+    try lifecycle.markReadyV1();
+
+    const bind_address =
+        try std.net.Address.parseIp(loopback_host, 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+    const listen_address = listener.listen_address;
+
+    var event_log: ConcurrentEventLog = .{};
+    var work_barrier: WorkAdmissionBarrierV1 = .{
+        .passthrough_after_first = profile == .concurrent_queued_receive_timeout or
+            profile == .concurrent_queued_full_request_timeout,
+    };
+    var serve_context: ConcurrentServeContext = .{
+        .listener = &listener,
+        .runtime = &runtime,
+        .lifecycle = &lifecycle,
+        .config = .{
+            .receive_timeout_ns = profile.receiveTimeoutNs(),
+            .full_request_timeout_ns = profile.fullRequestTimeoutNs(),
+        },
+        .event_observer = event_log.observer(),
+        .work_observer = if (profile == .concurrent_stale_owner_failure or
+            profile == .concurrent_queued_receive_timeout or
+            profile == .concurrent_queued_full_request_timeout)
+            work_barrier.control(false)
+        else
+            null,
+    };
+    const serve_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentServeContext.run,
+        .{&serve_context},
+    );
+    var joined = false;
+    defer if (!joined) {
+        work_barrier.release.set();
+        server_api.requestManagedConcurrentDrainAndWakeV1(
+            &lifecycle,
+            &runtime,
+            listen_address,
+        ) catch {};
+        serve_thread.join();
+    };
+
+    try emitReady(
+        generation,
+        listen_address.getPort(),
+        &runtime.model_id,
+    );
+
+    var expected_thread_error: ?anyerror = null;
+    switch (profile) {
+        .concurrent_queued_receive_timeout,
+        .concurrent_queued_full_request_timeout,
+        => try runConcurrentQueuedTimeoutWorker(
+            profile,
+            &lifecycle,
+            &runtime,
+            listen_address,
+            &event_log,
+            &work_barrier,
+        ),
+        .concurrent_drain => try runConcurrentDrainWorker(
+            &lifecycle,
+            &runtime,
+            listen_address,
+            &event_log,
+        ),
+        .concurrent_stale_owner_failure => {
+            try runConcurrentStaleOwnerFailureWorker(
+                &lifecycle,
+                &runtime,
+                listen_address,
+                &event_log,
+                &work_barrier,
+            );
+            expected_thread_error =
+                error.ConnectionSlotGenerationMismatch;
+        },
+        else => unreachable,
+    }
+
+    work_barrier.release.set();
+    serve_thread.join();
+    joined = true;
+    if (expected_thread_error) |expected| {
+        const actual = serve_context.thread_error orelse
+            return error.MissingConcurrentServeFailure;
+        if (actual != expected)
+            return error.UnexpectedConcurrentServeFailure;
+    } else if (serve_context.thread_error) |err| {
+        return err;
+    }
+
+    const stopped = lifecycle.snapshotV1();
+    try validateConcurrentFinalSnapshot(
+        profile,
+        stopped,
+        &event_log,
+    );
+    if (profile == .concurrent_stale_owner_failure or
+        profile == .concurrent_queued_receive_timeout or
+        profile == .concurrent_queued_full_request_timeout)
+    {
+        if (!work_barrier.retired or
+            work_barrier.retire_identity_mismatch or
+            work_barrier.cancellation_identity_mismatch)
+        {
+            return error.InvalidConcurrentWorkRetirement;
+        }
+        if (profile == .concurrent_queued_full_request_timeout) {
+            const cancellation = work_barrier.cancellation orelse
+                return error.MissingConcurrentTimeoutCancellation;
+            if (cancellation.requested_cause !=
+                .full_request_timeout or
+                cancellation.winner != .full_request_timeout or
+                cancellation.outcome != .cancelled or
+                !cancellation.cancellation_was_new)
+            {
+                return error.InvalidConcurrentTimeoutCancellation;
+            }
+        } else if (work_barrier.cancellation != null) {
+            return error.UnexpectedConcurrentCancellation;
+        }
+    }
+
+    const service_snapshot = try harness.service.snapshotV1();
+    const scheduler_snapshot = service_snapshot.scheduler orelse
+        return error.MissingConcurrentSchedulerSnapshot;
+    const bank_snapshot = service_snapshot.bank orelse
+        return error.MissingConcurrentBankSnapshot;
+    const scheduler_zero =
+        scheduler_snapshot.active == 0 and
+        scheduler_snapshot.finished == 0 and
+        scheduler_snapshot.used.isZero() and
+        !scheduler_snapshot.poisoned and
+        !scheduler_snapshot.closed;
+    const bank_zero =
+        bank_snapshot.used.isZero() and
+        bank_snapshot.active_reservations == 0 and
+        bank_snapshot.committed_receipts == 0;
+    if (service_snapshot.active_requests != 0 or
+        service_snapshot.recovery_required != 0 or
+        !scheduler_zero or
+        !bank_zero)
+    {
+        return error.InvalidConcurrentServiceOwnership;
+    }
+    if (profile == .concurrent_stale_owner_failure) {
+        if (service_snapshot.terminal_records != 1 or
+            service_snapshot.completed_records != 0 or
+            service_snapshot.cancelled_records != 1 or
+            service_snapshot.failed_records != 0)
+        {
+            return error.InvalidConcurrentFailureServiceReceipt;
+        }
+    } else if (profile == .concurrent_queued_receive_timeout) {
+        if (service_snapshot.terminal_records != 2 or
+            service_snapshot.completed_records != 2 or
+            service_snapshot.cancelled_records != 0 or
+            service_snapshot.failed_records != 0)
+        {
+            return error.InvalidConcurrentSuccessorServiceReceipt;
+        }
+    } else if (profile ==
+        .concurrent_queued_full_request_timeout)
+    {
+        if (service_snapshot.terminal_records != 2 or
+            service_snapshot.completed_records != 1 or
+            service_snapshot.cancelled_records != 1 or
+            service_snapshot.failed_records != 0)
+        {
+            return error.InvalidConcurrentSuccessorServiceReceipt;
+        }
+    } else {
+        if (service_snapshot.terminal_records != 0 or
+            service_snapshot.completed_records != 0 or
+            service_snapshot.cancelled_records != 0 or
+            service_snapshot.failed_records != 0)
+        {
+            return error.UnexpectedConcurrentServiceRecord;
+        }
+    }
+
+    const close_receipt = try harness.service.closeV1();
+    service_closed = true;
+    if (!close_receipt.bank_snapshot.used.isZero() or
+        close_receipt.bank_snapshot.active_reservations != 0 or
+        close_receipt.bank_snapshot.committed_receipts != 0)
+    {
+        return error.InvalidConcurrentCloseReceipt;
+    }
+    lifecycle.managed.mutex.lock();
+    const serving_after_join = lifecycle.serving;
+    lifecycle.managed.mutex.unlock();
+    if (!joined or serving_after_join)
+        return error.InvalidConcurrentServeRetirement;
+    try emitConcurrentClosed(
+        profile,
+        stopped,
+        try event_log.totalCount(),
+        service_snapshot,
+        scheduler_zero,
+        bank_zero,
+        joined,
+        serving_after_join,
+    );
+}
+
+fn runConcurrentQueuedTimeoutWorker(
+    profile: WorkerProfile,
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+    runtime: *http_server.RuntimeV1,
+    listen_address: std.net.Address,
+    event_log: *ConcurrentEventLog,
+    work_barrier: *WorkAdmissionBarrierV1,
+) !void {
+    work_barrier.reached.wait();
+    const active = try event_log.waitForKind(.dispatched, 1);
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_ACTIVE",
+        active,
+    );
+    const queued = try event_log.waitForKind(.enqueued, 2);
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_QUEUED",
+        queued,
+    );
+    _ = try event_log.waitForKind(.backpressure_paused, 1);
+
+    const timeout_kind: server_api.ManagedConcurrentEventKindV1 =
+        if (profile == .concurrent_queued_receive_timeout)
+            .queued_receive_timeout
+        else if (profile ==
+        .concurrent_queued_full_request_timeout)
+            .queued_full_request_timeout
+        else
+            return error.InvalidConcurrentTimeoutProfile;
+    const timed_out = try event_log.waitForKind(
+        timeout_kind,
+        1,
+    );
+    if (timed_out.lease == null or
+        queued.lease == null or
+        !std.meta.eql(timed_out.lease.?, queued.lease.?))
+    {
+        return error.ConcurrentQueuedTimeoutLeaseMismatch;
+    }
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_QUEUED_TIMEOUT",
+        timed_out,
+    );
+
+    try expectControlLine(
+        std.fs.File.stdin(),
+        concurrent_release_command,
+    );
+    work_barrier.release.set();
+    const first_retired =
+        try event_log.waitForKind(.retired, 1);
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_FIRST_RETIRED",
+        first_retired,
+    );
+
+    try expectControlLine(
+        std.fs.File.stdin(),
+        drain_command,
+    );
+    _ = try event_log.waitForKind(.retired, 2);
+    try server_api.requestManagedConcurrentDrainAndWakeV1(
+        lifecycle,
+        runtime,
+        listen_address,
+    );
+}
+
+fn runConcurrentDrainWorker(
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+    runtime: *http_server.RuntimeV1,
+    listen_address: std.net.Address,
+    event_log: *ConcurrentEventLog,
+) !void {
+    const active = try event_log.waitForKind(.dispatched, 1);
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_ACTIVE",
+        active,
+    );
+    const queued = try event_log.waitForKind(.enqueued, 2);
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_QUEUED",
+        queued,
+    );
+    _ = try event_log.waitForKind(.backpressure_paused, 1);
+    try expectControlLine(
+        std.fs.File.stdin(),
+        drain_command,
+    );
+    var start: std.Thread.ResetEvent = .{};
+    var first: ConcurrentDrainRequest = .{
+        .lifecycle = lifecycle,
+        .runtime = runtime,
+        .listen_address = listen_address,
+        .start = &start,
+    };
+    var second: ConcurrentDrainRequest = .{
+        .lifecycle = lifecycle,
+        .runtime = runtime,
+        .listen_address = listen_address,
+        .start = &start,
+    };
+    const first_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentDrainRequest.run,
+        .{&first},
+    );
+    var first_joined = false;
+    defer if (!first_joined) {
+        start.set();
+        first_thread.join();
+    };
+    const second_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentDrainRequest.run,
+        .{&second},
+    );
+    var second_joined = false;
+    defer if (!second_joined) {
+        start.set();
+        second_thread.join();
+    };
+    first.ready.wait();
+    second.ready.wait();
+    lifecycle.managed.mutex.lock();
+    start.set();
+    first.entered.wait();
+    second.entered.wait();
+    lifecycle.managed.mutex.unlock();
+    first.done.wait();
+    second.done.wait();
+    first_thread.join();
+    first_joined = true;
+    second_thread.join();
+    second_joined = true;
+    if (first.thread_error) |err| return err;
+    if (second.thread_error) |err| return err;
+    const queued_drain =
+        try event_log.waitForKind(.queued_drain, 1);
+    if (queued_drain.lease == null or
+        queued.lease == null or
+        !std.meta.eql(queued_drain.lease.?, queued.lease.?))
+    {
+        return error.ConcurrentQueuedDrainLeaseMismatch;
+    }
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_QUEUED_DRAIN",
+        queued_drain,
+    );
+    _ = try event_log.waitForKind(.retired, 1);
+}
+
+fn runConcurrentStaleOwnerFailureWorker(
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+    runtime: *http_server.RuntimeV1,
+    listen_address: std.net.Address,
+    event_log: *ConcurrentEventLog,
+    work_barrier: *WorkAdmissionBarrierV1,
+) !void {
+    const predecessor =
+        try event_log.waitForKind(.retired, 1);
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_PREDECESSOR_RETIRED",
+        predecessor,
+    );
+
+    work_barrier.reached.wait();
+    const active = try event_log.waitForKind(.dispatched, 2);
+    const stale_lease = predecessor.lease orelse
+        return error.MissingConcurrentPredecessorLease;
+    const active_lease = active.lease orelse
+        return error.MissingConcurrentActiveLease;
+    if (stale_lease.slot_index != active_lease.slot_index or
+        stale_lease.slot_generation >=
+            active_lease.slot_generation)
+    {
+        return error.ConcurrentSlotWasNotReused;
+    }
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_WORK_ADMITTED",
+        active,
+    );
+
+    const queued = try event_log.waitForKind(.enqueued, 3);
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_QUEUED",
+        queued,
+    );
+    _ = try event_log.waitForKind(.backpressure_paused, 1);
+    try expectControlLine(
+        std.fs.File.stdin(),
+        concurrent_fault_command,
+    );
+
+    runtime.control_mutex.lock();
+    if (runtime.active_work == null or
+        runtime.active_work.?.transport_owner == null)
+    {
+        runtime.control_mutex.unlock();
+        return error.MissingConcurrentActiveOwner;
+    }
+    runtime.active_work.?.transport_owner = .{
+        .process_generation = stale_lease.process_generation,
+        .connection_sequence = stale_lease.connection_sequence,
+        .slot_index = stale_lease.slot_index,
+        .slot_generation = stale_lease.slot_generation,
+    };
+    runtime.control_mutex.unlock();
+
+    var rejected = false;
+    server_api.requestManagedConcurrentDrainAndWakeV1(
+        lifecycle,
+        runtime,
+        listen_address,
+    ) catch |err| {
+        if (err !=
+            error.ConnectionSlotGenerationMismatch)
+        {
+            return err;
+        }
+        rejected = true;
+    };
+    if (!rejected)
+        return error.StaleConcurrentOwnerWasAccepted;
+    try emitCheckpoint(
+        "CONCURRENT_STALE_OWNER_REJECTED",
+        lifecycle.snapshotV1().managed.process_generation,
+    );
+
+    work_barrier.release.set();
+    const queued_failure =
+        try event_log.waitForKind(.queued_failure, 1);
+    if (queued_failure.lease == null or
+        queued.lease == null or
+        !std.meta.eql(
+            queued_failure.lease.?,
+            queued.lease.?,
+        ))
+    {
+        return error.ConcurrentQueuedFailureLeaseMismatch;
+    }
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_QUEUED_FAILURE",
+        queued_failure,
+    );
+    const running_failure =
+        try event_log.waitForKind(.running_failure, 1);
+    if (running_failure.lease == null or
+        !std.meta.eql(
+            running_failure.lease.?,
+            active_lease,
+        ))
+    {
+        return error.ConcurrentRunningFailureLeaseMismatch;
+    }
+    try emitConcurrentEventCheckpoint(
+        "CONCURRENT_RUNNING_FAILURE",
+        running_failure,
+    );
+    _ = try event_log.waitForKind(.retired, 2);
+}
+
+fn validateConcurrentFinalSnapshot(
+    profile: WorkerProfile,
+    snapshot: server_api.ManagedConcurrentSnapshotV1,
+    event_log: *ConcurrentEventLog,
+) !void {
+    const expected_state: server_api.ManagedStateV1 =
+        if (profile == .concurrent_stale_owner_failure)
+            .failed
+        else
+            .stopped;
+    if (snapshot.managed.state != expected_state or
+        snapshot.managed.active_connections != 0 or
+        snapshot.managed.queued_connections != 0 or
+        snapshot.running_connections != 0 or
+        snapshot.accept_paused or
+        snapshot.cleanup_failed)
+    {
+        return error.InvalidConcurrentFinalLifecycle;
+    }
+    const phase_total =
+        snapshot.phase_counts.queued +
+        snapshot.phase_counts.receiving_head +
+        snapshot.phase_counts.request_head_received +
+        snapshot.phase_counts.request_received +
+        snapshot.phase_counts.request_admitted +
+        snapshot.phase_counts.response_ready +
+        snapshot.phase_counts.response_writing +
+        snapshot.phase_counts.response_written;
+    if (snapshot.managed.active_connections !=
+        snapshot.managed.queued_connections +
+            snapshot.running_connections or
+        phase_total != snapshot.managed.active_connections or
+        snapshot.queue_enqueued_connections !=
+            snapshot.managed.accepted_connections or
+        snapshot.queue_high_watermark >
+            snapshot.pending_connection_capacity or
+        snapshot.running_high_watermark >
+            snapshot.worker_count or
+        snapshot.listener_backpressure_resumptions >
+            snapshot.listener_backpressure_activations)
+    {
+        return error.InvalidConcurrentSnapshotConservation;
+    }
+    if (snapshot.managed.accepted_connections !=
+        snapshot.managed.completed_connections +
+            snapshot.managed.failed_connections +
+            snapshot.managed.active_connections)
+    {
+        return error.InvalidConcurrentConnectionConservation;
+    }
+    if (snapshot.queue_enqueued_connections !=
+        snapshot.queue_dispatched_connections +
+            snapshot.drain_cancelled_queued_connections +
+            snapshot.failure_cancelled_queued_connections +
+            snapshot.receive_timeout_queued_connections +
+            snapshot.full_request_timeout_queued_connections +
+            snapshot.managed.queued_connections)
+    {
+        return error.InvalidConcurrentQueueConservation;
+    }
+    if (snapshot.event_ordinal !=
+        @as(u64, @intCast(try event_log.totalCount())))
+    {
+        return error.InvalidConcurrentEventConservation;
+    }
+    try event_log.validateOrdinals();
+    if (try event_log.countKind(.enqueued) !=
+        snapshot.queue_enqueued_connections or
+        try event_log.countKind(.dispatched) !=
+            snapshot.queue_dispatched_connections or
+        try event_log.countKind(.retired) !=
+            snapshot.queue_dispatched_connections)
+    {
+        return error.InvalidConcurrentCoreEvents;
+    }
+    if (snapshot.listener_backpressure_activations !=
+        @as(
+            u64,
+            @intCast(try event_log.countKind(.backpressure_paused)),
+        ) or
+        snapshot.listener_backpressure_resumptions !=
+            @as(
+                u64,
+                @intCast(try event_log.countKind(.backpressure_resumed)),
+            ))
+    {
+        return error.InvalidConcurrentBackpressureEvents;
+    }
+    const failure_primary =
+        snapshot.managed.failure_signaled_connections +
+        snapshot.managed.failure_cancelled_response_connections +
+        snapshot.managed.failure_requested_response_write_connections;
+    if (failure_primary >
+        snapshot.queue_dispatched_connections)
+    {
+        return error.InvalidConcurrentFailureConservation;
+    }
+
+    switch (profile) {
+        .concurrent_queued_receive_timeout => {
+            if (try event_log.countKind(.queued_receive_timeout) != 1 or
+                try event_log.countKind(.queued_full_request_timeout) != 0 or
+                try event_log.countKind(.queued_drain) != 0 or
+                try event_log.countKind(.queued_failure) != 0 or
+                try event_log.countKind(.running_failure) != 0)
+            {
+                return error.InvalidConcurrentReceiveTimeoutEvents;
+            }
+            if (snapshot.managed.accepted_connections != 3 or
+                snapshot.managed.completed_connections != 2 or
+                snapshot.managed.failed_connections != 1 or
+                snapshot.queue_enqueued_connections != 3 or
+                snapshot.queue_dispatched_connections != 2 or
+                snapshot.receive_timeout_queued_connections != 1 or
+                snapshot.full_request_timeout_queued_connections != 0 or
+                snapshot.managed.receive_timeout_signaled_connections != 1 or
+                snapshot.managed.last_receive_timeout_signaled_phase !=
+                    .queued or
+                snapshot.managed.full_request_timeout_signaled_connections != 0 or
+                snapshot.managed.drain_signaled_connections != 0 or
+                snapshot.managed.failure_signaled_connections != 0 or
+                snapshot.drain_cancelled_queued_connections != 0 or
+                snapshot.failure_cancelled_queued_connections != 0 or
+                snapshot.queue_high_watermark != 1 or
+                snapshot.running_high_watermark != 1 or
+                snapshot.listener_backpressure_activations == 0 or
+                snapshot.listener_backpressure_resumptions !=
+                    snapshot.listener_backpressure_activations)
+            {
+                return error.InvalidConcurrentReceiveTimeoutReceipt;
+            }
+        },
+        .concurrent_queued_full_request_timeout => {
+            if (try event_log.countKind(.queued_receive_timeout) != 0 or
+                try event_log.countKind(.queued_full_request_timeout) != 1 or
+                try event_log.countKind(.queued_drain) != 0 or
+                try event_log.countKind(.queued_failure) != 0 or
+                try event_log.countKind(.running_failure) != 0)
+            {
+                return error.InvalidConcurrentFullRequestTimeoutEvents;
+            }
+            if (snapshot.managed.accepted_connections != 3 or
+                snapshot.managed.completed_connections != 1 or
+                snapshot.managed.failed_connections != 2 or
+                snapshot.queue_enqueued_connections != 3 or
+                snapshot.queue_dispatched_connections != 2 or
+                snapshot.receive_timeout_queued_connections != 0 or
+                snapshot.full_request_timeout_queued_connections != 1 or
+                snapshot.managed.full_request_timeout_signaled_connections != 2 or
+                (snapshot.managed.last_full_request_timeout_signaled_phase !=
+                    .queued and
+                    snapshot.managed.last_full_request_timeout_signaled_phase !=
+                        .request_admitted) or
+                snapshot.managed.receive_timeout_signaled_connections != 0 or
+                snapshot.managed.drain_signaled_connections != 0 or
+                snapshot.managed.failure_signaled_connections != 0 or
+                snapshot.drain_cancelled_queued_connections != 0 or
+                snapshot.failure_cancelled_queued_connections != 0 or
+                snapshot.queue_high_watermark != 1 or
+                snapshot.running_high_watermark != 1 or
+                snapshot.listener_backpressure_activations == 0 or
+                snapshot.listener_backpressure_resumptions !=
+                    snapshot.listener_backpressure_activations)
+            {
+                return error.InvalidConcurrentFullRequestTimeoutReceipt;
+            }
+        },
+        .concurrent_drain => {
+            if (try event_log.countKind(.queued_receive_timeout) != 0 or
+                try event_log.countKind(.queued_full_request_timeout) != 0 or
+                try event_log.countKind(.queued_drain) != 1 or
+                try event_log.countKind(.queued_failure) != 0 or
+                try event_log.countKind(.running_failure) != 0)
+            {
+                return error.InvalidConcurrentDrainEvents;
+            }
+            if (snapshot.managed.accepted_connections != 2 or
+                snapshot.managed.completed_connections != 0 or
+                snapshot.managed.failed_connections != 2 or
+                snapshot.queue_enqueued_connections != 2 or
+                snapshot.queue_dispatched_connections != 1 or
+                snapshot.drain_cancelled_queued_connections != 1 or
+                snapshot.managed.drain_signaled_connections != 2 or
+                snapshot.managed.last_drain_signaled_phase !=
+                    .receiving_head or
+                snapshot.failure_cancelled_queued_connections != 0 or
+                snapshot.receive_timeout_queued_connections != 0 or
+                snapshot.full_request_timeout_queued_connections != 0 or
+                snapshot.managed.failure_signaled_connections != 0 or
+                snapshot.listener_backpressure_activations == 0 or
+                snapshot.listener_backpressure_resumptions + 1 !=
+                    snapshot.listener_backpressure_activations)
+            {
+                return error.InvalidConcurrentDrainReceipt;
+            }
+        },
+        .concurrent_stale_owner_failure => {
+            if (try event_log.countKind(.queued_receive_timeout) != 0 or
+                try event_log.countKind(.queued_full_request_timeout) != 0 or
+                try event_log.countKind(.queued_drain) != 0 or
+                try event_log.countKind(.queued_failure) != 1 or
+                try event_log.countKind(.running_failure) != 1)
+            {
+                return error.InvalidConcurrentFailureEvents;
+            }
+            if (snapshot.managed.accepted_connections != 3 or
+                snapshot.managed.completed_connections != 1 or
+                snapshot.managed.failed_connections != 2 or
+                snapshot.queue_enqueued_connections != 3 or
+                snapshot.queue_dispatched_connections != 2 or
+                snapshot.failure_cancelled_queued_connections != 1 or
+                snapshot.managed.failure_signaled_connections != 1 or
+                snapshot.managed.failure_cancelled_work_connections != 0 or
+                snapshot.managed.failure_cancelled_response_connections != 0 or
+                snapshot.managed.failure_requested_response_write_connections != 0 or
+                snapshot.managed.failure_cancelled_response_write_connections != 0 or
+                snapshot.managed.last_failure_signaled_phase !=
+                    .request_admitted or
+                snapshot.managed.drain_signaled_connections != 0 or
+                snapshot.managed.drain_cancelled_work_connections != 0 or
+                snapshot.drain_cancelled_queued_connections != 0 or
+                snapshot.receive_timeout_queued_connections != 0 or
+                snapshot.full_request_timeout_queued_connections != 0 or
+                snapshot.managed.receive_timeout_signaled_connections != 0 or
+                snapshot.managed.full_request_timeout_signaled_connections != 0 or
+                snapshot.listener_backpressure_activations == 0 or
+                snapshot.listener_backpressure_resumptions + 1 !=
+                    snapshot.listener_backpressure_activations)
+            {
+                return error.InvalidConcurrentFailureReceipt;
+            }
+        },
+        else => return error.InvalidConcurrentWorkerProfile,
+    }
+}
+
 fn observeFullRequestTimeoutWorker(
     lifecycle: *server_api.ManagedLifecycleV1,
     profile: WorkerProfile,
@@ -1350,6 +2308,11 @@ fn profileMatchesControl(
         .full_request_timeout_response_writing,
         => control == .immediate,
         .peer_reset_work => false,
+        .concurrent_queued_receive_timeout,
+        .concurrent_queued_full_request_timeout,
+        .concurrent_drain,
+        .concurrent_stale_owner_failure,
+        => false,
         .standard,
         .drain_with_deadline,
         .timeout_head,
@@ -1440,7 +2403,7 @@ fn expectControlLine(
     stdin: std.fs.File,
     expected: []const u8,
 ) !void {
-    var storage: [peer_reset_release_command.len]u8 = undefined;
+    var storage: [frame_max_bytes]u8 = undefined;
     var count: usize = 0;
     while (count < storage.len) : (count += 1) {
         const read_count = try stdin.read(storage[count .. count + 1]);
@@ -1689,6 +2652,29 @@ fn emitCheckpoint(name: []const u8, generation: u64) !void {
     try std.fs.File.stdout().writeAll(frame);
 }
 
+fn emitConcurrentEventCheckpoint(
+    name: []const u8,
+    event: server_api.ManagedConcurrentEventV1,
+) !void {
+    const lease = event.lease orelse
+        return error.MissingConcurrentCheckpointLease;
+    var storage: [frame_max_bytes]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &storage,
+        "{s} {d} {d} {d} {d} {d} {d}\n",
+        .{
+            name,
+            lease.process_generation,
+            lease.connection_sequence,
+            lease.slot_index,
+            lease.slot_generation,
+            event.ordinal,
+            @intFromEnum(event.kind),
+        },
+    );
+    try std.fs.File.stdout().writeAll(frame);
+}
+
 fn responseOutcomeWire(
     outcome: ?http_server.ResponseWriteOutcomeV1,
 ) u8 {
@@ -1883,6 +2869,116 @@ fn emitClosed(
     );
 }
 
+fn emitConcurrentClosed(
+    profile: WorkerProfile,
+    snapshot: server_api.ManagedConcurrentSnapshotV1,
+    event_count: usize,
+    service_snapshot: unary.SnapshotV1,
+    scheduler_zero: bool,
+    bank_zero: bool,
+    serve_joined: bool,
+    serving: bool,
+) !void {
+    const phase_total =
+        snapshot.phase_counts.queued +
+        snapshot.phase_counts.receiving_head +
+        snapshot.phase_counts.request_head_received +
+        snapshot.phase_counts.request_received +
+        snapshot.phase_counts.request_admitted +
+        snapshot.phase_counts.response_ready +
+        snapshot.phase_counts.response_writing +
+        snapshot.phase_counts.response_written;
+    var snapshot_storage: [frame_max_bytes]u8 = undefined;
+    const snapshot_frame = try std.fmt.bufPrint(
+        &snapshot_storage,
+        "CONCURRENT_SNAPSHOT " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
+        .{
+            @intFromEnum(profile),
+            snapshot.managed.process_generation,
+            @intFromEnum(snapshot.managed.state),
+            snapshot.worker_count,
+            snapshot.pending_connection_capacity,
+            snapshot.managed.accepted_connections,
+            snapshot.managed.completed_connections,
+            snapshot.managed.failed_connections,
+            snapshot.managed.active_connections,
+            snapshot.managed.queued_connections,
+            snapshot.running_connections,
+            phase_total,
+            snapshot.queue_high_watermark,
+            snapshot.running_high_watermark,
+            snapshot.queue_enqueued_connections,
+            snapshot.queue_dispatched_connections,
+            snapshot.listener_backpressure_activations,
+            snapshot.listener_backpressure_resumptions,
+            snapshot.event_ordinal,
+            event_count,
+            @intFromBool(snapshot.cleanup_failed),
+        },
+    );
+    try std.fs.File.stdout().writeAll(snapshot_frame);
+
+    var cause_storage: [frame_max_bytes]u8 = undefined;
+    const cause_frame = try std.fmt.bufPrint(
+        &cause_storage,
+        "CONCURRENT_CAUSES " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d}\n",
+        .{
+            snapshot.managed.process_generation,
+            snapshot.drain_cancelled_queued_connections,
+            snapshot.failure_cancelled_queued_connections,
+            snapshot.receive_timeout_queued_connections,
+            snapshot.full_request_timeout_queued_connections,
+            snapshot.managed.drain_signaled_connections,
+            @intFromEnum(
+                snapshot.managed.last_drain_signaled_phase,
+            ),
+            snapshot.managed.failure_signaled_connections,
+            @intFromEnum(
+                snapshot.managed.last_failure_signaled_phase,
+            ),
+            snapshot.managed.receive_timeout_signaled_connections,
+            @intFromEnum(
+                snapshot.managed.last_receive_timeout_signaled_phase,
+            ),
+            snapshot.managed.full_request_timeout_signaled_connections,
+            @intFromEnum(
+                snapshot.managed.last_full_request_timeout_signaled_phase,
+            ),
+            snapshot.managed.drain_cancelled_work_connections,
+            snapshot.managed.failure_cancelled_work_connections,
+            snapshot.managed.failure_cancelled_response_connections,
+            snapshot.managed.failure_requested_response_write_connections,
+            snapshot.managed.failure_cancelled_response_write_connections,
+        },
+    );
+    try std.fs.File.stdout().writeAll(cause_frame);
+
+    var ownership_storage: [frame_max_bytes]u8 = undefined;
+    const ownership_frame = try std.fmt.bufPrint(
+        &ownership_storage,
+        "CONCURRENT_OWNERSHIP " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
+        .{
+            snapshot.managed.process_generation,
+            service_snapshot.active_requests,
+            service_snapshot.recovery_required,
+            service_snapshot.terminal_records,
+            service_snapshot.completed_records,
+            service_snapshot.cancelled_records,
+            service_snapshot.failed_records,
+            @intFromBool(scheduler_zero),
+            @intFromBool(bank_zero),
+            @intFromBool(serve_joined),
+            @intFromBool(serving),
+        },
+    );
+    try std.fs.File.stdout().writeAll(ownership_frame);
+}
+
 const ReadyFrame = struct {
     generation: u64,
     port: u16,
@@ -1936,6 +3032,74 @@ const ClosedFrame = struct {
     service_active: u32,
     terminal_records: u32,
     bank_zero: u8,
+};
+
+const ConcurrentEventFrame = struct {
+    generation: u64,
+    connection_sequence: u64,
+    slot_index: u8,
+    slot_generation: u64,
+    ordinal: u64,
+    kind: server_api.ManagedConcurrentEventKindV1,
+};
+
+const ConcurrentSnapshotFrame = struct {
+    profile: WorkerProfile,
+    generation: u64,
+    state: server_api.ManagedStateV1,
+    worker_count: u8,
+    pending_capacity: u8,
+    accepted: u64,
+    completed: u64,
+    failed: u64,
+    active: u8,
+    queued: u8,
+    running: u8,
+    phase_total: u8,
+    queue_high_watermark: u8,
+    running_high_watermark: u8,
+    enqueued: u64,
+    dispatched: u64,
+    backpressure_activations: u64,
+    backpressure_resumptions: u64,
+    event_ordinal: u64,
+    event_count: usize,
+    cleanup_failed: u8,
+};
+
+const ConcurrentCauseFrame = struct {
+    generation: u64,
+    drain_queued: u64,
+    failure_queued: u64,
+    receive_timeout_queued: u64,
+    full_request_timeout_queued: u64,
+    drain_signaled: u64,
+    last_drain_phase: server_api.ManagedConnectionPhaseV1,
+    failure_signaled: u64,
+    last_failure_phase: server_api.ManagedConnectionPhaseV1,
+    receive_timeout_signaled: u64,
+    last_receive_timeout_phase: server_api.ManagedConnectionPhaseV1,
+    full_request_timeout_signaled: u64,
+    last_full_request_timeout_phase: server_api.ManagedConnectionPhaseV1,
+    drain_cancelled_work: u64,
+    failure_cancelled_work: u64,
+    failure_cancelled_response: u64,
+    failure_requested_response_write: u64,
+    failure_cancelled_response_write: u64,
+};
+
+const ConcurrentOwnershipFrame = struct {
+    generation: u64,
+    service_active: u32,
+    recovery_required: u32,
+    terminal_records: u32,
+    completed_records: u32,
+    cancelled_records: u32,
+    failed_records: u32,
+    scheduler_zero: u8,
+    bank_zero: u8,
+    serve_joined: u8,
+    serving: u8,
 };
 
 fn readFrame(
@@ -2004,6 +3168,358 @@ fn expectCheckpointFrame(
     {
         return error.InvalidFrame;
     }
+}
+
+fn parseConcurrentEventFrame(
+    line: []const u8,
+    expected_name: []const u8,
+) !ConcurrentEventFrame {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse return error.InvalidFrame;
+    const generation = fields.next() orelse
+        return error.InvalidFrame;
+    const sequence = fields.next() orelse
+        return error.InvalidFrame;
+    const slot_index = fields.next() orelse
+        return error.InvalidFrame;
+    const slot_generation = fields.next() orelse
+        return error.InvalidFrame;
+    const ordinal = fields.next() orelse
+        return error.InvalidFrame;
+    const kind = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(u8, name, expected_name))
+    {
+        return error.InvalidFrame;
+    }
+    return .{
+        .generation = try parseCanonicalInt(
+            u64,
+            generation,
+        ),
+        .connection_sequence = try parseCanonicalInt(
+            u64,
+            sequence,
+        ),
+        .slot_index = try parseCanonicalInt(
+            u8,
+            slot_index,
+        ),
+        .slot_generation = try parseCanonicalInt(
+            u64,
+            slot_generation,
+        ),
+        .ordinal = try parseCanonicalInt(u64, ordinal),
+        .kind = std.meta.intToEnum(
+            server_api.ManagedConcurrentEventKindV1,
+            try parseCanonicalInt(u8, kind),
+        ) catch return error.InvalidFrame,
+    };
+}
+
+fn parseConcurrentSnapshotFrame(
+    line: []const u8,
+) !ConcurrentSnapshotFrame {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse return error.InvalidFrame;
+    const profile = fields.next() orelse
+        return error.InvalidFrame;
+    const generation = fields.next() orelse
+        return error.InvalidFrame;
+    const state = fields.next() orelse
+        return error.InvalidFrame;
+    const worker_count = fields.next() orelse
+        return error.InvalidFrame;
+    const pending_capacity = fields.next() orelse
+        return error.InvalidFrame;
+    const accepted = fields.next() orelse
+        return error.InvalidFrame;
+    const completed = fields.next() orelse
+        return error.InvalidFrame;
+    const failed = fields.next() orelse
+        return error.InvalidFrame;
+    const active = fields.next() orelse
+        return error.InvalidFrame;
+    const queued = fields.next() orelse
+        return error.InvalidFrame;
+    const running = fields.next() orelse
+        return error.InvalidFrame;
+    const phase_total = fields.next() orelse
+        return error.InvalidFrame;
+    const queue_high_watermark = fields.next() orelse
+        return error.InvalidFrame;
+    const running_high_watermark = fields.next() orelse
+        return error.InvalidFrame;
+    const enqueued = fields.next() orelse
+        return error.InvalidFrame;
+    const dispatched = fields.next() orelse
+        return error.InvalidFrame;
+    const activations = fields.next() orelse
+        return error.InvalidFrame;
+    const resumptions = fields.next() orelse
+        return error.InvalidFrame;
+    const event_ordinal = fields.next() orelse
+        return error.InvalidFrame;
+    const event_count = fields.next() orelse
+        return error.InvalidFrame;
+    const cleanup_failed = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(u8, name, "CONCURRENT_SNAPSHOT"))
+    {
+        return error.InvalidFrame;
+    }
+    return .{
+        .profile = std.meta.intToEnum(
+            WorkerProfile,
+            try parseCanonicalInt(u8, profile),
+        ) catch return error.InvalidFrame,
+        .generation = try parseCanonicalInt(
+            u64,
+            generation,
+        ),
+        .state = std.meta.intToEnum(
+            server_api.ManagedStateV1,
+            try parseCanonicalInt(u8, state),
+        ) catch return error.InvalidFrame,
+        .worker_count = try parseCanonicalInt(
+            u8,
+            worker_count,
+        ),
+        .pending_capacity = try parseCanonicalInt(
+            u8,
+            pending_capacity,
+        ),
+        .accepted = try parseCanonicalInt(u64, accepted),
+        .completed = try parseCanonicalInt(u64, completed),
+        .failed = try parseCanonicalInt(u64, failed),
+        .active = try parseCanonicalInt(u8, active),
+        .queued = try parseCanonicalInt(u8, queued),
+        .running = try parseCanonicalInt(u8, running),
+        .phase_total = try parseCanonicalInt(
+            u8,
+            phase_total,
+        ),
+        .queue_high_watermark = try parseCanonicalInt(
+            u8,
+            queue_high_watermark,
+        ),
+        .running_high_watermark = try parseCanonicalInt(
+            u8,
+            running_high_watermark,
+        ),
+        .enqueued = try parseCanonicalInt(u64, enqueued),
+        .dispatched = try parseCanonicalInt(
+            u64,
+            dispatched,
+        ),
+        .backpressure_activations = try parseCanonicalInt(
+            u64,
+            activations,
+        ),
+        .backpressure_resumptions = try parseCanonicalInt(
+            u64,
+            resumptions,
+        ),
+        .event_ordinal = try parseCanonicalInt(
+            u64,
+            event_ordinal,
+        ),
+        .event_count = try parseCanonicalInt(
+            usize,
+            event_count,
+        ),
+        .cleanup_failed = try parseCanonicalInt(
+            u8,
+            cleanup_failed,
+        ),
+    };
+}
+
+fn parseConcurrentCauseFrame(
+    line: []const u8,
+) !ConcurrentCauseFrame {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse return error.InvalidFrame;
+    const generation = fields.next() orelse
+        return error.InvalidFrame;
+    const drain_queued = fields.next() orelse
+        return error.InvalidFrame;
+    const failure_queued = fields.next() orelse
+        return error.InvalidFrame;
+    const receive_queued = fields.next() orelse
+        return error.InvalidFrame;
+    const full_queued = fields.next() orelse
+        return error.InvalidFrame;
+    const drain_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain = fields.next() orelse
+        return error.InvalidFrame;
+    const failure_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_failure = fields.next() orelse
+        return error.InvalidFrame;
+    const receive_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_receive = fields.next() orelse
+        return error.InvalidFrame;
+    const full_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_full = fields.next() orelse
+        return error.InvalidFrame;
+    const drain_work = fields.next() orelse
+        return error.InvalidFrame;
+    const failure_work = fields.next() orelse
+        return error.InvalidFrame;
+    const failure_response = fields.next() orelse
+        return error.InvalidFrame;
+    const failure_write_requested = fields.next() orelse
+        return error.InvalidFrame;
+    const failure_write_cancelled = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(u8, name, "CONCURRENT_CAUSES"))
+    {
+        return error.InvalidFrame;
+    }
+    return .{
+        .generation = try parseCanonicalInt(
+            u64,
+            generation,
+        ),
+        .drain_queued = try parseCanonicalInt(
+            u64,
+            drain_queued,
+        ),
+        .failure_queued = try parseCanonicalInt(
+            u64,
+            failure_queued,
+        ),
+        .receive_timeout_queued = try parseCanonicalInt(
+            u64,
+            receive_queued,
+        ),
+        .full_request_timeout_queued = try parseCanonicalInt(
+            u64,
+            full_queued,
+        ),
+        .drain_signaled = try parseCanonicalInt(
+            u64,
+            drain_signaled,
+        ),
+        .last_drain_phase = try parseConnectionPhase(
+            last_drain,
+        ),
+        .failure_signaled = try parseCanonicalInt(
+            u64,
+            failure_signaled,
+        ),
+        .last_failure_phase = try parseConnectionPhase(
+            last_failure,
+        ),
+        .receive_timeout_signaled = try parseCanonicalInt(
+            u64,
+            receive_signaled,
+        ),
+        .last_receive_timeout_phase = try parseConnectionPhase(last_receive),
+        .full_request_timeout_signaled = try parseCanonicalInt(u64, full_signaled),
+        .last_full_request_timeout_phase = try parseConnectionPhase(last_full),
+        .drain_cancelled_work = try parseCanonicalInt(
+            u64,
+            drain_work,
+        ),
+        .failure_cancelled_work = try parseCanonicalInt(
+            u64,
+            failure_work,
+        ),
+        .failure_cancelled_response = try parseCanonicalInt(u64, failure_response),
+        .failure_requested_response_write = try parseCanonicalInt(
+            u64,
+            failure_write_requested,
+        ),
+        .failure_cancelled_response_write = try parseCanonicalInt(
+            u64,
+            failure_write_cancelled,
+        ),
+    };
+}
+
+fn parseConcurrentOwnershipFrame(
+    line: []const u8,
+) !ConcurrentOwnershipFrame {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse return error.InvalidFrame;
+    const generation = fields.next() orelse
+        return error.InvalidFrame;
+    const service_active = fields.next() orelse
+        return error.InvalidFrame;
+    const recovery_required = fields.next() orelse
+        return error.InvalidFrame;
+    const terminal_records = fields.next() orelse
+        return error.InvalidFrame;
+    const completed_records = fields.next() orelse
+        return error.InvalidFrame;
+    const cancelled_records = fields.next() orelse
+        return error.InvalidFrame;
+    const failed_records = fields.next() orelse
+        return error.InvalidFrame;
+    const scheduler_zero = fields.next() orelse
+        return error.InvalidFrame;
+    const bank_zero = fields.next() orelse
+        return error.InvalidFrame;
+    const serve_joined = fields.next() orelse
+        return error.InvalidFrame;
+    const serving = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(u8, name, "CONCURRENT_OWNERSHIP"))
+    {
+        return error.InvalidFrame;
+    }
+    return .{
+        .generation = try parseCanonicalInt(
+            u64,
+            generation,
+        ),
+        .service_active = try parseCanonicalInt(
+            u32,
+            service_active,
+        ),
+        .recovery_required = try parseCanonicalInt(
+            u32,
+            recovery_required,
+        ),
+        .terminal_records = try parseCanonicalInt(
+            u32,
+            terminal_records,
+        ),
+        .completed_records = try parseCanonicalInt(
+            u32,
+            completed_records,
+        ),
+        .cancelled_records = try parseCanonicalInt(
+            u32,
+            cancelled_records,
+        ),
+        .failed_records = try parseCanonicalInt(
+            u32,
+            failed_records,
+        ),
+        .scheduler_zero = try parseCanonicalInt(
+            u8,
+            scheduler_zero,
+        ),
+        .bank_zero = try parseCanonicalInt(
+            u8,
+            bank_zero,
+        ),
+        .serve_joined = try parseCanonicalInt(
+            u8,
+            serve_joined,
+        ),
+        .serving = try parseCanonicalInt(u8, serving),
+    };
 }
 
 fn parseActivity(
@@ -2411,6 +3927,7 @@ fn parseConnectionPhase(
         5 => .response_ready,
         6 => .response_writing,
         7 => .response_written,
+        8 => .queued,
         else => error.InvalidFrame,
     };
 }
@@ -2649,6 +4166,38 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         &fixture,
         generation_full_request_timeout_response_writing,
         .full_request_timeout_response_writing,
+        oracle,
+    );
+    try exerciseConcurrentProfile(
+        allocator,
+        executable,
+        &fixture,
+        generation_concurrent_queued_receive_timeout,
+        .concurrent_queued_receive_timeout,
+        oracle,
+    );
+    try exerciseConcurrentProfile(
+        allocator,
+        executable,
+        &fixture,
+        generation_concurrent_queued_full_request_timeout,
+        .concurrent_queued_full_request_timeout,
+        oracle,
+    );
+    try exerciseConcurrentProfile(
+        allocator,
+        executable,
+        &fixture,
+        generation_concurrent_drain,
+        .concurrent_drain,
+        oracle,
+    );
+    try exerciseConcurrentProfile(
+        allocator,
+        executable,
+        &fixture,
+        generation_concurrent_stale_owner_failure,
+        .concurrent_stale_owner_failure,
         oracle,
     );
     const second = try exerciseWorker(
@@ -3845,6 +5394,756 @@ fn exercisePhaseE(
         .Exited => |code| try require(code == 0),
         else => return error.UnexpectedWorkerTermination,
     }
+}
+
+fn exerciseConcurrentProfile(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    generation: u64,
+    profile: WorkerProfile,
+    oracle: LocalOracle,
+) !void {
+    if (!profile.isConcurrent())
+        return error.InvalidConcurrentWorkerProfile;
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        fixture,
+        generation,
+        profile,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == generation);
+    try require(std.mem.eql(
+        u8,
+        &ready.model_id,
+        &oracle.model_id,
+    ));
+
+    var first_peer: ?std.net.Stream = null;
+    defer if (first_peer) |stream| stream.close();
+    var queued_peer: ?std.net.Stream = null;
+    defer if (queued_peer) |stream| stream.close();
+    var active_client: TerminalClientContext = .{
+        .port = ready.port,
+        .model_id = ready.model_id,
+    };
+    var active_client_thread: ?std.Thread = null;
+    var active_client_joined = false;
+    defer if (active_client_thread) |thread| {
+        if (!active_client_joined) {
+            if (!waited) {
+                terminateChild(&child);
+                waited = true;
+            }
+            thread.join();
+        }
+    };
+
+    switch (profile) {
+        .concurrent_queued_receive_timeout,
+        .concurrent_queued_full_request_timeout,
+        => {
+            active_client_thread = try std.Thread.spawn(
+                .{},
+                TerminalClientContext.run,
+                .{&active_client},
+            );
+            const active = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_ACTIVE",
+            );
+            try validateConcurrentEventCheckpoint(
+                active,
+                generation,
+                1,
+                .dispatched,
+            );
+
+            queued_peer = try openModelsPeer(ready);
+            const queued = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_QUEUED",
+            );
+            try validateConcurrentEventCheckpoint(
+                queued,
+                generation,
+                2,
+                .enqueued,
+            );
+            try require(queued.ordinal > active.ordinal);
+            try require(!sameConcurrentLease(
+                active,
+                queued,
+            ));
+
+            const timed_out = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_QUEUED_TIMEOUT",
+            );
+            try validateConcurrentEventCheckpoint(
+                timed_out,
+                generation,
+                2,
+                if (profile ==
+                    .concurrent_queued_receive_timeout)
+                    .queued_receive_timeout
+                else
+                    .queued_full_request_timeout,
+            );
+            try require(timed_out.ordinal > queued.ordinal);
+            try require(sameConcurrentLease(
+                timed_out,
+                queued,
+            ));
+            try requirePeerEofWithoutResponse(queued_peer.?);
+            queued_peer.?.close();
+            queued_peer = null;
+
+            try child.stdin.?.writeAll(
+                concurrent_release_command,
+            );
+            const retired = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_FIRST_RETIRED",
+            );
+            try validateConcurrentEventCheckpoint(
+                retired,
+                generation,
+                1,
+                .retired,
+            );
+            try require(retired.ordinal > timed_out.ordinal);
+            try require(sameConcurrentLease(
+                retired,
+                active,
+            ));
+
+            const thread = active_client_thread.?;
+            thread.join();
+            active_client_joined = true;
+            if (profile ==
+                .concurrent_queued_receive_timeout)
+            {
+                if (active_client.thread_error) |err| return err;
+                try require(
+                    active_client.unexpected_api_error == null,
+                );
+                const completion =
+                    active_client.completion orelse
+                    return error.MissingConcurrentActiveCompletion;
+                try validateCompletionAgainstOracle(
+                    completion,
+                    ready,
+                    oracle,
+                    41,
+                    "server-process-terminal-work",
+                );
+            } else {
+                try require(active_client.completion == null);
+                try require(
+                    active_client.thread_error != null or
+                        active_client.unexpected_api_error != null,
+                );
+            }
+
+            try completeConcurrentSuccessor(
+                allocator,
+                ready,
+                oracle,
+                if (profile ==
+                    .concurrent_queued_receive_timeout)
+                    71
+                else
+                    73,
+                if (profile ==
+                    .concurrent_queued_receive_timeout)
+                    "concurrent-receive-successor"
+                else
+                    "concurrent-full-successor",
+            );
+            try child.stdin.?.writeAll(drain_command);
+        },
+        .concurrent_drain => {
+            first_peer = try connectReadyPeer(ready);
+            try writePartialRequest(
+                first_peer.?,
+                ready,
+                .head,
+            );
+            const active = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_ACTIVE",
+            );
+            try validateConcurrentEventCheckpoint(
+                active,
+                generation,
+                1,
+                .dispatched,
+            );
+
+            queued_peer = try openModelsPeer(ready);
+            const queued = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_QUEUED",
+            );
+            try validateConcurrentEventCheckpoint(
+                queued,
+                generation,
+                2,
+                .enqueued,
+            );
+            try require(queued.ordinal > active.ordinal);
+            try require(!sameConcurrentLease(
+                active,
+                queued,
+            ));
+
+            try child.stdin.?.writeAll(drain_command);
+            const queued_drain =
+                try parseConcurrentEventFrame(
+                    try readFrame(
+                        child.stdout.?,
+                        &frame_storage,
+                    ),
+                    "CONCURRENT_QUEUED_DRAIN",
+                );
+            try validateConcurrentEventCheckpoint(
+                queued_drain,
+                generation,
+                2,
+                .queued_drain,
+            );
+            try require(queued_drain.ordinal > queued.ordinal);
+            try require(sameConcurrentLease(
+                queued_drain,
+                queued,
+            ));
+            try requirePeerEofWithoutResponse(
+                queued_peer.?,
+            );
+            queued_peer.?.close();
+            queued_peer = null;
+            try requirePeerEofWithoutResponse(first_peer.?);
+            first_peer.?.close();
+            first_peer = null;
+        },
+        .concurrent_stale_owner_failure => {
+            {
+                var client =
+                    try http_client.ClientV1.initLoopback(
+                        allocator,
+                        loopback_host,
+                        ready.port,
+                    );
+                defer client.deinit();
+                const models = try expectModels(
+                    try client.listModelsV1(),
+                );
+                try require(std.mem.eql(
+                    u8,
+                    &models.model_id,
+                    &ready.model_id,
+                ));
+            }
+            const predecessor = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_PREDECESSOR_RETIRED",
+            );
+            try validateConcurrentEventCheckpoint(
+                predecessor,
+                generation,
+                1,
+                .retired,
+            );
+
+            first_peer = try openCompletionPeer(
+                ready,
+                79,
+                "concurrent-stale-active",
+            );
+            const active = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_WORK_ADMITTED",
+            );
+            try validateConcurrentEventCheckpoint(
+                active,
+                generation,
+                2,
+                .dispatched,
+            );
+            try require(active.ordinal > predecessor.ordinal);
+            try require(
+                active.slot_index == predecessor.slot_index and
+                    active.slot_generation >
+                        predecessor.slot_generation,
+            );
+
+            queued_peer = try openModelsPeer(ready);
+            const queued = try parseConcurrentEventFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_QUEUED",
+            );
+            try validateConcurrentEventCheckpoint(
+                queued,
+                generation,
+                3,
+                .enqueued,
+            );
+            try require(queued.ordinal > active.ordinal);
+            try require(!sameConcurrentLease(
+                active,
+                queued,
+            ));
+
+            try child.stdin.?.writeAll(
+                concurrent_fault_command,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "CONCURRENT_STALE_OWNER_REJECTED",
+                generation,
+            );
+            const queued_failure =
+                try parseConcurrentEventFrame(
+                    try readFrame(
+                        child.stdout.?,
+                        &frame_storage,
+                    ),
+                    "CONCURRENT_QUEUED_FAILURE",
+                );
+            try validateConcurrentEventCheckpoint(
+                queued_failure,
+                generation,
+                3,
+                .queued_failure,
+            );
+            try require(
+                queued_failure.ordinal > queued.ordinal,
+            );
+            try require(sameConcurrentLease(
+                queued_failure,
+                queued,
+            ));
+            const running_failure =
+                try parseConcurrentEventFrame(
+                    try readFrame(
+                        child.stdout.?,
+                        &frame_storage,
+                    ),
+                    "CONCURRENT_RUNNING_FAILURE",
+                );
+            try validateConcurrentEventCheckpoint(
+                running_failure,
+                generation,
+                2,
+                .running_failure,
+            );
+            try require(
+                running_failure.ordinal >
+                    queued_failure.ordinal,
+            );
+            try require(sameConcurrentLease(
+                running_failure,
+                active,
+            ));
+            try requirePeerEofWithoutResponse(
+                queued_peer.?,
+            );
+            queued_peer.?.close();
+            queued_peer = null;
+            try require(
+                try requirePeerEofWithoutCompleteResponse(
+                    first_peer.?,
+                ) == 0,
+            );
+            first_peer.?.close();
+            first_peer = null;
+        },
+        else => unreachable,
+    }
+
+    child.stdin.?.close();
+    child.stdin = null;
+    try validateConcurrentClosedFrames(
+        child.stdout.?,
+        &frame_storage,
+        generation,
+        profile,
+    );
+    try requireWorkerEof(child.stdout.?);
+
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| try require(code == 0),
+        else => return error.UnexpectedWorkerTermination,
+    }
+}
+
+fn validateConcurrentEventCheckpoint(
+    frame: ConcurrentEventFrame,
+    generation: u64,
+    sequence: u64,
+    kind: server_api.ManagedConcurrentEventKindV1,
+) !void {
+    try require(frame.generation == generation);
+    try require(frame.connection_sequence == sequence);
+    try require(frame.slot_generation != 0);
+    try require(frame.ordinal != 0);
+    try require(frame.kind == kind);
+}
+
+fn sameConcurrentLease(
+    first: ConcurrentEventFrame,
+    second: ConcurrentEventFrame,
+) bool {
+    return first.generation == second.generation and
+        first.connection_sequence ==
+            second.connection_sequence and
+        first.slot_index == second.slot_index and
+        first.slot_generation == second.slot_generation;
+}
+
+fn validateCompletionAgainstOracle(
+    completion: protocol.CompletionV1,
+    ready: ReadyFrame,
+    oracle: LocalOracle,
+    tenant_key: u64,
+    idempotency_key: []const u8,
+) !void {
+    try require(std.mem.eql(
+        u8,
+        &completion.model_id,
+        &ready.model_id,
+    ));
+    try require(completion.output_count == 1);
+    try require(completion.output_tokens[0] ==
+        oracle.output_token);
+    try require(completion.content_bytes == 1);
+    try require(completion.content[0] ==
+        oracle.content_byte);
+    const request_sha256 = try protocol.requestSha256V1(.{
+        .model_id = &ready.model_id,
+        .tenant_key = tenant_key,
+        .idempotency_key = idempotency_key,
+        .prompt_utf8 = prompt,
+        .max_new_tokens = 1,
+    });
+    try require(std.mem.eql(
+        u8,
+        &completion.request_sha256,
+        &request_sha256,
+    ));
+}
+
+fn completeConcurrentSuccessor(
+    allocator: std.mem.Allocator,
+    ready: ReadyFrame,
+    oracle: LocalOracle,
+    tenant_key: u64,
+    idempotency_key: []const u8,
+) !void {
+    var client = try http_client.ClientV1.initLoopback(
+        allocator,
+        loopback_host,
+        ready.port,
+    );
+    defer client.deinit();
+    const completion = try expectCompletion(
+        try client.completeV1(.{
+            .model_id = &ready.model_id,
+            .tenant_key = tenant_key,
+            .idempotency_key = idempotency_key,
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        }),
+    );
+    try validateCompletionAgainstOracle(
+        completion,
+        ready,
+        oracle,
+        tenant_key,
+        idempotency_key,
+    );
+}
+
+fn validateConcurrentClosedFrames(
+    stdout: std.fs.File,
+    storage: *[frame_max_bytes]u8,
+    generation: u64,
+    profile: WorkerProfile,
+) !void {
+    const snapshot = try parseConcurrentSnapshotFrame(
+        try readFrame(stdout, storage),
+    );
+    const causes = try parseConcurrentCauseFrame(
+        try readFrame(stdout, storage),
+    );
+    const ownership = try parseConcurrentOwnershipFrame(
+        try readFrame(stdout, storage),
+    );
+
+    try require(snapshot.profile == profile);
+    try require(snapshot.generation == generation);
+    const expected_state: server_api.ManagedStateV1 =
+        if (profile == .concurrent_stale_owner_failure)
+            .failed
+        else
+            .stopped;
+    try require(snapshot.state == expected_state);
+    try require(snapshot.worker_count == 1);
+    try require(snapshot.pending_capacity == 1);
+    try require(snapshot.active == 0);
+    try require(snapshot.queued == 0);
+    try require(snapshot.running == 0);
+    try require(snapshot.phase_total == 0);
+    try require(snapshot.queue_high_watermark == 1);
+    try require(snapshot.running_high_watermark == 1);
+    try require(snapshot.enqueued == snapshot.accepted);
+    try require(snapshot.accepted ==
+        snapshot.completed + snapshot.failed);
+    try require(snapshot.event_ordinal ==
+        snapshot.event_count);
+    try require(snapshot.cleanup_failed == 0);
+    try require(snapshot.backpressure_activations != 0);
+
+    const base_event_count: usize = switch (profile) {
+        .concurrent_queued_receive_timeout,
+        .concurrent_queued_full_request_timeout,
+        => 8,
+        .concurrent_drain => 5,
+        .concurrent_stale_owner_failure => 9,
+        else => unreachable,
+    };
+    try require(snapshot.event_count ==
+        base_event_count +
+            @as(
+                usize,
+                @intCast(
+                    snapshot.backpressure_activations +
+                        snapshot.backpressure_resumptions,
+                ),
+            ));
+
+    try require(causes.generation == generation);
+    try require(causes.drain_cancelled_work == 0);
+    try require(causes.failure_cancelled_work == 0);
+    try require(causes.failure_cancelled_response == 0);
+    try require(
+        causes.failure_requested_response_write == 0,
+    );
+    try require(
+        causes.failure_cancelled_response_write == 0,
+    );
+    switch (profile) {
+        .concurrent_queued_receive_timeout => {
+            try require(snapshot.accepted == 3);
+            try require(snapshot.completed == 2);
+            try require(snapshot.failed == 1);
+            try require(snapshot.dispatched == 2);
+            try require(
+                snapshot.backpressure_resumptions ==
+                    snapshot.backpressure_activations,
+            );
+            try require(causes.drain_queued == 0);
+            try require(causes.failure_queued == 0);
+            try require(causes.receive_timeout_queued == 1);
+            try require(
+                causes.full_request_timeout_queued == 0,
+            );
+            try require(causes.drain_signaled == 0);
+            try require(causes.last_drain_phase == .none);
+            try require(causes.failure_signaled == 0);
+            try require(causes.last_failure_phase == .none);
+            try require(causes.receive_timeout_signaled == 1);
+            try require(
+                causes.last_receive_timeout_phase == .queued,
+            );
+            try require(
+                causes.full_request_timeout_signaled == 0,
+            );
+            try require(
+                causes.last_full_request_timeout_phase == .none,
+            );
+        },
+        .concurrent_queued_full_request_timeout => {
+            try require(snapshot.accepted == 3);
+            try require(snapshot.completed == 1);
+            try require(snapshot.failed == 2);
+            try require(snapshot.dispatched == 2);
+            try require(
+                snapshot.backpressure_resumptions ==
+                    snapshot.backpressure_activations,
+            );
+            try require(causes.drain_queued == 0);
+            try require(causes.failure_queued == 0);
+            try require(causes.receive_timeout_queued == 0);
+            try require(
+                causes.full_request_timeout_queued == 1,
+            );
+            try require(causes.drain_signaled == 0);
+            try require(causes.last_drain_phase == .none);
+            try require(causes.failure_signaled == 0);
+            try require(causes.last_failure_phase == .none);
+            try require(causes.receive_timeout_signaled == 0);
+            try require(
+                causes.last_receive_timeout_phase == .none,
+            );
+            try require(
+                causes.full_request_timeout_signaled == 2,
+            );
+            try require(
+                causes.last_full_request_timeout_phase ==
+                    .queued or
+                    causes.last_full_request_timeout_phase ==
+                        .request_admitted,
+            );
+        },
+        .concurrent_drain => {
+            try require(snapshot.accepted == 2);
+            try require(snapshot.completed == 0);
+            try require(snapshot.failed == 2);
+            try require(snapshot.dispatched == 1);
+            try require(
+                snapshot.backpressure_resumptions + 1 ==
+                    snapshot.backpressure_activations,
+            );
+            try require(causes.drain_queued == 1);
+            try require(causes.failure_queued == 0);
+            try require(causes.receive_timeout_queued == 0);
+            try require(
+                causes.full_request_timeout_queued == 0,
+            );
+            try require(causes.drain_signaled == 2);
+            try require(
+                causes.last_drain_phase == .receiving_head,
+            );
+            try require(causes.failure_signaled == 0);
+            try require(causes.last_failure_phase == .none);
+            try require(causes.receive_timeout_signaled == 0);
+            try require(
+                causes.last_receive_timeout_phase == .none,
+            );
+            try require(
+                causes.full_request_timeout_signaled == 0,
+            );
+            try require(
+                causes.last_full_request_timeout_phase == .none,
+            );
+        },
+        .concurrent_stale_owner_failure => {
+            try require(snapshot.accepted == 3);
+            try require(snapshot.completed == 1);
+            try require(snapshot.failed == 2);
+            try require(snapshot.dispatched == 2);
+            try require(
+                snapshot.backpressure_resumptions + 1 ==
+                    snapshot.backpressure_activations,
+            );
+            try require(causes.drain_queued == 0);
+            try require(causes.failure_queued == 1);
+            try require(causes.receive_timeout_queued == 0);
+            try require(
+                causes.full_request_timeout_queued == 0,
+            );
+            try require(causes.drain_signaled == 0);
+            try require(causes.last_drain_phase == .none);
+            try require(causes.failure_signaled == 1);
+            try require(
+                causes.last_failure_phase ==
+                    .request_admitted,
+            );
+            try require(causes.receive_timeout_signaled == 0);
+            try require(
+                causes.last_receive_timeout_phase == .none,
+            );
+            try require(
+                causes.full_request_timeout_signaled == 0,
+            );
+            try require(
+                causes.last_full_request_timeout_phase == .none,
+            );
+        },
+        else => unreachable,
+    }
+
+    try require(ownership.generation == generation);
+    try require(ownership.service_active == 0);
+    try require(ownership.recovery_required == 0);
+    try require(ownership.failed_records == 0);
+    try require(ownership.scheduler_zero == 1);
+    try require(ownership.bank_zero == 1);
+    try require(ownership.serve_joined == 1);
+    try require(ownership.serving == 0);
+    switch (profile) {
+        .concurrent_queued_receive_timeout => {
+            try require(ownership.terminal_records == 2);
+            try require(ownership.completed_records == 2);
+            try require(ownership.cancelled_records == 0);
+        },
+        .concurrent_queued_full_request_timeout => {
+            try require(ownership.terminal_records == 2);
+            try require(ownership.completed_records == 1);
+            try require(ownership.cancelled_records == 1);
+        },
+        .concurrent_drain => {
+            try require(ownership.terminal_records == 0);
+            try require(ownership.completed_records == 0);
+            try require(ownership.cancelled_records == 0);
+        },
+        .concurrent_stale_owner_failure => {
+            try require(ownership.terminal_records == 1);
+            try require(ownership.completed_records == 0);
+            try require(ownership.cancelled_records == 1);
+        },
+        else => unreachable,
+    }
+}
+
+fn connectReadyPeer(ready: ReadyFrame) !std.net.Stream {
+    const address = try std.net.Address.parseIp(
+        loopback_host,
+        ready.port,
+    );
+    return std.net.tcpConnectToAddress(address);
+}
+
+fn openModelsPeer(ready: ReadyFrame) !std.net.Stream {
+    const peer = try connectReadyPeer(ready);
+    errdefer peer.close();
+    var storage: [256]u8 = undefined;
+    const request = try std.fmt.bufPrint(
+        &storage,
+        "GET {s} HTTP/1.1\r\n" ++
+            "Host: {s}:{d}\r\n" ++
+            "Connection: close\r\n\r\n",
+        .{
+            protocol.models_path_v1,
+            loopback_host,
+            ready.port,
+        },
+    );
+    try peer.writeAll(request);
+    return peer;
 }
 
 fn openCompletionPeer(

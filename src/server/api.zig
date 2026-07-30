@@ -299,6 +299,19 @@ pub const ManagedConcurrentObserverV1 = struct {
     }
 };
 
+/// Optional evidence and work-boundary controls for concurrent serving.
+///
+/// Work callbacks are a control seam: they can block, fail, and change request
+/// timing or outcome. They remain serialized by the HTTP runtime's request
+/// mutex. The caller owns both callback contexts and must keep them alive until
+/// the serving call returns after every fixed worker and the shared watchdog
+/// join. Event callbacks retain the evidence-only, outside-lock semantics
+/// documented by the serving entrypoint.
+pub const ManagedConcurrentControlsV1 = struct {
+    event_observer: ?ManagedConcurrentObserverV1 = null,
+    work_control: ?prepared_http.RequestWorkControlV1 = null,
+};
+
 pub const ManagedConnectionPhaseCountsV1 = struct {
     queued: u8 = 0,
     receiving_head: u8 = 0,
@@ -2992,6 +3005,7 @@ const ManagedConcurrentThreadContextV1 = struct {
     lifecycle: *ManagedConcurrentLifecycleV1,
     runtime: *prepared_http.RuntimeV1,
     config: ServerConfig,
+    work_observer: ?prepared_http.RequestWorkControlV1 = null,
     worker_index: u8 = 0,
 };
 
@@ -3001,12 +3015,28 @@ pub fn serveManagedConcurrentListenerV1(
     runtime: *prepared_http.RuntimeV1,
     lifecycle: *ManagedConcurrentLifecycleV1,
 ) !void {
-    return serveManagedConcurrentListenerWithObserverV1(
+    return serveManagedConcurrentListenerWithControlsV1(
         listener,
         config,
         runtime,
         lifecycle,
-        null,
+        .{},
+    );
+}
+
+pub fn serveManagedConcurrentListenerWithObserverV1(
+    listener: *std.net.Server,
+    config: ServerConfig,
+    runtime: *prepared_http.RuntimeV1,
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    observer: ?ManagedConcurrentObserverV1,
+) !void {
+    return serveManagedConcurrentListenerWithControlsV1(
+        listener,
+        config,
+        runtime,
+        lifecycle,
+        .{ .event_observer = observer },
     );
 }
 
@@ -3014,16 +3044,20 @@ pub fn serveManagedConcurrentListenerV1(
 /// worker pool. Backpressure is passive: when the accepted FIFO is full the
 /// acceptor waits, leaving additional peers in the kernel listen backlog.
 ///
-/// The observer is evidence-only. Its callback runs outside every lifecycle,
-/// runtime, service, and socket-control mutex and cannot change a production
-/// winner. Callbacks may be concurrent and delivered out of ordinal order;
-/// the context must be thread-safe and remain valid until this call returns.
-pub fn serveManagedConcurrentListenerWithObserverV1(
+/// The event observer is evidence-only. Its callback runs outside every
+/// lifecycle, runtime, service, and socket-control mutex and cannot change a
+/// production winner. Event callbacks may be concurrent and delivered out of
+/// ordinal order, so their context must be thread-safe. Work callbacks run
+/// only inside the runtime's serialized request section; they are controls and
+/// may block, fail, or change a request outcome. All caller-owned callback
+/// contexts must remain alive until this call returns after every worker and
+/// the watchdog join.
+pub fn serveManagedConcurrentListenerWithControlsV1(
     listener: *std.net.Server,
     config: ServerConfig,
     runtime: *prepared_http.RuntimeV1,
     lifecycle: *ManagedConcurrentLifecycleV1,
-    observer: ?ManagedConcurrentObserverV1,
+    controls: ManagedConcurrentControlsV1,
 ) !void {
     try validateConfig(config);
     try validateManagedConcurrentConfigV1(lifecycle.config);
@@ -3053,7 +3087,7 @@ pub fn serveManagedConcurrentListenerWithObserverV1(
         return LifecycleError.InvalidTransition;
     }
     lifecycle.serving = true;
-    lifecycle.observer = observer;
+    lifecycle.observer = controls.event_observer;
     lifecycle.managed.mutex.unlock();
 
     const listener_mode =
@@ -3080,6 +3114,7 @@ pub fn serveManagedConcurrentListenerWithObserverV1(
             .lifecycle = lifecycle,
             .runtime = runtime,
             .config = config,
+            .work_observer = controls.work_control,
             .worker_index = worker_count,
         };
         worker_threads[worker_count] = std.Thread.spawn(
@@ -3500,7 +3535,7 @@ fn managedConcurrentWorkerLoopV1(
             context.config.response_write_quantum_bytes,
             receive_timer,
             full_request_timer,
-            null,
+            context.work_observer,
             null,
             .shared_watchdog,
         ) catch |err| blk: {

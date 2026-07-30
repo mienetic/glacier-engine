@@ -317,7 +317,8 @@ transport-failure counters are not relabeled.
 
 The implemented Phase F1 path adds `ManagedConcurrentLifecycleV1`,
 `serveManagedConcurrentListenerV1`,
-`serveManagedConcurrentListenerWithObserverV1`, and
+`serveManagedConcurrentListenerWithObserverV1`,
+`serveManagedConcurrentListenerWithControlsV1`, and
 `requestManagedConcurrentDrainAndWakeV1`. Its
 `ManagedConcurrentConfigV1` accepts a fixed `1..16` workers and a fixed
 `1..64` pending connections (defaults `2/8`). Worker plus pending capacity is
@@ -420,8 +421,32 @@ Phase F1 concurrent serving is explicitly unsupported on Windows today: the
 entrypoint returns `ConcurrentListenerModeUnsupported` before worker/watchdog
 startup because it cannot prove and restore the caller's original `FIONBIO`
 mode. Native Windows serving therefore remains pending and unproven. The
-real-process fixture described next still stops at Phase E2b and must not be
-cited as Phase F1 process evidence.
+real-process fixture described next now separately retains Phase F1
+correctness in native POSIX child processes over real loopback sockets; that
+does not turn the same-process gate into process evidence or establish native
+Windows behavior.
+
+The Phase F1 child-process campaign has four profiles. A queued receive
+deadline expires while active terminal work completes, and the child then
+serves a healthy successor. A queued accept-origin full-request deadline
+expires before another healthy successor. Two drain callers start
+simultaneously against one active receive plus one queued connection. Finally,
+a retired connection slot is reused at a higher slot generation before a
+stale owner is rejected and queued/running connections converge through
+fail-closed cleanup. The receive-timeout profile closes with
+accepted/completed/failed `3/2/1` and two completed service records. The
+full-request-timeout profile closes at `3/1/2` with one completed and one
+cancelled service record. That last profile deliberately corrupts only the
+retained owner metadata as a white-box fault injection; the exact
+generation-mismatch rejection and cleanup use the production drain and
+failure paths. Drain has already won the model-work cancellation before that
+injected mismatch is applied, so this profile does not prove
+transport-failure-driven model cancellation. Every profile verifies exact
+aggregate event/cause conservation, unique contiguous event ordinals, joined
+threads, and final zero connection, Service, Scheduler, and Bank ownership.
+The campaign uses real child processes and TCP loopback over a generated
+synthetic tiny-model fixture. It is correctness evidence, not load, latency,
+throughput, GPU, or native foreign-OS evidence.
 
 The focused real-process fixture uses one executable in supervisor and child
 worker modes. The ordinary clean path accepts `drain\n` followed by EOF or
@@ -548,15 +573,17 @@ zig build unary-server-process-compile \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
-The ReleaseSafe `unary-http-test` command above now retains Phase F1
+The ReleaseSafe `unary-http-test` command above retains Phase F1 same-process
 native-loopback scenarios A-D: sibling liveness, accepted-FIFO
 backpressure/order, exact queued full-request timeout, and repeated drain with
 conservation plus zero ownership.
 
-These existing process commands currently retain Phases A-D through Phase E2b
-only. They do not yet execute the Phase F1
-fixed-worker/FIFO/shared-watchdog entry points. Neither their E2b evidence nor
-the passing same-process HTTP root is Phase F1 real-process evidence.
+The existing process commands retain Phases A-D through Phase E2b and the four
+Phase F1 native POSIX child-process profiles described above. Phase F1 uses
+the production fixed-worker/FIFO/shared-watchdog path and the existing
+dual-mode executable, test root, and compile companion; it adds no artifact or
+build target. The same-process HTTP root and the child-process root remain
+separate evidence surfaces.
 
 The acceptance fixture uses a generated `32/64/1/256` ordinary package. It
 checks two-request interleaving against independent generation oracles, active
@@ -567,7 +594,8 @@ acceptance separately reuses one dual-mode executable for its supervisor,
 clean/restart children, Phase B drain children, Phase C receive-timeout
 children, the Phase D cancellation-wins and completion-wins children, and the
 Phase E1 reset/response-ready children plus the Phase E2a response-writing
-drain/completion siblings and Phase E2b elapsed-timeout children; Phases B-E2b
+drain/completion siblings, Phase E2b elapsed-timeout children, and the Phase
+F1 queued-timeout, simultaneous-drain, and stale-owner children; Phases B-F1
 add no artifact or build target. It is
 host real-process lifecycle evidence rather than a production daemon or native
 foreign-target run.
@@ -602,8 +630,8 @@ installed text-runtime golden path in one Zig invocation.
 This surface establishes an experimental loopback socket, bounded JSON
 profile, retained client, focused managed child-process evidence through Phase
 E2b, and a Phase F1 concurrent-transport implementation with deterministic
-native-loopback correctness retained. Phase C remains the shorter
-pre-admission receive boundary. Phase D
+same-process plus native POSIX child-process loopback correctness retained.
+Phase C remains the shorter pre-admission receive boundary. Phase D
 cancels admitted execution only when managed drain wins. Phase E1 detects a
 reset only at a between-quantum checkpoint and cancels a response at
 `response_ready`, before its first write. Phase E2a bounds managed kernel sends
@@ -617,8 +645,8 @@ Phase F1 makes multiple transport workers available around one bounded
 accepted FIFO, but model admission and execution remain serialized. FIFO
 therefore says nothing about completion order or scheduler fairness. Passive
 accept backpressure leaves peers in the kernel backlog and sends no pre-parse
-429/503. The current evidence does not yet validate this concurrent path in a
-retained real-process campaign.
+429/503. The retained real-process campaign validates bounded correctness,
+cleanup, and ownership; it is not a native-load or performance campaign.
 
 This work does not establish a packaged production daemon, non-loopback
 serving, streaming publication, durable idempotency or crash recovery,
@@ -628,21 +656,16 @@ performance. Retained-target compilation is not native Windows or FreeBSD
 serving proof, and native reset, response-write, deadline, queue, watchdog, and
 drain behavior on those systems remains unproven. The next serving slices are:
 
-1. retain a distinct Phase F1 real-process campaign for process control,
-   queued receive and full-request deadline expiry, failure cleanup,
-   stale-owner rejection, exact counter conservation, drain/join, healthy
-   successor service, and final zero transport/service/Bank ownership; the
-   current `unary-server-process-test` stops at Phase E2b;
-2. after that real-process gate, run a separate native-load campaign reporting
+1. run a separate native-load campaign reporting
    accept/admission and queue delay, HTTP first-byte latency for this
    non-streaming unary profile, terminal-response latency, throughput, outcome
    mix, and cleanup under a declared machine/OS/backend/power/thermal
    envelope; do not label HTTP first byte as first-token latency or infer
    fairness, GPU performance, or native foreign-OS behavior;
-3. extend abandonment detection to orderly FIN with exact connection outcome
+2. extend abandonment detection to orderly FIN with exact connection outcome
    accounting;
-4. add forced process-death evidence independently of checkpoint-aware drain
+3. add forced process-death evidence independently of checkpoint-aware drain
    and durable restart;
-5. add committed-token streaming without exposing an unpublished token; and
-6. add authenticated authority, quota, and transport-security adapters around
+4. add committed-token streaming without exposing an unpublished token; and
+5. add authenticated authority, quota, and transport-security adapters around
    the unchanged execution state machine.
