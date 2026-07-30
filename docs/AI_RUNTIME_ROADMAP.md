@@ -2234,28 +2234,47 @@ Scheduler, and Bank ownership. The campaign uses real child processes and TCP
 loopback over a generated synthetic tiny-model fixture; it is not load evidence
 and establishes no native Windows concurrent-serving behavior.
 
-A separate opt-in `unary-server-native-load-test` now reuses the exact process
-artifact and compile root. One real native child runs nine settled waves of
-eight requests over real loopback sockets: 8 warmup plus 64 measured requests
-across eight flows, two transport workers, and eight pending slots. The fixed
-79,780-byte envelope contains exact request-to-work/transport and
-HTTP-response-handle correlation, output/terminal/completion roots,
-lifecycle-linearized server timestamps, client HTTP boundaries, a 28-field
-terminal closure, and an embedded Native Workload Report V1. The independent
-verifier binds a fresh challenge, executable identity before and after the
-run, machine/boot identity, the exact all-completed outcome mix, throughput,
-latency distributions, thread joins, and final zero connection, Service,
-Scheduler, and Bank ownership.
+A separate opt-in `unary-server-native-load-test` reuses the exact process
+artifact and compile root. Its default fixed profile runs one real native child
+through nine settled waves of eight requests over real loopback sockets: 8
+warmup plus 64 measured requests across eight flows, two transport workers,
+and eight pending slots. The fixed 79,780-byte envelope contains exact
+request-to-work/transport and HTTP-response-handle correlation,
+output/terminal/completion roots, lifecycle-linearized server timestamps,
+client HTTP boundaries, a 28-field terminal closure, and an embedded Native
+Workload Report V1. The independent verifier binds a fresh challenge,
+executable identity before and after the run, machine/boot identity, the exact
+all-completed outcome mix, throughput, latency distributions, thread joins,
+and final zero connection, Service, Scheduler, and Bank ownership.
+
+The same target and artifact select a second fixed profile with
+`-Dunary-server-native-load-profile=retention-capacity-v1`. It also retains 72
+records: all 8 warmup requests complete, then the measured cohort contains
+exactly 32 completions and 32 HTTP 429 `service_capacity` responses. Each of
+the eight flows has four of each outcome. A profile-specific transport sidecar
+and the embedded Native Workload Report V1 bind the canonical request, exact
+`service_capacity` error, `same_request_after_backoff` disposition, HTTP 429,
+response byte count, transport lifecycle, and absence of admitted work. For a
+rejection, the sidecar response-handle slot is a domain-separated opaque
+producer observation of raw HTTP; the raw bytes are not retained or
+reconstructable by the offline verifier. Its separately domain-separated
+`output_sha256` slot is instead the semantic root that verifier recomputes from
+that exact tuple. The sidecar completion root binds both, while the embedded W6
+output root remains zero because no model output exists. The service reaches
+its exact 40-terminal-record capacity and closes with zero connection, active
+service, Scheduler, and Bank ownership.
 
 The load target is manual, uses `-j1`, and is absent from default tests and
 automatic CI. Native macOS may mark the environment eligible only after stable
 power, Low Power Mode, thermal-constraint, external-CPU-load, CPU-drift, and
-host/boot gates pass. Linux executes and verifies the native profile but
+host/boot gates pass. Linux executes and verifies either native profile but
 currently remains ineligible because external CPU-load attribution is
-unavailable. This initial tiny serialized CPU profile does not establish
-overload, capacity rejection, representative model performance, first-token
-latency, fairness, completion order, concurrent model execution, physical CPU
-parallelism, GPU performance, or another operating system's behavior.
+unavailable. The capacity profile is retained-record capacity saturation. It
+does not establish transient, general, or open-loop overload, queued-timeout
+behavior, throughput superiority, representative model performance,
+first-token latency, fairness, completion order, concurrent model execution,
+physical CPU parallelism, GPU behavior, or another operating system's
+behavior.
 
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
@@ -2365,13 +2384,17 @@ coverage, and fail-closed ownership cleanup. They add no concurrent model
 execution. The retained unary roots additionally supply exact cause-specific
 post-parse observability for service-capacity and Scheduler rejection,
 including managed connection-owner decoration and Scheduler event identity.
-The separate opt-in native-load profile adds one exact all-completed
-CPU/loopback latency and throughput result under its captured environment; it
-adds no overload, production-model, first-token, fairness,
-physical-parallelism, or GPU result. Retained-target
+The separate opt-in native-load target adds one exact all-completed
+CPU/loopback result and one exact retained-record-capacity result under their
+captured environments. The capacity profile proves only its fixed
+retained-record saturation and does not establish transient or general
+overload, queued-timeout behavior, throughput superiority, production-model
+behavior, first-token evidence, fairness, physical parallelism, or a GPU
+result. Retained-target
 compile closure is not native serving proof on Windows or FreeBSD; native
 reset, response-write, deadline, queue, watchdog, and drain behavior on those
-systems remains unproven. Next comes broader overload/rejection,
+systems remains unproven. Next comes queued-timeout and broader overload
+profiles,
 production-model, repeated-machine, publication-eligible native Linux, and
 separately declared GPU load evidence.
 Orderly-FIN abandonment remains a separate open boundary and requires explicit
@@ -2467,8 +2490,9 @@ that bounded transport queue, fixed worker pool, shared watchdog, passive
 accept backpressure, joined drain, and retained deterministic native-loopback
 correctness, including its native POSIX child-process profiles, but still adds
 no concurrent model execution. Its separate opt-in native-load target supplies
-only one fixed all-completed CPU/loopback profile. Production artifacts,
-remote delivery,
+one fixed all-completed CPU/loopback profile and one fixed
+retained-record-capacity profile; queued-timeout and explicit open-loop
+campaigns remain unproven. Production artifacts, remote delivery,
 broader tokenizers/models, GPU package execution, and native multi-OS runtime
 requirements remain open. The combined
 49-boundary worker now carries an admitted ordinary-profile bundle, while a

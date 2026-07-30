@@ -583,6 +583,10 @@ Run the separate native-load profile only on an otherwise quiet native host:
 ```sh
 zig build unary-server-native-load-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j1
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-profile=retention-capacity-v1
 ```
 
 The load capture uses the optional `RequestWorkControlV1.published_fn`
@@ -593,30 +597,74 @@ synchronous while the HTTP request mutex remains held, but lifecycle/control
 and Service locks do not; it must be bounded, non-blocking, and must not
 re-enter serving.
 
+The capacity profile additionally uses
+`RequestWorkControlV1.admission_rejected_fn`.
+`RequestAdmissionRejectionV1` is delivered after canonical Service admission
+and its nested control locks return, before response handling, and before any
+work publication for that attempt. The managed adapter forwards the exact
+request SHA-256 and rejection cause, then replaces the optional transport
+owner with the fenced managed owner assigned to that attempt. Like
+`published_fn`, this callback is synchronous while the HTTP request mutex
+remains held; lifecycle, control, and Service locks are not held. It must
+remain bounded and non-blocking and must not re-enter serving.
+
 This manual target reuses the exact `glacier-unary-server-process-test`
 artifact, then runs it alone as a real child process over loopback. It adds no
 compile root and is not part of the default build, `affected-fast`, ordinary
 CI, or the correctness targets above. Optional
 `-Dunary-server-native-load-output=PATH` and
 `-Dunary-server-native-load-manifest-output=PATH` retain the verified
-79,780-byte envelope and its JSON capture manifest atomically.
+profile-specific envelope and its JSON capture manifest atomically. The
+default all-completed profile retains the existing 79,780-byte envelope.
 
-The fixed profile runs 8 warmup and 64 measured requests in eight flows, with
-2 transport workers and 8 pending slots. It correlates each client request
-with the exact server enqueue, worker dispatch, admitted-work publication, and
-transport/connection retirement observations. Its embedded W6 report retains
-accept/enqueue delay, queue delay, HTTP first-positive-read latency, decoded
-terminal-response latency, exact throughput rational, all-completed outcome
-mix, and zero connection, Service, Scheduler, and Bank ownership at close.
-With 64 measured records, nearest-rank p99 is the measured maximum; it is not
-a tail estimate for a wider population.
+The default fixed profile runs 8 warmup and 64 measured requests in eight
+flows, with 2 transport workers and 8 pending slots. It correlates each client
+request with the exact server enqueue, worker dispatch, admitted-work
+publication, and transport/connection retirement observations. Its embedded
+W6 report retains accept/enqueue delay, queue delay, HTTP first-positive-read
+latency, decoded terminal-response latency, exact throughput rational,
+all-completed outcome mix, and zero connection, Service, Scheduler, and Bank
+ownership at close. With 64 measured records, nearest-rank p99 is the measured
+maximum; it is not a tail estimate for a wider population.
 
-The event mapping is explicit: arrival is immediately before client connect;
-admission is the accepted connection entering the FIFO; first service is
-worker dispatch; submit return is the exact admitted-work observation; first
-output is the client's first positive HTTP read; terminal is complete response
-decode plus oracle validation; and settlement is the later of client
-settlement and exact server transport/connection retirement. Lifecycle event
+The `retention-capacity-v1` selector keeps the same target, artifact, native
+child, transport configuration, eight flows, and 72-record shape. Its 8
+warmup requests complete. The measured cohort then retains exactly 32
+completed responses and 32 HTTP 429 `service_capacity` responses, balanced as
+four completions and four rejections in every flow. Service terminal-record
+capacity is fixed at 40, exactly the 8 warmup plus 32 measured completions.
+Rejected requests create no service work record or Bank admission.
+
+The capacity profile's outer sidecar correlates every canonical request with
+its transport owner, enqueue, worker dispatch, terminal HTTP observation, and
+transport/connection retirement. Completed records additionally bind the
+admitted work and output/terminal/completion roots. For rejected records,
+`response_handle_sha256` is a domain-separated, producer-observed opaque
+digest over the raw HTTP response. The envelope does not retain those raw
+bytes, so the offline verifier cannot reconstruct or recompute that digest.
+It instead independently recomputes the separately domain-separated semantic
+root stored in the rejected-only sidecar `output_sha256` slot from the
+canonical request SHA-256, `service_capacity`,
+`same_request_after_backoff`, HTTP 429, and retained response byte count. That
+slot is not a model-output root: the capacity-rejected embedded W6 output root
+remains zero because no model output exists. The sidecar completion root binds
+the request, opaque raw-response digest, semantic root, response byte count,
+and terminal root. Its embedded W6 records and independently recomputed
+summary retain the exact `32/32` measured outcome mix and `4/4` per-flow
+distribution. Final closure requires zero connection, active service,
+Scheduler, and Bank ownership while the 40 terminal service records remain
+retained capacity, not live ownership.
+
+For completed requests, the event mapping is explicit: arrival is immediately
+before client connect; admission is the accepted connection entering the
+FIFO; first service is worker dispatch; submit return is the exact
+admitted-work observation; first output is the client's first positive HTTP
+read; terminal is complete response decode plus oracle validation; and
+settlement is the later of client settlement and exact server
+transport/connection retirement. A capacity-rejected W6 record retains only
+arrival, terminal error decode, and settlement, while its transport-specific
+outer sidecar retains enqueue, dispatch, owner, and retirement correlation;
+this does not relabel transport dispatch as service admission. Lifecycle event
 timestamps are captured at the same mutex linearization boundary as their
 ordinals, not when an outside-lock observer callback happens to run.
 
@@ -629,12 +677,15 @@ observer cannot attribute external CPU load strongly enough. Other operating
 systems reject before execution. Missing telemetry stays unavailable; it is
 never encoded as a measured zero.
 
-This profile uses the tiny deterministic CPU fixture and completes every
-measured request. It is not overload or rejection evidence, and it makes no
-production-model, first-token, fairness, physical-parallelism, GPU,
-temperature, frequency, power, energy, or foreign-OS performance claim. HTTP
-first byte is a transport observation, not first-token latency. A passing run
-is evidence for that exact executable, machine, environment, and profile only.
+Both profiles use the tiny deterministic serialized CPU fixture. The default
+profile completes every measured request. The selected capacity profile proves
+only retained-record capacity saturation; it is not transient, general, or
+open-loop overload, a queued-timeout campaign, or throughput-superiority
+evidence. Neither profile establishes production-model behavior, first-token
+latency, fairness, physical parallelism, GPU behavior, temperature, frequency,
+power, energy, or foreign-OS evidence. HTTP first byte is a transport
+observation, not first-token latency. A passing run is evidence for that exact
+executable, machine, environment, and selected profile only.
 
 The ReleaseSafe `unary-http-test` command above retains Phase F1 same-process
 native-loopback behavior scenarios A-D: sibling liveness, accepted-FIFO
@@ -715,8 +766,8 @@ accepted FIFO, but model admission and execution remain serialized. FIFO
 therefore says nothing about completion order or scheduler fairness. Passive
 accept backpressure leaves peers in the kernel backlog and sends no pre-parse
 429/503. The retained correctness campaign validates bounded lifecycle and
-ownership. The separate opt-in native-load profile measures only its declared
-all-completed deterministic CPU workload.
+ownership. The separate opt-in native-load target measures only its declared
+all-completed or retained-record-capacity deterministic CPU profile.
 
 `RequestWorkControlV1.admission_rejected_fn` is an optional evidence boundary
 for a canonical request whose Service admission returns either
@@ -753,14 +804,16 @@ is not native Windows or FreeBSD serving proof, and native reset,
 response-write, deadline, queue, watchdog, and drain behavior on those systems
 remains unproven. The next serving slices are:
 
-1. broaden the initial fixed all-completed native CPU load capture with
-   overload/capacity-rejection, queued-timeout, and mixed-outcome profiles,
-   then retain eligible captures across reproducible native machines. Continue
-   to report accept/admission and queue delay, HTTP first-byte latency for this
-   non-streaming unary profile, terminal-response latency, throughput, outcome
-   mix, and cleanup under a declared machine/OS/backend/power/thermal envelope;
-   do not label HTTP first byte as first-token latency or infer fairness, GPU
-   performance, or native foreign-OS behavior;
+1. broaden the fixed all-completed and retained-record-capacity native CPU
+   profiles with queued-timeout and additional mixed-outcome profiles, then
+   retain eligible captures across reproducible native machines. Continue to
+   report only profile-defined transport timing, FIFO queue delay, HTTP
+   first-byte latency for this non-streaming unary profile,
+   terminal-response latency, throughput, outcome mix, and cleanup under a
+   declared machine/OS/backend/power/thermal envelope; do not label HTTP first
+   byte as first-token latency, treat retained-record saturation as throughput
+   superiority, or infer fairness, GPU performance, or native foreign-OS
+   behavior;
 2. define body-complete half-close, cancellation, response, and outcome
    ownership policy before extending orderly-FIN abandonment detection with
    exact connection accounting;

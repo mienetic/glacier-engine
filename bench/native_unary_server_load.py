@@ -39,6 +39,8 @@ from bench import native_workload_report
 
 MAGIC = b"GF1LOAD1"
 OUTER_ABI = 0x4746314C00000001
+RETENTION_CAPACITY_MAGIC = b"GF1CAP01"
+RETENTION_CAPACITY_OUTER_ABI = 0x4746314300000001
 HEADER_BYTES = 40
 SIDECAR_BYTES = 296
 CLOSURE_U64_COUNT = 28
@@ -71,15 +73,40 @@ MAX_BOUNDARY_CPU_DRIFT_PPM = 300_000
 
 BODY_DOMAIN = b"glacier-f1-native-unary-load-body-v1\x00"
 FOOTER_DOMAIN = b"glacier-f1-native-unary-load-footer-v1\x00"
+RETENTION_CAPACITY_BODY_DOMAIN = (
+    b"glacier-f1-native-unary-retention-capacity-body-v1\x00"
+)
+RETENTION_CAPACITY_FOOTER_DOMAIN = (
+    b"glacier-f1-native-unary-retention-capacity-footer-v1\x00"
+)
 PIN_DOMAIN = b"glacier-f1-native-unary-load-pin-v1\x00"
 DISPATCH_DOMAIN = b"glacier-f1-native-unary-load-dispatch-v1\x00"
 SUBMISSION_DOMAIN = b"glacier-f1-native-unary-load-submission-v1\x00"
 ORACLE_DOMAIN = b"glacier-f1-native-unary-load-oracle-v1\x00"
+# Producer-side ABI identity only: the offline verifier does not retain the
+# raw HTTP bytes needed to recompute this opaque digest.
+RETENTION_CAPACITY_RESPONSE_EVIDENCE_DOMAIN = (
+    b"glacier-f1-native-unary-retention-capacity-http-response-v1\x00"
+)
+RETENTION_CAPACITY_RESPONSE_SEMANTICS_DOMAIN = (
+    b"glacier-f1-native-unary-retention-capacity-http-semantics-v1\x00"
+)
+RETENTION_CAPACITY_TERMINAL_DOMAIN = (
+    b"glacier-f1-native-unary-retention-capacity-terminal-v1\x00"
+)
+RETENTION_CAPACITY_COMPLETION_DOMAIN = (
+    b"glacier-f1-native-unary-retention-capacity-completion-v1\x00"
+)
 
 WORKLOAD_ID = b"glacier-f1-native-unary-load-workload/v1"
 PROFILE_ID = (
     b"glacier-f1-native-unary-load-profile/"
     b"8-warmup-64-measured-8-flow-2-worker/v1"
+)
+RETENTION_CAPACITY_PROFILE_ID = (
+    b"glacier-f1-native-unary-load-profile/"
+    b"retention-capacity-8-warmup-32-completed-32-rejected-"
+    b"8-flow-2-worker-40-record/v1"
 )
 BACKEND_ID = b"glacier-prepared-text-unary-cpu-backend/v1"
 DEVICE_ID = b"host-cpu-device-physical-metrics-unavailable/v1"
@@ -87,8 +114,21 @@ PLACEMENT_ID = b"managed-concurrent-loopback-2-worker-8-pending/v1"
 HOST_SOURCE_ID = b"f1-native-load-parent-child-observers/v1"
 DEVICE_SOURCE_ID = b"f1-native-load-device-observer-unsupported/v1"
 DEVICE_CLOCK_ID = b"f1-native-load-device-clock-unsupported/v1"
-PROCESS_GENERATION = 0x4753505200000115
+PROCESS_GENERATION = 0x4753505200000116
+RETENTION_CAPACITY_PROCESS_GENERATION = 0x4753505200000117
 ZERO_DIGEST = b"\x00" * 32
+NO_QUEUE_SLOT = (1 << 32) - 1
+OUTCOME_COMPLETED = 0
+OUTCOME_CAPACITY_REJECTED = 1
+CAPACITY_REJECTED_PRESENCE = 0x61
+SUCCESSFUL_PROFILE_NAME = "successful-v1"
+RETENTION_CAPACITY_PROFILE_NAME = "retention-capacity-v1"
+RETENTION_CAPACITY_COMPLETED_RECORDS = 40
+RETENTION_CAPACITY_MEASURED_COMPLETED = 32
+RETENTION_CAPACITY_MEASURED_REJECTED = 32
+RETENTION_CAPACITY_ERROR_CODE = 11
+RETENTION_CAPACITY_RETRY_DISPOSITION = 1
+RETENTION_CAPACITY_HTTP_STATUS = 429
 
 SIDECAR_STRUCT = struct.Struct(
     "<II11Q4BI32s32s32s32s32s32s"
@@ -98,6 +138,60 @@ HEADER_STRUCT = struct.Struct("<8sQQIIII")
 
 class VerificationError(ValueError):
     """The native load output or its environment is not admissible."""
+
+
+@dataclass(frozen=True)
+class CampaignProfile:
+    name: str
+    producer_mode: str
+    magic: bytes
+    outer_abi: int
+    body_domain: bytes
+    footer_domain: bytes
+    profile_id: bytes
+    process_generation: int
+    measured_completed: int
+    measured_capacity_rejected: int
+    service_completed_records: int
+
+
+SUCCESSFUL_PROFILE = CampaignProfile(
+    SUCCESSFUL_PROFILE_NAME,
+    "--native-load",
+    MAGIC,
+    OUTER_ABI,
+    BODY_DOMAIN,
+    FOOTER_DOMAIN,
+    PROFILE_ID,
+    PROCESS_GENERATION,
+    MEASURED_COUNT,
+    0,
+    RECORD_COUNT,
+)
+RETENTION_CAPACITY_PROFILE = CampaignProfile(
+    RETENTION_CAPACITY_PROFILE_NAME,
+    "--native-load-retention-capacity",
+    RETENTION_CAPACITY_MAGIC,
+    RETENTION_CAPACITY_OUTER_ABI,
+    RETENTION_CAPACITY_BODY_DOMAIN,
+    RETENTION_CAPACITY_FOOTER_DOMAIN,
+    RETENTION_CAPACITY_PROFILE_ID,
+    RETENTION_CAPACITY_PROCESS_GENERATION,
+    RETENTION_CAPACITY_MEASURED_COMPLETED,
+    RETENTION_CAPACITY_MEASURED_REJECTED,
+    RETENTION_CAPACITY_COMPLETED_RECORDS,
+)
+CAMPAIGN_PROFILES = {
+    SUCCESSFUL_PROFILE.name: SUCCESSFUL_PROFILE,
+    RETENTION_CAPACITY_PROFILE.name: RETENTION_CAPACITY_PROFILE,
+}
+
+
+def _campaign_profile(name: str) -> CampaignProfile:
+    try:
+        return CAMPAIGN_PROFILES[name]
+    except KeyError as error:
+        raise VerificationError("unsupported native load profile: %s" % name) from error
 
 
 def _require(condition: bool, message: str) -> None:
@@ -169,6 +263,7 @@ class Sidecar:
     output_sha256: bytes
     terminal_sha256: bytes
     completion_sha256: bytes
+    outcome: int = OUTCOME_COMPLETED
 
 
 @dataclass(frozen=True)
@@ -216,7 +311,11 @@ class VerifiedEnvelope:
     outer_sha256: bytes
 
 
-def _parse_sidecar_exact(encoded: bytes, offset: int) -> Sidecar:
+def _parse_sidecar_exact(
+    encoded: bytes,
+    offset: int,
+    campaign: CampaignProfile = SUCCESSFUL_PROFILE,
+) -> Sidecar:
     (
         ordinal,
         response_bytes,
@@ -234,7 +333,7 @@ def _parse_sidecar_exact(encoded: bytes, offset: int) -> Sidecar:
         slot_index,
         worker_index,
         content_byte,
-        reserved,
+        outcome,
         output_token,
         request_sha256,
         response_handle_sha256,
@@ -243,7 +342,13 @@ def _parse_sidecar_exact(encoded: bytes, offset: int) -> Sidecar:
         terminal_sha256,
         completion_sha256,
     ) = SIDECAR_STRUCT.unpack_from(encoded, offset)
-    _require(reserved == 0, "sidecar reserved byte is nonzero")
+    if campaign.name == SUCCESSFUL_PROFILE_NAME:
+        _require(outcome == OUTCOME_COMPLETED, "sidecar reserved byte is nonzero")
+    else:
+        _require(
+            outcome in {OUTCOME_COMPLETED, OUTCOME_CAPACITY_REJECTED},
+            "sidecar outcome is invalid",
+        )
     return Sidecar(
         ordinal,
         response_bytes,
@@ -268,12 +373,16 @@ def _parse_sidecar_exact(encoded: bytes, offset: int) -> Sidecar:
         output_sha256,
         terminal_sha256,
         completion_sha256,
+        outcome,
     )
 
 
 def _parse_outer(
     encoded: bytes,
+    *,
+    profile_name: str = SUCCESSFUL_PROFILE_NAME,
 ) -> tuple[tuple[Sidecar, ...], tuple[int, ...], bytes]:
+    campaign = _campaign_profile(profile_name)
     _require(type(encoded) is bytes, "outer envelope must be bytes")
     _require(len(encoded) == OUTER_BYTES, "outer envelope length is not fixed")
     (
@@ -285,8 +394,8 @@ def _parse_outer(
         closure_bytes,
         inner_bytes,
     ) = HEADER_STRUCT.unpack_from(encoded, 0)
-    _require(magic == MAGIC, "invalid outer magic")
-    _require(abi == OUTER_ABI, "invalid outer ABI")
+    _require(magic == campaign.magic, "invalid outer magic")
+    _require(abi == campaign.outer_abi, "invalid outer ABI")
     _require(declared_length == len(encoded), "outer length mismatch")
     _require(record_count == RECORD_COUNT, "outer record count mismatch")
     _require(sidecar_bytes == SIDECAR_BYTES, "sidecar size mismatch")
@@ -297,18 +406,25 @@ def _parse_outer(
     stored_body = encoded[body_end : body_end + 32]
     stored_footer = encoded[body_end + 32 :]
     _require(
-        stored_body == _domain_hash(BODY_DOMAIN, encoded[HEADER_BYTES:body_end]),
+        stored_body
+        == _domain_hash(
+            campaign.body_domain,
+            encoded[HEADER_BYTES:body_end],
+        ),
         "outer body digest mismatch",
     )
     _require(
         stored_footer
-        == _domain_hash(FOOTER_DOMAIN, encoded[: body_end + 32]),
+        == _domain_hash(
+            campaign.footer_domain,
+            encoded[: body_end + 32],
+        ),
         "outer footer digest mismatch",
     )
     cursor = HEADER_BYTES
     sidecars = []
     for index in range(RECORD_COUNT):
-        sidecar = _parse_sidecar_exact(encoded, cursor)
+        sidecar = _parse_sidecar_exact(encoded, cursor, campaign)
         _require(sidecar.ordinal == index, "sidecar ordinal is not canonical")
         sidecars.append(sidecar)
         cursor += SIDECAR_BYTES
@@ -453,14 +569,61 @@ def _oracle_root(sidecar: Sidecar) -> bytes:
     )
 
 
-def _verify_closure(closure: tuple[int, ...]) -> None:
+def _retention_capacity_terminal_root(sidecar: Sidecar) -> bytes:
+    return _hash_parts(
+        RETENTION_CAPACITY_TERMINAL_DOMAIN,
+        sidecar.request_sha256,
+        _u8(RETENTION_CAPACITY_ERROR_CODE),
+        _u8(RETENTION_CAPACITY_RETRY_DISPOSITION),
+        _u32(RETENTION_CAPACITY_HTTP_STATUS),
+    )
+
+
+def _retention_capacity_response_semantic_root(sidecar: Sidecar) -> bytes:
+    return _hash_parts(
+        RETENTION_CAPACITY_RESPONSE_SEMANTICS_DOMAIN,
+        sidecar.request_sha256,
+        _u8(RETENTION_CAPACITY_ERROR_CODE),
+        _u8(RETENTION_CAPACITY_RETRY_DISPOSITION),
+        _u32(RETENTION_CAPACITY_HTTP_STATUS),
+        _u32(sidecar.response_bytes),
+    )
+
+
+def _retention_capacity_completion_root(sidecar: Sidecar) -> bytes:
+    return _hash_parts(
+        RETENTION_CAPACITY_COMPLETION_DOMAIN,
+        sidecar.request_sha256,
+        sidecar.response_handle_sha256,
+        sidecar.output_sha256,
+        _u32(sidecar.response_bytes),
+        sidecar.terminal_sha256,
+    )
+
+
+def _verify_closure(
+    closure: tuple[int, ...],
+    profile_name: str = SUCCESSFUL_PROFILE_NAME,
+) -> None:
+    campaign = _campaign_profile(profile_name)
     _require(len(closure) == CLOSURE_U64_COUNT, "closure field count mismatch")
     _require(closure[0:5] == (72, 72, 0, 72, 72), "connection conservation mismatch")
     _require(1 <= closure[5] <= PENDING_CAPACITY, "queue high-water is invalid")
     _require(1 <= closure[6] <= WORKER_COUNT, "running high-water is invalid")
     _require(closure[7] == closure[8], "backpressure is not balanced")
     _require(closure[9:17] == (0,) * 8, "transport closure retains failure or ownership")
-    _require(closure[17:23] == (0, 72, 72, 0, 0, 0), "service closure mismatch")
+    _require(
+        closure[17:23]
+        == (
+            0,
+            campaign.service_completed_records,
+            campaign.service_completed_records,
+            0,
+            0,
+            0,
+        ),
+        "service closure mismatch",
+    )
     _require(closure[23:27] == (1, 1, 1, 0), "scheduler/Bank/thread closure mismatch")
     _require(closure[27] > 0, "event stream is empty")
 
@@ -474,7 +637,9 @@ def _verify_profile(
     expected_machine: bytes,
     expected_challenge: bytes,
     system: str,
+    profile_name: str = SUCCESSFUL_PROFILE_NAME,
 ) -> None:
+    campaign = _campaign_profile(profile_name)
     _require(
         (
             profile.mode,
@@ -490,7 +655,7 @@ def _verify_profile(
     )
     expected_identities = {
         0: _identity(WORKLOAD_ID),
-        1: _identity(PROFILE_ID),
+        1: _identity(campaign.profile_id),
         3: expected_build,
         4: expected_machine,
         5: _identity(BACKEND_ID),
@@ -505,42 +670,50 @@ def _verify_profile(
     for index, expected in expected_identities.items():
         _require(profile.identities[index] == expected, "scenario identity %d mismatch" % index)
     _require(profile.identities[2] != ZERO_DIGEST, "artifact identity is absent")
-    _verify_closure(closure)
+    _verify_closure(closure, campaign.name)
+    _require(
+        len(sidecars) == RECORD_COUNT and len(profile.records) == RECORD_COUNT,
+        "profile record count mismatch",
+    )
 
     owners: set[tuple[int, int, int, int]] = set()
     requests: set[bytes] = set()
     handles: set[bytes] = set()
     work_sequences: set[int] = set()
+    response_evidence: set[bytes] = set()
     lifecycle_ordinals: set[int] = set()
-    measured_per_flow = [0] * FLOW_COUNT
+    measured_completed_per_flow = [0] * FLOW_COUNT
+    measured_rejected_per_flow = [0] * FLOW_COUNT
     for index, (sidecar, record) in enumerate(zip(sidecars, profile.records)):
         _require(record.ordinal == index and sidecar.ordinal == index, "record order mismatch")
         expected_cohort = 0 if index < WARMUP_COUNT else 1
         _require(record.cohort == expected_cohort, "cohort mismatch")
+        expected_outcome = (
+            OUTCOME_COMPLETED
+            if campaign.name == SUCCESSFUL_PROFILE_NAME
+            or index < campaign.service_completed_records
+            else OUTCOME_CAPACITY_REJECTED
+        )
         _require(
-            (
-                record.outcome,
-                record.correctness,
-                record.fallback,
-                record.work_units,
-                record.presence_mask,
-            )
-            == (0, 1, 0, 1, 0x7F),
-            "record is not one correct completed request",
+            sidecar.outcome == expected_outcome
+            and record.outcome == expected_outcome,
+            "sidecar and record outcome mismatch",
         )
         _require(0 <= record.flow_id < FLOW_COUNT, "flow id is out of range")
         if record.cohort == 1:
-            measured_per_flow[record.flow_id] += 1
-        _require(record.queue_slot == sidecar.slot_index, "queue slot/owner mismatch")
-        _require(sidecar.process_generation == PROCESS_GENERATION, "process generation mismatch")
+            if expected_outcome == OUTCOME_COMPLETED:
+                measured_completed_per_flow[record.flow_id] += 1
+            else:
+                measured_rejected_per_flow[record.flow_id] += 1
+        _require(
+            sidecar.process_generation == campaign.process_generation,
+            "process generation mismatch",
+        )
+        _require(sidecar.connection_sequence > 0, "connection sequence is zero")
+        _require(sidecar.slot_generation > 0, "slot generation is zero")
         _require(0 <= sidecar.slot_index < QUEUE_COUNT, "slot index is out of range")
         _require(0 <= sidecar.worker_index < WORKER_COUNT, "worker index is out of range")
         _require(0 < sidecar.response_bytes <= 16 * 1024, "response byte count is invalid")
-        _require(sidecar.output_token == sidecar.content_byte, "fixture output token/content mismatch")
-        _require(
-            sidecar.response_handle_sha256 == sidecar.handle_sha256,
-            "HTTP response handle/work handle mismatch",
-        )
         _require(
             0 < sidecar.enqueue_ordinal < sidecar.dispatch_ordinal < sidecar.retired_ordinal,
             "lifecycle ordinals are not causal",
@@ -564,40 +737,163 @@ def _verify_profile(
         )
         _require(owner not in owners, "transport owner is duplicated")
         _require(sidecar.request_sha256 not in requests, "request root is duplicated")
-        _require(sidecar.handle_sha256 not in handles, "handle root is duplicated")
-        _require(sidecar.work_sequence not in work_sequences, "work sequence is duplicated")
+        _require(sidecar.request_sha256 != ZERO_DIGEST, "request root is absent")
         owners.add(owner)
         requests.add(sidecar.request_sha256)
-        handles.add(sidecar.handle_sha256)
-        work_sequences.add(sidecar.work_sequence)
-
-        _require(record.points[1][0] == sidecar.enqueue_ns, "admission timestamp mismatch")
-        _require(record.points[2][0] == sidecar.dispatch_ns, "queue timestamp mismatch")
-        _require(record.points[3][0] == sidecar.published_ns, "publication timestamp mismatch")
         _require(record.points[6][0] >= sidecar.retired_ns, "joined settlement precedes retirement")
-        pin = _pin_root(sidecar)
-        expected_roots = (
-            sidecar.request_sha256,
-            sidecar.handle_sha256,
-            pin,
-            _dispatch_root(sidecar, pin),
-            _submission_root(sidecar, pin),
-            sidecar.output_sha256,
-            _oracle_root(sidecar),
-            sidecar.terminal_sha256,
-            sidecar.completion_sha256,
-        )
+        if expected_outcome == OUTCOME_COMPLETED:
+            _require(
+                (
+                    record.correctness,
+                    record.fallback,
+                    record.work_units,
+                    record.presence_mask,
+                )
+                == (1, 0, 1, 0x7F),
+                "record is not one correct completed request",
+            )
+            _require(record.queue_slot == sidecar.slot_index, "queue slot/owner mismatch")
+            _require(
+                sidecar.output_token == sidecar.content_byte,
+                "fixture output token/content mismatch",
+            )
+            _require(
+                sidecar.response_handle_sha256 == sidecar.handle_sha256,
+                "HTTP response handle/work handle mismatch",
+            )
+            _require(sidecar.handle_sha256 != ZERO_DIGEST, "handle root is absent")
+            _require(sidecar.output_sha256 != ZERO_DIGEST, "output root is absent")
+            _require(sidecar.work_sequence > 0, "work sequence is zero")
+            _require(sidecar.handle_sha256 not in handles, "handle root is duplicated")
+            _require(
+                sidecar.work_sequence not in work_sequences,
+                "work sequence is duplicated",
+            )
+            handles.add(sidecar.handle_sha256)
+            work_sequences.add(sidecar.work_sequence)
+            _require(
+                record.points[1][0] == sidecar.enqueue_ns,
+                "accept/enqueue timestamp mismatch",
+            )
+            _require(
+                record.points[2][0] == sidecar.dispatch_ns,
+                "queue timestamp mismatch",
+            )
+            _require(
+                record.points[3][0] == sidecar.published_ns,
+                "publication timestamp mismatch",
+            )
+            pin = _pin_root(sidecar)
+            expected_roots = (
+                sidecar.request_sha256,
+                sidecar.handle_sha256,
+                pin,
+                _dispatch_root(sidecar, pin),
+                _submission_root(sidecar, pin),
+                sidecar.output_sha256,
+                _oracle_root(sidecar),
+                sidecar.terminal_sha256,
+                sidecar.completion_sha256,
+            )
+        else:
+            _require(
+                (
+                    record.correctness,
+                    record.fallback,
+                    record.work_units,
+                    record.queue_slot,
+                    record.presence_mask,
+                )
+                == (0, 0, 1, NO_QUEUE_SLOT, CAPACITY_REJECTED_PRESENCE),
+                "capacity rejection record shape mismatch",
+            )
+            _require(
+                all(
+                    record.points[event] == (0, 0)
+                    for event in (1, 2, 3, 4)
+                ),
+                "capacity rejection claims absent lifecycle events",
+            )
+            _require(
+                0
+                < record.points[0][0]
+                <= sidecar.enqueue_ns
+                <= sidecar.dispatch_ns
+                <= sidecar.published_ns
+                <= record.points[5][0]
+                <= record.points[6][0],
+                "capacity rejection observations are not monotonic",
+            )
+            _require(
+                sidecar.work_sequence == 0
+                and sidecar.handle_sha256 == ZERO_DIGEST
+                and sidecar.output_token == 0
+                and sidecar.content_byte == 0,
+                "capacity rejection retains work payload",
+            )
+            _require(
+                sidecar.response_handle_sha256 != ZERO_DIGEST,
+                "capacity rejection response evidence is absent",
+            )
+            _require(
+                sidecar.response_handle_sha256 not in response_evidence,
+                "capacity rejection response evidence is duplicated",
+            )
+            response_evidence.add(sidecar.response_handle_sha256)
+            _require(
+                sidecar.output_sha256
+                == _retention_capacity_response_semantic_root(sidecar),
+                "capacity rejection response semantic root mismatch",
+            )
+            _require(
+                sidecar.terminal_sha256
+                == _retention_capacity_terminal_root(sidecar),
+                "capacity rejection terminal root mismatch",
+            )
+            _require(
+                sidecar.completion_sha256
+                == _retention_capacity_completion_root(sidecar),
+                "capacity rejection completion root mismatch",
+            )
+            expected_roots = (
+                sidecar.request_sha256,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                sidecar.terminal_sha256,
+                sidecar.completion_sha256,
+            )
         _require(record.roots == expected_roots, "transport root composition mismatch")
     _require(len(lifecycle_ordinals) == RECORD_COUNT * 3, "lifecycle ordinal is duplicated")
     _require(max(lifecycle_ordinals) <= closure[27], "lifecycle ordinal exceeds event closure")
-    _require(measured_per_flow == [8] * FLOW_COUNT, "measured flow balance mismatch")
+    expected_completed_per_flow = campaign.measured_completed // FLOW_COUNT
+    expected_rejected_per_flow = (
+        campaign.measured_capacity_rejected // FLOW_COUNT
+    )
+    _require(
+        measured_completed_per_flow
+        == [expected_completed_per_flow] * FLOW_COUNT,
+        "measured completed flow balance mismatch",
+    )
+    _require(
+        measured_rejected_per_flow
+        == [expected_rejected_per_flow] * FLOW_COUNT,
+        "measured rejected flow balance mismatch",
+    )
     _require(
         (
             profile.completed_work_units,
             profile.throughput_numerator,
             profile.throughput_denominator_ns,
         )
-        == (MEASURED_COUNT, MEASURED_COUNT, profile.interval_ns),
+        == (
+            campaign.measured_completed,
+            campaign.measured_completed,
+            profile.interval_ns,
+        ),
         "throughput identity mismatch",
     )
 
@@ -609,8 +905,12 @@ def verify_envelope(
     expected_machine: bytes,
     expected_challenge: bytes,
     system: str,
+    profile_name: str = SUCCESSFUL_PROFILE_NAME,
 ) -> VerifiedEnvelope:
-    sidecars, closure, inner = _parse_outer(encoded)
+    sidecars, closure, inner = _parse_outer(
+        encoded,
+        profile_name=profile_name,
+    )
     try:
         inner_result = native_workload_report.verify_wire(inner)
     except native_workload_report.VerificationError as error:
@@ -624,6 +924,7 @@ def verify_envelope(
         expected_machine=expected_machine,
         expected_challenge=expected_challenge,
         system=system,
+        profile_name=profile_name,
     )
     return VerifiedEnvelope(
         inner_result,
@@ -870,11 +1171,13 @@ def _run_producer(
     build_sha256: bytes,
     machine_sha256: bytes,
     timeout_seconds: float,
+    profile_name: str = SUCCESSFUL_PROFILE_NAME,
 ) -> bytes:
+    campaign = _campaign_profile(profile_name)
     returncode, stdout, stderr = _bounded_capture(
         [
             str(executable),
-            "--native-load",
+            campaign.producer_mode,
             challenge.hex(),
             build_sha256.hex(),
             machine_sha256.hex(),
@@ -926,7 +1229,9 @@ def run_campaign(
     *,
     timeout_seconds: float = RUNNER_TIMEOUT_SECONDS,
     admission_interval_seconds: float = native_environment_admission.DEFAULT_INTERVAL_SECONDS,
+    profile_name: str = SUCCESSFUL_PROFILE_NAME,
 ) -> tuple[bytes, dict[str, Any], VerifiedEnvelope]:
+    campaign = _campaign_profile(profile_name)
     system = platform.system()
     _require(system in {"Darwin", "Linux"}, "native load supports Darwin and Linux hosts")
     executable = executable.expanduser().resolve(strict=True)
@@ -956,6 +1261,7 @@ def run_campaign(
         build_before,
         machine_sha256,
         timeout_seconds,
+        campaign.name,
     )
     build_after = hashlib.sha256(executable.read_bytes()).digest()
     _require(build_after == build_before, "producer changed during the campaign")
@@ -982,12 +1288,18 @@ def run_campaign(
         expected_machine=machine_sha256,
         expected_challenge=challenge,
         system=system,
+        profile_name=campaign.name,
     )
     manifest = {
         "schema": "glacier.native-unary-server-load-capture/v1",
         "status": "verified",
+        "profile": campaign.name,
         "publication_eligible": publication_eligible,
-        "claim_scope": "native-loopback-unary-transport-and-serialized-fixture-only",
+        "claim_scope": (
+            "native-loopback-unary-retention-capacity-and-serialized-fixture-only"
+            if campaign.name == RETENTION_CAPACITY_PROFILE_NAME
+            else "native-loopback-unary-transport-and-serialized-fixture-only"
+        ),
         "producer": {
             "sha256": build_before.hex(),
             "size_bytes": executable.stat().st_size,
@@ -1009,8 +1321,8 @@ def run_campaign(
             "http_first_byte_p99_ns": verified.profile.first_byte_p99_ns,
             "terminal_response_p99_ns": verified.profile.terminal_p99_ns,
             "outcomes": {
-                "completed": MEASURED_COUNT,
-                "capacity_rejected": 0,
+                "completed": campaign.measured_completed,
+                "capacity_rejected": campaign.measured_capacity_rejected,
                 "failed": 0,
                 "cancelled": 0,
                 "timed_out": 0,
@@ -1027,6 +1339,11 @@ def run_campaign(
             "HTTP first-byte is not first-token latency.",
             "The tiny deterministic fixture is not representative large-model inference.",
             "The request mutex serializes model admission, execution, and retirement.",
+            (
+                "Capacity rejection proves retained-record saturation, not active-work or transport-queue saturation."
+                if campaign.name == RETENTION_CAPACITY_PROFILE_NAME
+                else "The successful profile contains no capacity-rejection evidence."
+            ),
             "Logical queue and in-flight facts do not prove physical CPU parallelism.",
             "No GPU performance, fairness, power, energy, temperature, or foreign-OS result is inferred.",
             "AC and nominal constraint signals do not prove fixed clock frequency or a measured temperature.",
@@ -1038,6 +1355,12 @@ def run_campaign(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Verify the bounded F1 native unary load campaign")
     parser.add_argument("producer", help="path to glacier-unary-server-process-test")
+    parser.add_argument(
+        "--profile",
+        choices=tuple(CAMPAIGN_PROFILES),
+        default=SUCCESSFUL_PROFILE_NAME,
+        help="fixed native-load evidence profile",
+    )
     parser.add_argument("--output", help="optional verified binary envelope output")
     parser.add_argument("--manifest-output", help="optional verified capture-manifest JSON output")
     parser.add_argument("--timeout-seconds", type=float, default=RUNNER_TIMEOUT_SECONDS)
@@ -1056,6 +1379,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(arguments.producer),
             timeout_seconds=arguments.timeout_seconds,
             admission_interval_seconds=arguments.admission_interval_seconds,
+            profile_name=arguments.profile,
         )
         if arguments.output:
             _atomic_write(Path(arguments.output), encoded)
@@ -1066,11 +1390,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     profile = verified.profile
     print(
-        "ok native-unary-server-load-v1 "
+        "ok native-unary-server-load-v1 profile=%s "
         "records=%d warmup=%d measured=%d "
         "http_first_byte_p99_ns=%d terminal_response_p99_ns=%d "
         "throughput=%d/%dns publication_eligible=%s"
         % (
+            arguments.profile,
             RECORD_COUNT,
             WARMUP_COUNT,
             MEASURED_COUNT,

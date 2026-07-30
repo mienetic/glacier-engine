@@ -123,6 +123,25 @@ pub fn build(b: *std.Build) void {
                 "-Dnative-workload-store-fault-output must not be empty",
             );
     }
+    const unary_server_native_load_profile = b.option(
+        []const u8,
+        "unary-server-native-load-profile",
+        "Native unary load profile: successful-v1 or retention-capacity-v1",
+    ) orelse "successful-v1";
+    if (!std.mem.eql(
+        u8,
+        unary_server_native_load_profile,
+        "successful-v1",
+    ) and !std.mem.eql(
+        u8,
+        unary_server_native_load_profile,
+        "retention-capacity-v1",
+    )) {
+        @panic(
+            "-Dunary-server-native-load-profile must be " ++
+                "successful-v1 or retention-capacity-v1",
+        );
+    }
     const unary_server_native_load_output = b.option(
         []const u8,
         "unary-server-native-load-output",
@@ -1177,6 +1196,12 @@ pub fn build(b: *std.Build) void {
     );
     run_unary_server_native_load.addArtifactArg(
         unary_server_process_tests,
+    );
+    run_unary_server_native_load.addArgs(
+        &.{
+            "--profile",
+            unary_server_native_load_profile,
+        },
     );
     if (unary_server_native_load_output) |path| {
         run_unary_server_native_load.addArgs(

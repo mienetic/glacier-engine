@@ -27,12 +27,39 @@ requires an addressable artifact, its source commit, a clean capture state,
 and the declared machine-state envelope.
 
 The Phase F1 unary load producer embeds a complete Native Workload Report V1
-inside a transport-specific outer envelope. The generic W6 verifier validates
-the inner report; the dedicated native-unary verifier additionally validates
-request-to-transport correlation, owner generations, the HTTP response handle,
+inside a profile-specific transport outer envelope. The generic W6 verifier
+validates the inner report; the dedicated native-unary verifier additionally
+validates request-to-transport correlation, owner generations, completed HTTP
+handles or the exact rejected semantic tuple, applicable work and
 output/terminal/completion roots, HTTP timing boundaries, exact serving
 closure, producer challenge, and capture-environment eligibility. Passing only
-the inner verifier is therefore not complete Phase F1 load evidence. See
+the inner verifier is therefore not complete Phase F1 load evidence.
+
+The default profile retains 8 warmup and 64 measured all-completed records.
+The same target and artifact select
+`-Dunary-server-native-load-profile=retention-capacity-v1` for 8 completed
+warmups followed by exactly 32 completed and 32 HTTP 429 `service_capacity`
+measured outcomes, balanced `4/4` in each of eight flows. Its transport
+sidecar preserves enqueue, dispatch, owner, HTTP, and retirement observations
+for all 72 requests. Its embedded W6 capacity-rejected records retain only
+arrival, terminal, and settlement with no queue slot or logical ownership, as
+required by the backend-neutral V1 outcome.
+
+For each rejection, the sidecar `response_handle_sha256` is a
+domain-separated producer observation over the raw HTTP response. It is
+opaque to the offline verifier because the envelope retains only its byte
+count, not the raw bytes, so the verifier cannot reconstruct or recompute that
+digest. The rejected-only sidecar `output_sha256` slot instead holds a
+separately domain-separated semantic root that the verifier independently
+recomputes from the request SHA-256, `service_capacity`,
+`same_request_after_backoff`, HTTP 429, and response byte count. This is not a
+model-output claim: the embedded W6 output root remains zero. The sidecar
+completion root binds both the opaque raw-response digest and semantic root.
+Service terminal-record capacity is exactly 40 and final active ownership is
+zero. This proves retained-record capacity saturation, not
+transient/general/open-loop overload, queued-timeout behavior, throughput
+superiority, production-model behavior, fairness, GPU behavior, or cross-OS
+evidence. See
 [Bounded Prepared-Text Unary Service](PREPARED_TEXT_UNARY_SERVICE.md) and
 [Benchmarks](BENCHMARKS.md).
 
@@ -245,6 +272,23 @@ tools/zig-with-ephemeral-cache.sh build native-workload-report-cross-compile \
 
 Those commands exercise and cross-compile the codec and synthetic runner. They
 do not execute a native GPU workload.
+
+The Phase F1 native unary producer embeds W6 in its transport envelope and is
+manual on a native macOS or Linux host:
+
+```sh
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-profile=retention-capacity-v1
+```
+
+Both commands reuse the same managed-process artifact and compile root. The
+second command's balanced completed/rejected result is an exact fixed-profile
+outcome, not evidence that an uncontrolled arrival stream, transient queue
+pressure, or another machine would produce that ratio.
 
 The W6b producer is compiled and executed only by a native macOS Metal gate:
 

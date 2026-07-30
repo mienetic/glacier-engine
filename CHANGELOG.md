@@ -187,11 +187,28 @@ before the first stable release.
   loopback requests across eight flows, two workers, and eight pending slots.
   Its independently verified fixed envelope binds request/work/transport and
   HTTP-response handles, output/terminal/completion roots, exact throughput and
-  latency observations, machine state, and terminal zero ownership. The
-  profile completes every request on a tiny serialized CPU fixture; overload,
-  production-model, replicated, first-token, fairness, physical-parallelism,
-  GPU, and foreign-OS performance evidence remain follow-up work. Phase F1
-  concurrent serving is explicitly unsupported on Windows today: the
+  latency observations, machine state, and terminal zero ownership. Its
+  default fixed profile completes every request on a tiny serialized CPU
+  fixture.
+- Added `-Dunary-server-native-load-profile=retention-capacity-v1` to the same
+  manual target and process-test artifact. The fixed 72-record profile
+  completes all 8 warmup requests, then retains exactly 32 completed and 32
+  HTTP 429 `service_capacity` measured outcomes, balanced as four of each in
+  every one of eight flows. Its profile-specific sidecar and embedded Native
+  Workload Report V1 bind the exact request, `service_capacity`,
+  `same_request_after_backoff`, HTTP 429, and response-byte-count tuple,
+  transport lifecycle, and absence of created Service work or Bank ownership.
+  Rejected sidecars keep a domain-separated opaque producer digest of raw HTTP
+  plus a separately
+  domain-separated verifier-recomputed semantic root in their `output_sha256`
+  slot. Raw response bytes are not retained or reconstructable by the offline
+  verifier; the embedded W6 output root remains zero, and the completion root
+  binds both sidecar roots. The service reaches its exact 40-terminal-record
+  capacity and closes with zero connection, active service, Scheduler, and
+  Bank ownership. This is retained-record capacity saturation, not transient,
+  general overload, queued-timeout evidence, throughput superiority,
+  production-model behavior, fairness, GPU behavior, or cross-OS evidence.
+  Phase F1 concurrent serving is explicitly unsupported on Windows today: the
   entrypoint returns
   `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
   cannot prove and restore the caller's original `FIONBIO` mode. Native Windows

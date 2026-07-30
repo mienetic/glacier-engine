@@ -423,17 +423,37 @@ formats, and independent verifiers.
   simulation, performance, GPU, or native foreign-OS result.
 
   The separate manual `unary-server-native-load-test` target reuses the exact
-  process-test artifact and compile root. One real native child runs 8 warmup
-  plus 64 measured loopback requests across eight flows, two workers, and
-  eight pending slots. The
-  independent verifier binds the executable and machine/boot identity, exact
-  request/work/transport and HTTP-response handles, output/terminal/completion
-  roots, lifecycle-linearized timestamps, throughput, outcome mix, and final
-  zero ownership. It is an all-completed tiny serialized CPU fixture, not
-  overload, large-model, first-token, fairness, physical-parallelism, GPU, or
-  cross-OS performance evidence. macOS captures may pass the environment
-  publication gate; Linux runs remain diagnostic until external CPU-load
-  attribution is available.
+  process-test artifact and compile root. Its default fixed profile runs one
+  real native child for 8 warmup plus 64 measured loopback requests across
+  eight flows, two workers, and eight pending slots. The independent verifier
+  binds executable and machine/boot identity, exact request/work/transport and
+  HTTP-response handles, output/terminal/completion roots,
+  lifecycle-linearized timestamps, throughput, outcome mix, and final zero
+  ownership.
+
+  The same target and artifact accept
+  `-Dunary-server-native-load-profile=retention-capacity-v1` for a second
+  72-record profile. Its 8 warmup requests complete, then the measured cohort
+  contains exactly 32 completions and 32 HTTP 429 `service_capacity`
+  responses. Each of the eight flows retains four of each outcome. A
+  profile-specific sidecar plus the embedded Native Workload Report V1 bind
+  completed requests to their response and work handles. For each rejection,
+  they bind the exact decoded `(request SHA-256, service_capacity,
+  same_request_after_backoff, HTTP 429, response byte count)` tuple,
+  transport lifecycle, and absence of service work. The sidecar separately
+  retains an opaque, domain-separated producer digest of the raw HTTP response
+  and a verifier-recomputed semantic root; raw response bytes are not retained
+  or reconstructable offline. Its completion root binds both roots, while the
+  embedded W6 output root stays zero because no model output exists. The
+  service retains exactly 40 terminal records and closes with zero connection,
+  active service, Scheduler, and Bank ownership.
+
+  This second profile proves retained-record capacity saturation for the tiny
+  serialized CPU fixture. It does not prove transient or general overload,
+  queued-timeout behavior, throughput superiority, a
+  production-model result, scheduler fairness, GPU evidence, or cross-OS
+  evidence. macOS captures may pass the environment publication gate; Linux
+  runs remain diagnostic until external CPU-load attribution is available.
 
   Phase F1 concurrent serving is explicitly unsupported on Windows today: the
   entrypoint returns
@@ -1536,9 +1556,11 @@ hardware-independent surface without those native backend dependencies.
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-b4 controlled event-blocked in-flight process kill with a fresh production control, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward, and W7b-b5 generation-six supervisor-death plus prepared-generation-twelve recovery-process-death cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b active-kernel, broader supervisor/recovery interruption, adapter, and physical device/storage/driver/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses, five domain compile profiles plus one complete consumer-closure profile, CLI-only default install, and opt-in benchmark installation | Distributable product profiles, installer, stable library API, and simpler fixture workflow |
 
-The AI-runtime row's native-load milestone now means broadening the initial
-opt-in CPU capture to overload, production models, repeated machines,
-publication-eligible native Linux, and separately declared GPU campaigns.
+The AI-runtime and Serving rows now include two fixed native CPU load profiles:
+all-completed and retained-record-capacity. References to collecting native-load
+evidence next mean queued-timeout and broader overload/rejection campaigns,
+production models, repeated machines, publication-eligible native Linux, and
+separately declared GPU campaigns.
 
 The R1d Common artifact remains request-specific, while the additive R1k-b2
 package manifest supplies a separate request-independent portable identity and

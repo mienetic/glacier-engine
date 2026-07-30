@@ -11,7 +11,10 @@ from unittest import mock
 from bench import native_unary_server_load as load
 
 
-def _seal_structural_outer() -> bytes:
+def _seal_structural_outer(
+    profile_name: str = load.SUCCESSFUL_PROFILE_NAME,
+) -> bytes:
+    campaign = load._campaign_profile(profile_name)
     sidecars = []
     for ordinal in range(load.RECORD_COUNT):
         sidecars.append(
@@ -38,24 +41,41 @@ def _seal_structural_outer() -> bytes:
         + b"\x00" * load.INNER_BYTES
     )
     header = load.HEADER_STRUCT.pack(
-        load.MAGIC,
-        load.OUTER_ABI,
+        campaign.magic,
+        campaign.outer_abi,
         load.OUTER_BYTES,
         load.RECORD_COUNT,
         load.SIDECAR_BYTES,
         load.CLOSURE_BYTES,
         load.INNER_BYTES,
     )
-    body_digest = load._domain_hash(load.BODY_DOMAIN, body)
+    body_digest = load._domain_hash(campaign.body_domain, body)
     prefix = header + body + body_digest
-    return prefix + load._domain_hash(load.FOOTER_DOMAIN, prefix)
+    return prefix + load._domain_hash(campaign.footer_domain, prefix)
+
+
+def _reseal_outer(encoded: bytearray, profile_name: str) -> bytes:
+    campaign = load._campaign_profile(profile_name)
+    body_end = len(encoded) - load.OUTER_DIGEST_BYTES
+    encoded[body_end : body_end + 32] = load._domain_hash(
+        campaign.body_domain,
+        bytes(encoded[load.HEADER_BYTES:body_end]),
+    )
+    encoded[body_end + 32 :] = load._domain_hash(
+        campaign.footer_domain,
+        bytes(encoded[: body_end + 32]),
+    )
+    return bytes(encoded)
 
 
 def _digest(label: str) -> bytes:
     return hashlib.sha256(label.encode("ascii")).digest()
 
 
-def _valid_closure() -> tuple[int, ...]:
+def _valid_closure(
+    profile_name: str = load.SUCCESSFUL_PROFILE_NAME,
+) -> tuple[int, ...]:
+    campaign = load._campaign_profile(profile_name)
     return (
         72,
         72,
@@ -75,8 +95,8 @@ def _valid_closure() -> tuple[int, ...]:
         0,
         0,
         0,
-        72,
-        72,
+        campaign.service_completed_records,
+        campaign.service_completed_records,
         0,
         0,
         0,
@@ -88,7 +108,9 @@ def _valid_closure() -> tuple[int, ...]:
     )
 
 
-def _profile_fixture() -> tuple[
+def _profile_fixture(
+    profile_name: str = load.SUCCESSFUL_PROFILE_NAME,
+) -> tuple[
     tuple[load.Sidecar, ...],
     tuple[int, ...],
     load.InnerProfile,
@@ -96,6 +118,7 @@ def _profile_fixture() -> tuple[
     bytes,
     bytes,
 ]:
+    campaign = load._campaign_profile(profile_name)
     build = _digest("build")
     machine = _digest("machine")
     challenge = _digest("challenge")
@@ -119,7 +142,7 @@ def _profile_fixture() -> tuple[
             published_ns=base + 3,
             retired_ns=base + 7,
             work_sequence=ordinal + 1,
-            process_generation=load.PROCESS_GENERATION,
+            process_generation=campaign.process_generation,
             connection_sequence=ordinal + 1,
             slot_generation=ordinal // load.QUEUE_COUNT + 1,
             slot_index=ordinal % load.QUEUE_COUNT,
@@ -133,38 +156,105 @@ def _profile_fixture() -> tuple[
             terminal_sha256=terminal,
             completion_sha256=completion,
         )
-        pin = load._pin_root(sidecar)
-        roots = (
-            request,
-            handle,
-            pin,
-            load._dispatch_root(sidecar, pin),
-            load._submission_root(sidecar, pin),
-            output,
-            load._oracle_root(sidecar),
-            terminal,
-            completion,
+        rejected = (
+            campaign.name == load.RETENTION_CAPACITY_PROFILE_NAME
+            and ordinal >= campaign.service_completed_records
         )
-        points = (
-            (base, ordinal * 7 + 1),
-            (base + 1, ordinal * 7 + 2),
-            (base + 2, ordinal * 7 + 3),
-            (base + 3, ordinal * 7 + 4),
-            (base + 4, ordinal * 7 + 5),
-            (base + 5, ordinal * 7 + 6),
-            (base + 7, ordinal * 7 + 7),
-        )
+        if rejected:
+            sidecar = replace(
+                sidecar,
+                work_sequence=0,
+                content_byte=0,
+                output_token=0,
+                response_handle_sha256=_digest(
+                    "response-evidence-%d" % ordinal
+                ),
+                handle_sha256=load.ZERO_DIGEST,
+                output_sha256=load.ZERO_DIGEST,
+                terminal_sha256=load.ZERO_DIGEST,
+                completion_sha256=load.ZERO_DIGEST,
+                outcome=load.OUTCOME_CAPACITY_REJECTED,
+            )
+            sidecar = replace(
+                sidecar,
+                output_sha256=(
+                    load._retention_capacity_response_semantic_root(
+                        sidecar
+                    )
+                ),
+                terminal_sha256=load._retention_capacity_terminal_root(
+                    sidecar
+                ),
+            )
+            sidecar = replace(
+                sidecar,
+                completion_sha256=load._retention_capacity_completion_root(
+                    sidecar
+                ),
+            )
+            roots = (
+                request,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                sidecar.terminal_sha256,
+                sidecar.completion_sha256,
+            )
+            points = (
+                (base, ordinal * 7 + 1),
+                (0, 0),
+                (0, 0),
+                (0, 0),
+                (0, 0),
+                (base + 5, ordinal * 7 + 6),
+                (base + 7, ordinal * 7 + 7),
+            )
+        else:
+            pin = load._pin_root(sidecar)
+            roots = (
+                request,
+                handle,
+                pin,
+                load._dispatch_root(sidecar, pin),
+                load._submission_root(sidecar, pin),
+                output,
+                load._oracle_root(sidecar),
+                terminal,
+                completion,
+            )
+            points = (
+                (base, ordinal * 7 + 1),
+                (base + 1, ordinal * 7 + 2),
+                (base + 2, ordinal * 7 + 3),
+                (base + 3, ordinal * 7 + 4),
+                (base + 4, ordinal * 7 + 5),
+                (base + 5, ordinal * 7 + 6),
+                (base + 7, ordinal * 7 + 7),
+            )
         records.append(
             load.InnerRecord(
                 ordinal=ordinal,
                 cohort=0 if ordinal < load.WARMUP_COUNT else 1,
-                outcome=0,
-                correctness=1,
+                outcome=sidecar.outcome,
+                correctness=(
+                    0 if rejected else 1
+                ),
                 fallback=0,
                 flow_id=ordinal % load.FLOW_COUNT,
                 work_units=1,
-                queue_slot=sidecar.slot_index,
-                presence_mask=0x7F,
+                queue_slot=(
+                    load.NO_QUEUE_SLOT
+                    if rejected
+                    else sidecar.slot_index
+                ),
+                presence_mask=(
+                    load.CAPACITY_REJECTED_PRESENCE
+                    if rejected
+                    else 0x7F
+                ),
                 points=points,
                 roots=roots,
             )
@@ -172,7 +262,7 @@ def _profile_fixture() -> tuple[
         sidecars.append(sidecar)
     identities = (
         load._identity(load.WORKLOAD_ID),
-        load._identity(load.PROFILE_ID),
+        load._identity(campaign.profile_id),
         _digest("artifact"),
         build,
         machine,
@@ -195,9 +285,9 @@ def _profile_fixture() -> tuple[
         flow_count=load.FLOW_COUNT,
         identities=identities,
         records=tuple(records),
-        completed_work_units=load.MEASURED_COUNT,
+        completed_work_units=campaign.measured_completed,
         interval_ns=7_000,
-        throughput_numerator=load.MEASURED_COUNT,
+        throughput_numerator=campaign.measured_completed,
         throughput_denominator_ns=7_000,
         admission_p99_ns=1,
         queue_p99_ns=1,
@@ -206,7 +296,7 @@ def _profile_fixture() -> tuple[
     )
     return (
         tuple(sidecars),
-        _valid_closure(),
+        _valid_closure(campaign.name),
         profile,
         build,
         machine,
@@ -419,6 +509,380 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
             with self.subTest(offset=offset):
                 with self.assertRaises(load.VerificationError):
                     load._parse_outer(bytes(mutated))
+
+    def test_retention_capacity_outer_abi_rejects_profile_substitution(
+        self,
+    ) -> None:
+        successful = _seal_structural_outer()
+        capacity = _seal_structural_outer(
+            load.RETENTION_CAPACITY_PROFILE_NAME
+        )
+        self.assertEqual(len(capacity), load.OUTER_BYTES)
+        self.assertEqual(
+            len(
+                load._parse_outer(
+                    capacity,
+                    profile_name=load.RETENTION_CAPACITY_PROFILE_NAME,
+                )[0]
+            ),
+            load.RECORD_COUNT,
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "invalid outer magic",
+        ):
+            load._parse_outer(
+                successful,
+                profile_name=load.RETENTION_CAPACITY_PROFILE_NAME,
+            )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "invalid outer magic",
+        ):
+            load._parse_outer(capacity)
+
+        invalid_outcome = bytearray(capacity)
+        outcome_offset = load.HEADER_BYTES + 99
+        invalid_outcome[outcome_offset] = 2
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "sidecar outcome is invalid",
+        ):
+            load._parse_outer(
+                _reseal_outer(
+                    invalid_outcome,
+                    load.RETENTION_CAPACITY_PROFILE_NAME,
+                ),
+                profile_name=load.RETENTION_CAPACITY_PROFILE_NAME,
+            )
+
+    def test_retention_capacity_cross_language_root_vectors(self) -> None:
+        sidecar = load.Sidecar(
+            ordinal=0,
+            response_bytes=321,
+            enqueue_ordinal=0,
+            dispatch_ordinal=0,
+            retired_ordinal=0,
+            enqueue_ns=0,
+            dispatch_ns=0,
+            published_ns=0,
+            retired_ns=0,
+            work_sequence=0,
+            process_generation=0,
+            connection_sequence=0,
+            slot_generation=0,
+            slot_index=0,
+            worker_index=0,
+            content_byte=0,
+            output_token=0,
+            request_sha256=b"\x5a" * 32,
+            response_handle_sha256=b"\xa5" * 32,
+            handle_sha256=load.ZERO_DIGEST,
+            output_sha256=load.ZERO_DIGEST,
+            terminal_sha256=load.ZERO_DIGEST,
+            completion_sha256=load.ZERO_DIGEST,
+            outcome=load.OUTCOME_CAPACITY_REJECTED,
+        )
+        semantic = load._retention_capacity_response_semantic_root(
+            sidecar
+        )
+        terminal = load._retention_capacity_terminal_root(sidecar)
+        bound = replace(
+            sidecar,
+            output_sha256=semantic,
+            terminal_sha256=terminal,
+        )
+        completion = load._retention_capacity_completion_root(bound)
+        self.assertEqual(
+            semantic.hex(),
+            "5ac9280807e3e4b9e0836a446bcec8fb"
+            "d3ab1b61af50563238ca3bd10163fa95",
+        )
+        self.assertEqual(
+            terminal.hex(),
+            "fa850625ac5f41b0639cf8b1acd6eb13"
+            "de8df6da4cee533ef7d1672e99941dd4",
+        )
+        self.assertEqual(
+            completion.hex(),
+            "009e45f2f79152637ffd64252f7faced"
+            "2909d6a14d92d87a117510a44f66dee2",
+        )
+
+    def test_retention_capacity_profile_binds_mixed_outcomes(self) -> None:
+        sidecars, closure, profile, build, machine, challenge = (
+            _profile_fixture(load.RETENTION_CAPACITY_PROFILE_NAME)
+        )
+
+        def verify(
+            candidate_sidecars: tuple[load.Sidecar, ...] = sidecars,
+            candidate_closure: tuple[int, ...] = closure,
+            candidate_profile: load.InnerProfile = profile,
+        ) -> None:
+            load._verify_profile(
+                candidate_sidecars,
+                candidate_closure,
+                candidate_profile,
+                expected_build=build,
+                expected_machine=machine,
+                expected_challenge=challenge,
+                system="Darwin",
+                profile_name=load.RETENTION_CAPACITY_PROFILE_NAME,
+            )
+
+        verify()
+        measured = profile.records[load.WARMUP_COUNT :]
+        self.assertEqual(
+            sum(
+                record.outcome == load.OUTCOME_COMPLETED
+                for record in measured
+            ),
+            load.RETENTION_CAPACITY_MEASURED_COMPLETED,
+        )
+        self.assertEqual(
+            sum(
+                record.outcome == load.OUTCOME_CAPACITY_REJECTED
+                for record in measured
+            ),
+            load.RETENTION_CAPACITY_MEASURED_REJECTED,
+        )
+        for flow in range(load.FLOW_COUNT):
+            flow_records = [
+                record for record in measured if record.flow_id == flow
+            ]
+            self.assertEqual(
+                [
+                    record.outcome
+                    for record in flow_records
+                ].count(load.OUTCOME_COMPLETED),
+                4,
+            )
+            self.assertEqual(
+                [
+                    record.outcome
+                    for record in flow_records
+                ].count(load.OUTCOME_CAPACITY_REJECTED),
+                4,
+            )
+
+        rejected_index = load.RETENTION_CAPACITY_COMPLETED_RECORDS
+        rejected = sidecars[rejected_index]
+        self.assertNotEqual(rejected.output_sha256, load.ZERO_DIGEST)
+        self.assertEqual(
+            profile.records[rejected_index].roots[5],
+            load.ZERO_DIGEST,
+        )
+        mutations = {
+            "outcome": replace(
+                rejected,
+                outcome=load.OUTCOME_COMPLETED,
+            ),
+            "work": replace(rejected, work_sequence=1),
+            "handle": replace(
+                rejected,
+                handle_sha256=_digest("forged-handle"),
+            ),
+            "token": replace(rejected, output_token=1),
+            "response": replace(
+                rejected,
+                response_handle_sha256=load.ZERO_DIGEST,
+            ),
+            "terminal": replace(
+                rejected,
+                terminal_sha256=_digest("forged-terminal"),
+            ),
+            "completion": replace(
+                rejected,
+                completion_sha256=_digest("forged-completion"),
+            ),
+            "decision": replace(
+                rejected,
+                published_ns=profile.records[rejected_index].points[5][0]
+                + 1,
+                retired_ns=profile.records[rejected_index].points[6][0],
+            ),
+        }
+        for label, mutation in mutations.items():
+            candidate = list(sidecars)
+            candidate[rejected_index] = mutation
+            with self.subTest(sidecar_mutation=label):
+                with self.assertRaises(load.VerificationError):
+                    verify(tuple(candidate))
+
+        forged_semantics = replace(
+            rejected,
+            output_sha256=_digest("forged-response-semantics"),
+        )
+        forged_semantics = replace(
+            forged_semantics,
+            completion_sha256=(
+                load._retention_capacity_completion_root(
+                    forged_semantics
+                )
+            ),
+        )
+        forged_semantic_sidecars = list(sidecars)
+        forged_semantic_sidecars[rejected_index] = forged_semantics
+        forged_semantic_records = list(profile.records)
+        forged_semantic_records[rejected_index] = replace(
+            forged_semantic_records[rejected_index],
+            roots=(
+                *forged_semantic_records[rejected_index].roots[:8],
+                forged_semantics.completion_sha256,
+            ),
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "response semantic root mismatch",
+        ):
+            verify(
+                tuple(forged_semantic_sidecars),
+                candidate_profile=replace(
+                    profile,
+                    records=tuple(forged_semantic_records),
+                ),
+            )
+
+        # The verifier does not retain the raw HTTP response, so this
+        # domain-separated digest is intentionally opaque. Its nonzero,
+        # unique value is accepted when the completion root binds it.
+        opaque_response_evidence = replace(
+            rejected,
+            response_handle_sha256=_digest(
+                "alternate-opaque-http-response"
+            ),
+        )
+        opaque_response_evidence = replace(
+            opaque_response_evidence,
+            completion_sha256=(
+                load._retention_capacity_completion_root(
+                    opaque_response_evidence
+                )
+            ),
+        )
+        opaque_sidecars = list(sidecars)
+        opaque_sidecars[rejected_index] = opaque_response_evidence
+        opaque_records = list(profile.records)
+        opaque_records[rejected_index] = replace(
+            opaque_records[rejected_index],
+            roots=(
+                *opaque_records[rejected_index].roots[:8],
+                opaque_response_evidence.completion_sha256,
+            ),
+        )
+        verify(
+            tuple(opaque_sidecars),
+            candidate_profile=replace(
+                profile,
+                records=tuple(opaque_records),
+            ),
+        )
+
+        duplicate_evidence = list(sidecars)
+        duplicate_evidence[rejected_index + 1] = replace(
+            duplicate_evidence[rejected_index + 1],
+            response_handle_sha256=rejected.response_handle_sha256,
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "response evidence is duplicated",
+        ):
+            verify(tuple(duplicate_evidence))
+
+        record_mutations = {
+            "presence": replace(
+                profile.records[rejected_index],
+                presence_mask=0x7F,
+            ),
+            "queue": replace(
+                profile.records[rejected_index],
+                queue_slot=0,
+            ),
+            "admission": replace(
+                profile.records[rejected_index],
+                points=(
+                    profile.records[rejected_index].points[0],
+                    (1, 1),
+                    *profile.records[rejected_index].points[2:],
+                ),
+            ),
+            "root": replace(
+                profile.records[rejected_index],
+                roots=(
+                    *profile.records[rejected_index].roots[:6],
+                    _digest("forged-output-root"),
+                    *profile.records[rejected_index].roots[7:],
+                ),
+            ),
+        }
+        for label, mutation in record_mutations.items():
+            records = list(profile.records)
+            records[rejected_index] = mutation
+            with self.subTest(record_mutation=label):
+                with self.assertRaises(load.VerificationError):
+                    verify(
+                        candidate_profile=replace(
+                            profile,
+                            records=tuple(records),
+                        )
+                    )
+
+        identities = list(profile.identities)
+        identities[1] = load._identity(load.PROFILE_ID)
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "scenario identity 1 mismatch",
+        ):
+            verify(
+                candidate_profile=replace(
+                    profile,
+                    identities=tuple(identities),
+                )
+            )
+
+        invalid_closure = list(closure)
+        invalid_closure[18] = load.RECORD_COUNT
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "service closure mismatch",
+        ):
+            verify(candidate_closure=tuple(invalid_closure))
+
+    def test_producer_mode_is_selected_without_another_artifact(self) -> None:
+        executable = load.Path("/tmp/glacier-fake-producer")
+        digest = _digest("identity")
+        for profile_name, expected_mode in (
+            (load.SUCCESSFUL_PROFILE_NAME, "--native-load"),
+            (
+                load.RETENTION_CAPACITY_PROFILE_NAME,
+                "--native-load-retention-capacity",
+            ),
+        ):
+            captured: list[list[str]] = []
+
+            def bounded_capture(
+                command: list[str],
+                **kwargs: object,
+            ) -> tuple[int, bytes, bytes]:
+                _ = kwargs
+                captured.append(command)
+                return 0, b"\x00" * load.OUTER_BYTES, b""
+
+            with self.subTest(profile_name=profile_name), mock.patch.object(
+                load,
+                "_bounded_capture",
+                side_effect=bounded_capture,
+            ):
+                load._run_producer(
+                    executable,
+                    digest,
+                    digest,
+                    digest,
+                    1.0,
+                    profile_name,
+                )
+                self.assertEqual(captured[0][1], expected_mode)
+                self.assertEqual(len(captured), 1)
 
     def test_profile_composes_transport_roots_and_exact_closure(self) -> None:
         sidecars, closure, profile, build, machine, challenge = (
