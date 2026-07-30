@@ -278,6 +278,10 @@ pub const ManagedConcurrentEventV1 = struct {
     worker_index: ?u8 = null,
     queued_connections: u8,
     running_connections: u8,
+    /// Captured at the same lifecycle-mutex linearization boundary that
+    /// assigns `ordinal`. Zero means that this platform clock was unavailable.
+    /// Callback invocation can occur later and in a different order.
+    linearized_monotonic_ns: u64 = 0,
 };
 
 /// Evidence callbacks may execute concurrently on the acceptor, worker,
@@ -2011,6 +2015,40 @@ const ManagedConcurrentPendingEventV1 = struct {
     }
 };
 
+fn managedConcurrentMonotonicNsV1() u64 {
+    const tag = builtin.os.tag;
+    if (comptime tag == .windows or tag == .wasi or tag == .uefi)
+        return 0;
+    const clock_id = if (comptime tag == .macos or
+        tag == .ios or tag == .tvos or tag == .watchos or
+        tag == .visionos)
+        std.posix.CLOCK.UPTIME_RAW
+    else if (comptime tag == .linux)
+        std.posix.CLOCK.MONOTONIC_RAW
+    else
+        std.posix.CLOCK.MONOTONIC;
+    const timestamp = std.posix.clock_gettime(clock_id) catch
+        return 0;
+    const seconds = std.math.cast(
+        u64,
+        timestamp.sec,
+    ) orelse return 0;
+    const nanoseconds = std.math.cast(
+        u64,
+        timestamp.nsec,
+    ) orelse return 0;
+    if (nanoseconds >= std.time.ns_per_s) return 0;
+    return std.math.add(
+        u64,
+        std.math.mul(
+            u64,
+            seconds,
+            std.time.ns_per_s,
+        ) catch return 0,
+        nanoseconds,
+    ) catch return 0;
+}
+
 const maximum_managed_concurrent_batch_events_v1: usize =
     maximum_managed_pending_connections_v1 * 2;
 
@@ -2284,12 +2322,16 @@ pub const ManagedConcurrentLifecycleV1 = struct {
         self: *ManagedConcurrentLifecycleV1,
         event: ManagedConcurrentEventV1,
     ) ManagedConcurrentPendingEventV1 {
+        var captured = event;
+        if (self.observer != null)
+            captured.linearized_monotonic_ns =
+                managedConcurrentMonotonicNsV1();
         if (self.observer != null)
             self.observer_in_flight += 1;
         return .{
             .lifecycle = if (self.observer != null) self else null,
             .observer = self.observer,
-            .event = event,
+            .event = captured,
         };
     }
 
@@ -4417,6 +4459,24 @@ const ManagedRequestWorkControlV1 = struct {
         });
     }
 
+    fn publishedOpaque(
+        context: *anyopaque,
+        publication: prepared_http.WorkPublicationV1,
+    ) void {
+        const self: *ManagedRequestWorkControlV1 =
+            @ptrCast(@alignCast(context));
+        if (!self.observer_admitted) return;
+        const observer = self.observer orelse return;
+        const callback = observer.published_fn orelse return;
+        callback(observer.context, .{
+            .identity = publication.identity,
+            .request_sha256 = publication.request_sha256,
+            .transport_owner = transportOwnerTokenV1(
+                self.lease,
+            ),
+        });
+    }
+
     fn retiredOpaque(
         context: *anyopaque,
         work_identity: prepared_http.WorkIdentityV1,
@@ -4449,6 +4509,7 @@ const ManagedRequestWorkControlV1 = struct {
             .checkpoint_fn = checkpointOpaque,
             .cancellation_fn = cancellationOpaque,
             .admission_rejected_fn = admissionRejectedOpaque,
+            .published_fn = publishedOpaque,
         };
     }
 };
@@ -5782,6 +5843,106 @@ test "managed admitted work is connection fenced and counted once" {
         @as(u8, 1),
         recovery.snapshotV1().active_connections,
     );
+}
+
+test "managed publication forwards the exact connection owner" {
+    const PublicationObserverV1 = struct {
+        publication: ?prepared_http.WorkPublicationV1 = null,
+
+        fn admittedOpaque(
+            context: *anyopaque,
+            identity: prepared_http.WorkIdentityV1,
+        ) anyerror!prepared_http.WorkDispositionV1 {
+            _ = context;
+            _ = identity;
+            return .proceed;
+        }
+
+        fn publishedOpaque(
+            context: *anyopaque,
+            publication: prepared_http.WorkPublicationV1,
+        ) void {
+            const self: *@This() =
+                @ptrCast(@alignCast(context));
+            self.publication = publication;
+        }
+
+        fn retiredOpaque(
+            context: *anyopaque,
+            identity: prepared_http.WorkIdentityV1,
+        ) void {
+            _ = context;
+            _ = identity;
+        }
+
+        fn control(
+            self: *@This(),
+        ) prepared_http.RequestWorkControlV1 {
+            return .{
+                .context = self,
+                .admitted_fn = admittedOpaque,
+                .retired_fn = retiredOpaque,
+                .transport_owner = .{
+                    .process_generation = 1,
+                    .connection_sequence = 2,
+                    .slot_index = 3,
+                    .slot_generation = 4,
+                },
+                .published_fn = publishedOpaque,
+            };
+        }
+    };
+
+    var lifecycle = try ManagedLifecycleV1.initV1(37);
+    try lifecycle.markReadyV1();
+    const lease =
+        try lifecycle.beginConnectionV1(@intCast(111));
+    try lifecycle.markRequestHeadReceivedV1(lease);
+    try lifecycle.markRequestReceivedBeforeDeadlineV1(
+        lease,
+        null,
+        0,
+    );
+    var observer: PublicationObserverV1 = .{};
+    var work_control: ManagedRequestWorkControlV1 = .{
+        .lifecycle = &lifecycle,
+        .lease = lease,
+        .peer_reset_poll_timeout_ms = 0,
+        .observer = observer.control(),
+    };
+    const control = work_control.control();
+    const identity: prepared_http.WorkIdentityV1 = .{
+        .sequence = 19,
+        .handle_sha256 = [_]u8{0xa1} ** 32,
+    };
+    try std.testing.expectEqual(
+        prepared_http.WorkDispositionV1.proceed,
+        try control.admitted_fn(
+            control.context,
+            identity,
+        ),
+    );
+    const request_sha256 = [_]u8{0xa2} ** 32;
+    control.published_fn.?(
+        control.context,
+        .{
+            .identity = identity,
+            .request_sha256 = request_sha256,
+            .transport_owner = control.transport_owner,
+        },
+    );
+    try std.testing.expectEqualDeep(
+        prepared_http.WorkPublicationV1{
+            .identity = identity,
+            .request_sha256 = request_sha256,
+            .transport_owner = transportOwnerTokenV1(
+                lease,
+            ),
+        },
+        observer.publication.?,
+    );
+    control.retired_fn(control.context, identity);
+    try lifecycle.finishConnectionV1(lease, true);
 }
 
 test "managed admission rejection forwards exact connection owner" {

@@ -123,6 +123,28 @@ pub fn build(b: *std.Build) void {
                 "-Dnative-workload-store-fault-output must not be empty",
             );
     }
+    const unary_server_native_load_output = b.option(
+        []const u8,
+        "unary-server-native-load-output",
+        "Optional path that retains the verified native unary load envelope",
+    );
+    if (unary_server_native_load_output) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dunary-server-native-load-output must not be empty",
+            );
+    }
+    const unary_server_native_load_manifest_output = b.option(
+        []const u8,
+        "unary-server-native-load-manifest-output",
+        "Optional path that retains the native unary load capture manifest",
+    );
+    if (unary_server_native_load_manifest_output) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dunary-server-native-load-manifest-output must not be empty",
+            );
+    }
     if (native_metal_report_output != null and
         native_metal_suite_report_output != null)
         @panic(
@@ -1142,6 +1164,36 @@ pub fn build(b: *std.Build) void {
     );
     unary_server_process_compile_step.dependOn(
         &unary_server_process_tests.step,
+    );
+    // Native load remains opt-in and reuses the exact process-test artifact.
+    // Its independent verifier samples the machine envelope and executes the
+    // timing campaign alone, so default tests and CI neither add a compile
+    // root nor contaminate the measurements.
+    const run_unary_server_native_load =
+        b.addSystemCommand(&.{"python3"});
+    run_unary_server_native_load.setCwd(b.path("."));
+    run_unary_server_native_load.addFileArg(
+        b.path("bench/native_unary_server_load.py"),
+    );
+    run_unary_server_native_load.addArtifactArg(
+        unary_server_process_tests,
+    );
+    if (unary_server_native_load_output) |path| {
+        run_unary_server_native_load.addArgs(
+            &.{ "--output", path },
+        );
+    }
+    if (unary_server_native_load_manifest_output) |path| {
+        run_unary_server_native_load.addArgs(
+            &.{ "--manifest-output", path },
+        );
+    }
+    const unary_server_native_load_step = b.step(
+        "unary-server-native-load-test",
+        "Run the isolated environment-gated native unary load campaign",
+    );
+    unary_server_native_load_step.dependOn(
+        &run_unary_server_native_load.step,
     );
 
     // Grounded DecodeLane4 evidence primitives remain separate from the

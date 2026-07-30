@@ -289,6 +289,13 @@ EXPECTED_PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS = (
     )
 )
 
+EXPECTED_NATIVE_UNARY_LOAD_FOCUSED_PATHS = frozenset(
+    {
+        "bench/native_unary_server_load.py",
+        "bench/tests/test_native_unary_server_load.py",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -783,6 +790,10 @@ class VerificationPolicyTests(unittest.TestCase):
         self.assertEqual(
             EXPECTED_PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS,
             policy.PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS,
+        )
+        self.assertEqual(
+            EXPECTED_NATIVE_UNARY_LOAD_FOCUSED_PATHS,
+            policy.NATIVE_UNARY_LOAD_FOCUSED_PATHS,
         )
         for changed_path in sorted(EXPECTED_CORE_CONTRACT_PATHS):
             with self.subTest(changed_path=changed_path):
@@ -1695,6 +1706,35 @@ class VerificationPolicyTests(unittest.TestCase):
                 self.assertNotIn(
                     "native/workload-store-fault",
                     gate_names,
+                )
+
+    def test_native_unary_load_paths_select_only_the_focused_python_gate(self):
+        self.assertEqual(
+            EXPECTED_NATIVE_UNARY_LOAD_FOCUSED_PATHS,
+            policy.NATIVE_UNARY_LOAD_FOCUSED_PATHS,
+        )
+        for changed_path in sorted(EXPECTED_NATIVE_UNARY_LOAD_FOCUSED_PATHS):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    frozenset(
+                        {
+                            "native-unary-load-focused",
+                            "python-changed",
+                        }
+                    ),
+                    plan.flags,
+                )
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                self.assertFalse(
+                    plan.requires(
+                        "prepared-text-unary-server-process-focused"
+                    )
+                )
+                self.assertEqual(
+                    ("quick", "python/changed-syntax", "python/native-unary-load"),
+                    policy._gate_names(plan.decisions[0]),
                 )
 
     def test_workload_store_fault_paths_select_the_native_posix_gate(self):
@@ -3156,6 +3196,15 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         ).write_text(
             "import unittest\n"
             "class VerificationPolicyTests(unittest.TestCase):\n"
+            "    def test_fixture(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="ascii",
+        )
+        (
+            repository / "bench" / "tests" / "test_native_unary_server_load.py"
+        ).write_text(
+            "import unittest\n"
+            "class NativeUnaryServerLoadTests(unittest.TestCase):\n"
             "    def test_fixture(self):\n"
             "        self.assertTrue(True)\n",
             encoding="ascii",
@@ -4753,6 +4802,59 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 )
                 self.assertNotIn("profile-host-tool-compile", call)
                 self.assertNotIn("profile-core-compile", call)
+    def test_affected_profiles_run_native_unary_load_python_only(self):
+        for profile in ("affected", "affected-fast"):
+            with self.subTest(profile=profile):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    repository, merge_base, environment = self.make_repository(root)
+                    (repository / "bench" / "native_unary_server_load.py").write_text(
+                        'raise SystemExit("native campaign must remain opt-in")\n',
+                        encoding="ascii",
+                    )
+
+                    if profile == "affected":
+                        result = self.run_verify(
+                            repository,
+                            merge_base,
+                            environment,
+                        )
+                    else:
+                        result = self.run_affected_fast(
+                            repository,
+                            merge_base,
+                            environment,
+                        )
+
+                    self.assertEqual(
+                        0,
+                        result.returncode,
+                        result.stdout + result.stderr,
+                    )
+                    self.assertIn(
+                        "PASS  python/changed-syntax:",
+                        result.stdout,
+                    )
+                    self.assertEqual(
+                        1,
+                        result.stdout.count(
+                            "PASS  python/native-unary-load:"
+                        ),
+                        result.stdout,
+                    )
+                    calls = (
+                        Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                        .read_text(encoding="ascii")
+                        .splitlines()
+                    )
+                    self.assertFalse(
+                        any(line.startswith("build ") for line in calls),
+                        calls,
+                    )
+                    self.assertNotIn(
+                        "native/prepared-text-unary-server-process",
+                        result.stdout,
+                    )
 
     def test_affected_fast_runs_prepared_text_focused_dag_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

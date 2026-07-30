@@ -161,10 +161,14 @@ before the first stable release.
   fairness, parallel-model, GPU, native foreign-OS, load, or performance
   evidence. The passing ReleaseSafe command remains
   `zig build unary-http-test -Dmetal=false -Doptimize=ReleaseSafe -j2`, retaining
-  four deterministic native-loopback scenarios: sibling liveness beside a
-  partial request, one-worker/one-pending FIFO pause/resume, exact queued
-  accept-origin full-request timeout, and repeated drain over one running plus
-  one queued socket. The existing `unary-server-process-test` root now adds
+  four deterministic native-loopback behavior scenarios: sibling liveness
+  beside a partial request, one-worker/one-pending FIFO pause/resume, exact
+  queued accept-origin full-request timeout, and repeated drain over one
+  running plus one queued socket. A separate callback-order inversion
+  timestamp regression deliberately delivers the dispatch observer callback
+  before the enqueue observer callback and proves event timestamps remain
+  bound to lifecycle-mutex ordinals; it is not a fifth behavior scenario. The
+  existing `unary-server-process-test` root now adds
   four Phase F1 native POSIX child profiles over real loopback sockets. Queued
   receive timeout closes with accepted/completed/failed `3/2/1`, including the
   active terminal completion and healthy successor, with two completed service
@@ -175,11 +179,20 @@ before the first stable release.
   deliberately corrupts only retained owner metadata as a white-box fault
   injection; rejection and cleanup use production paths. All four require
   aggregate event/cause conservation, unique contiguous event ordinals, thread
-  joins, and zero connection, Service, Scheduler, and Bank ownership. The
-  campaign uses real child processes and TCP loopback over a generated
-  synthetic tiny-model fixture; separate native-load evidence remains
-  follow-up work. Phase F1 concurrent
-  serving is explicitly unsupported on Windows today: the entrypoint returns
+  joins, and zero connection, Service, Scheduler, and Bank ownership. This is
+  real child-process/native POSIX loopback correctness rather than simulation.
+  A
+  separate opt-in `unary-server-native-load-test` reuses that exact artifact
+  and compile root for one real native child and 8 warmup plus 64 measured
+  loopback requests across eight flows, two workers, and eight pending slots.
+  Its independently verified fixed envelope binds request/work/transport and
+  HTTP-response handles, output/terminal/completion roots, exact throughput and
+  latency observations, machine state, and terminal zero ownership. The
+  profile completes every request on a tiny serialized CPU fixture; overload,
+  production-model, replicated, first-token, fairness, physical-parallelism,
+  GPU, and foreign-OS performance evidence remain follow-up work. Phase F1
+  concurrent serving is explicitly unsupported on Windows today: the
+  entrypoint returns
   `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
   cannot prove and restore the caller's original `FIONBIO` mode. Native Windows
   serving therefore remains pending and unproven.

@@ -126,10 +126,24 @@ pub const WorkCancellationReceiptV1 = struct {
     cancellation_was_new: bool = false,
 };
 
-/// Transport-owned control around unary admission, active-work execution, and
-/// retirement. Admission-rejection observers must be bounded, non-blocking,
-/// thread-safe, and must not re-enter request serving, drain/join the runtime,
-/// or mutate its managed lifecycle.
+/// Correlates one canonical HTTP request with the exact active-work and
+/// transport-owner identities that accepted it.
+///
+/// This synchronous observation runs after managed admission returns
+/// successfully and after active-work publication, but before the first status
+/// or drive operation. The HTTP request mutex remains held; lifecycle/control
+/// and Service locks do not. Observers must be bounded, non-blocking, and must
+/// not re-enter the serving path.
+pub const WorkPublicationV1 = struct {
+    identity: WorkIdentityV1,
+    request_sha256: protocol.Digest,
+    transport_owner: ?TransportOwnerTokenV1,
+};
+
+/// Transport-owned control around unary admission, active-work publication,
+/// execution, and retirement. Observation callbacks must be bounded,
+/// non-blocking, thread-safe, and must not re-enter request serving,
+/// drain/join the runtime, or mutate its managed lifecycle.
 pub const RequestWorkControlV1 = struct {
     context: *anyopaque,
     admitted_fn: *const fn (
@@ -152,6 +166,10 @@ pub const RequestWorkControlV1 = struct {
     admission_rejected_fn: ?*const fn (
         *anyopaque,
         RequestAdmissionRejectionV1,
+    ) void = null,
+    published_fn: ?*const fn (
+        *anyopaque,
+        WorkPublicationV1,
     ) void = null,
 
     fn admitted(
@@ -194,6 +212,19 @@ pub const RequestWorkControlV1 = struct {
         callback(self.context, .{
             .request_sha256 = request_sha256,
             .cause = cause,
+            .transport_owner = self.transport_owner,
+        });
+    }
+
+    fn published(
+        self: RequestWorkControlV1,
+        identity: WorkIdentityV1,
+        request_sha256: protocol.Digest,
+    ) void {
+        const callback = self.published_fn orelse return;
+        callback(self.context, .{
+            .identity = identity,
+            .request_sha256 = request_sha256,
             .transport_owner = self.transport_owner,
         });
     }
@@ -1016,7 +1047,10 @@ fn executePublishedCompletionLockedV1(
             return callback_error;
         };
         switch (disposition) {
-            .proceed => {},
+            .proceed => control.published(
+                published.identity,
+                request_sha256,
+            ),
             .draining => {
                 const cancellation = cancelPublishedWorkV1(
                     runtime,
@@ -1742,16 +1776,35 @@ fn waitForResponseGateTestEventV1(
 
 const WorkRetirementTestControlV1 = struct {
     retired_reached: std.Thread.ResetEvent = .{},
+    publication: ?WorkPublicationV1 = null,
     retired_identity: ?WorkIdentityV1 = null,
+    next_ordinal: u8 = 0,
+    admitted_ordinal: u8 = 0,
+    published_ordinal: u8 = 0,
+    retired_ordinal: u8 = 0,
     retired: bool = false,
 
     fn admittedOpaque(
         context: *anyopaque,
         identity: WorkIdentityV1,
     ) anyerror!WorkDispositionV1 {
-        _ = context;
+        const self: *WorkRetirementTestControlV1 =
+            @ptrCast(@alignCast(context));
         _ = identity;
+        self.next_ordinal += 1;
+        self.admitted_ordinal = self.next_ordinal;
         return .proceed;
+    }
+
+    fn publishedOpaque(
+        context: *anyopaque,
+        publication: WorkPublicationV1,
+    ) void {
+        const self: *WorkRetirementTestControlV1 =
+            @ptrCast(@alignCast(context));
+        self.next_ordinal += 1;
+        self.published_ordinal = self.next_ordinal;
+        self.publication = publication;
     }
 
     fn retiredOpaque(
@@ -1760,6 +1813,8 @@ const WorkRetirementTestControlV1 = struct {
     ) void {
         const self: *WorkRetirementTestControlV1 =
             @ptrCast(@alignCast(context));
+        self.next_ordinal += 1;
+        self.retired_ordinal = self.next_ordinal;
         self.retired_identity = identity;
         self.retired = true;
         self.retired_reached.set();
@@ -1774,6 +1829,7 @@ const WorkRetirementTestControlV1 = struct {
             .admitted_fn = admittedOpaque,
             .retired_fn = retiredOpaque,
             .transport_owner = owner,
+            .published_fn = publishedOpaque,
         };
     }
 };
@@ -2107,6 +2163,26 @@ test "terminal work retires before a blocked response admits successor execution
     try std.testing.expectEqualDeep(
         first_identity,
         retirement_control.retired_identity.?,
+    );
+    try std.testing.expectEqualDeep(
+        WorkPublicationV1{
+            .identity = first_identity,
+            .request_sha256 = [_]u8{0xd1} ** 32,
+            .transport_owner = first_owner,
+        },
+        retirement_control.publication.?,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        retirement_control.admitted_ordinal,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        retirement_control.published_ordinal,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 3),
+        retirement_control.retired_ordinal,
     );
     successor_thread.join();
     successor_joined = true;

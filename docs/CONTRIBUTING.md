@@ -48,6 +48,12 @@ but does not execute or measure it. Native Metal runtime and performance gates
 remain explicit local or maintainer-run checks so hosted CI does not imply
 hardware evidence it did not collect.
 
+The real Phase F1 native-load campaign is deliberately manual. No automatic
+GitHub CI profile runs it, so hosted-machine contention and uncontrolled
+environment state are not reported as native load evidence. Pure Python
+envelope/verifier tests remain ordinary correctness checks, and producer
+changes reuse the existing managed-process compile root.
+
 Then choose a bounded item from [Contributor projects](PROJECTS.md), open a
 **Claim a contributor slice** issue, and tell us what command will prove it is
 done. Draft pull requests are encouraged.
@@ -138,6 +144,7 @@ hides the checks required by another changed path.
 | Bounded unary prepared-text service kernel or its focused acceptance root | A focused acceptance-only change runs `unary-text-service-test` alone. A kernel implementation change selects the service, HTTP, and managed-process roots in one host Zig invocation. Complete affected verification selects the corresponding compile-only companions on each retained target without pulling the broad model-forward suite |
 | Bounded unary HTTP contract, client, or focused acceptance root | `affected-fast` runs `unary-http-test` once; complete affected verification selects only `unary-http-compile` on retained targets |
 | Managed unary server adapter/API or process acceptance root | A shared server implementation change selects `unary-http-test` and `unary-server-process-test` without the service-only root; a process-fixture-only change selects `unary-server-process-test` alone. Complete affected verification selects only the corresponding compile companions; foreign compilation is not native serving evidence |
+| Native unary load producer or verifier | Run `python3 -m unittest bench.tests.test_native_unary_server_load`. Producer/process changes also compile the existing `unary-server-process-compile` root; a verifier-only change adds no foreign Zig target. Run `unary-server-native-load-test` only as an explicit native macOS/Linux capture; never treat a CI skip, foreign compile, or structural verifier pass as load evidence |
 | Ordinary model package producer, strict tensor-profile admission module, package-aware `text-run`, its explicit POSIX supervisor protocol/death controller, process-local variable-terminal module, or bounded-input helper | `affected-fast` reuses the existing installed-CLI `text-runtime-golden-path-test` host DAG once; supervisor/death cases add no executable or compile root, and the complete affected tier cross-compiles only the existing CLI artifact through `text-runtime-golden-path-compile` |
 | Package/raw-input Python oracle implementation | Changed-file syntax plus the CLI-backed `text-runtime-golden-path-test`, which checks the independent oracle against executable output in one host DAG; no foreign target |
 | Package/raw-input Python test only | Changed-file syntax plus exactly `bench.tests.test_prepared_text_raw_input` and `bench.tests.test_prepared_text_package`; no Zig build, generic host DAG, full Python discovery, or foreign target |
@@ -177,6 +184,15 @@ zig build test -Doptimize=Debug -Dmetal=false
 zig build test -Doptimize=ReleaseSafe -Dmetal=false
 zig build test -Doptimize=ReleaseFast -Dmetal=false
 python3 -m unittest discover -s bench/tests
+python3 -m unittest bench.tests.test_native_unary_server_load
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-output=PATH/report.bin \
+  -Dunary-server-native-load-manifest-output=PATH/manifest.json
 
 tools/zig-with-ephemeral-cache.sh build \
   prepared-text-result-inspector-test \

@@ -2199,8 +2199,12 @@ pause/resume, a third peer held outside the accepted FIFO, and healthy
 follow-up service. Scenario C expires the exact queued lease under its
 accept-origin full-request deadline without an HTTP response, then serves a
 successor. Scenario D makes repeated concurrent drain converge over one active
-receive and one queued socket. All four check snapshot/event conservation,
-joined shutdown, and final zero service/Bank ownership.
+receive and one queued socket. All four behavior scenarios check snapshot/event conservation,
+joined shutdown, and final zero service/Bank ownership. A separate
+callback-order inversion timestamp regression deliberately delivers the
+dispatch observer callback before the enqueue observer callback and proves
+their nonzero timestamps still follow lifecycle-mutex linearization order; it
+is not a fifth behavior scenario.
 
 This retains Phase F1 implementation and same-process native-loopback
 correctness. It is not real-process overload evidence, native load or
@@ -2229,6 +2233,29 @@ contiguous event ordinals, thread joins, and final zero connection, Service,
 Scheduler, and Bank ownership. The campaign uses real child processes and TCP
 loopback over a generated synthetic tiny-model fixture; it is not load evidence
 and establishes no native Windows concurrent-serving behavior.
+
+A separate opt-in `unary-server-native-load-test` now reuses the exact process
+artifact and compile root. One real native child runs nine settled waves of
+eight requests over real loopback sockets: 8 warmup plus 64 measured requests
+across eight flows, two transport workers, and eight pending slots. The fixed
+79,780-byte envelope contains exact request-to-work/transport and
+HTTP-response-handle correlation, output/terminal/completion roots,
+lifecycle-linearized server timestamps, client HTTP boundaries, a 28-field
+terminal closure, and an embedded Native Workload Report V1. The independent
+verifier binds a fresh challenge, executable identity before and after the
+run, machine/boot identity, the exact all-completed outcome mix, throughput,
+latency distributions, thread joins, and final zero connection, Service,
+Scheduler, and Bank ownership.
+
+The load target is manual, uses `-j1`, and is absent from default tests and
+automatic CI. Native macOS may mark the environment eligible only after stable
+power, Low Power Mode, thermal-constraint, external-CPU-load, CPU-drift, and
+host/boot gates pass. Linux executes and verifies the native profile but
+currently remains ineligible because external CPU-load attribution is
+unavailable. This initial tiny serialized CPU profile does not establish
+overload, capacity rejection, representative model performance, first-token
+latency, fairness, completion order, concurrent model execution, physical CPU
+parallelism, GPU performance, or another operating system's behavior.
 
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
@@ -2335,14 +2362,18 @@ execution, load evidence, or performance claim. The Phase F1 production path,
 separate same-process HTTP gate, and native POSIX child-process profiles now
 supply bounded queue/passive overload correctness, deterministic loopback
 coverage, and fail-closed ownership cleanup. They add no concurrent model
-execution, load, latency, or throughput result. Retained-target compile closure
-is not native serving proof on Windows or FreeBSD; native reset,
-response-write, deadline, queue, watchdog, and drain behavior on those systems
-remains unproven. The retained unary roots now supply exact cause-specific
+execution. The retained unary roots additionally supply exact cause-specific
 post-parse observability for service-capacity and Scheduler rejection,
 including managed connection-owner decoration and Scheduler event identity.
-Separate native-load evidence using HTTP first-byte and terminal-response
-latency for this non-streaming unary profile follows later.
+The separate opt-in native-load profile adds one exact all-completed
+CPU/loopback latency and throughput result under its captured environment; it
+adds no overload, production-model, first-token, fairness,
+physical-parallelism, or GPU result. Retained-target
+compile closure is not native serving proof on Windows or FreeBSD; native
+reset, response-write, deadline, queue, watchdog, and drain behavior on those
+systems remains unproven. Next comes broader overload/rejection,
+production-model, repeated-machine, publication-eligible native Linux, and
+separately declared GPU load evidence.
 Orderly-FIN abandonment remains a separate open boundary and requires explicit
 body-complete half-close, cancellation, response, and outcome-ownership policy
 before implementation. The current evidence does not meet the full serving
@@ -2435,7 +2466,8 @@ serving lifecycle. The separate Phase F1 runtime implementation now supplies
 that bounded transport queue, fixed worker pool, shared watchdog, passive
 accept backpressure, joined drain, and retained deterministic native-loopback
 correctness, including its native POSIX child-process profiles, but still adds
-no concurrent model execution or load result. Production artifacts,
+no concurrent model execution. Its separate opt-in native-load target supplies
+only one fixed all-completed CPU/loopback profile. Production artifacts,
 remote delivery,
 broader tokenizers/models, GPU package execution, and native multi-OS runtime
 requirements remain open. The combined

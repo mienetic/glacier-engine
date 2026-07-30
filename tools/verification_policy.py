@@ -376,6 +376,11 @@ PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS = {
     "tests/prepared_text_unary_server_process.zig",
 }
 
+NATIVE_UNARY_LOAD_FOCUSED_PATHS = {
+    "bench/native_unary_server_load.py",
+    "bench/tests/test_native_unary_server_load.py",
+}
+
 WORKLOAD_REPORT_PORTABLE_PATHS = {
     "src/core/native_metal_supervisor_recovery_death_report.zig",
     "src/core/native_workload_campaign_manifest.zig",
@@ -750,6 +755,19 @@ def _decision_for_path(path: str) -> PathDecision:
                 "or focused recovery test changed"
             ),
             frozenset(store_fault_flags),
+            (),
+        )
+
+    if path in NATIVE_UNARY_LOAD_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "native unary load verifier or focused Python regression test changed",
+            frozenset(
+                {
+                    "native-unary-load-focused",
+                    "python-changed",
+                }
+            ),
             (),
         )
 
@@ -1568,6 +1586,7 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
     for flag, label in (
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
+        ("native-unary-load-focused", "python/native-unary-load"),
         ("shell-changed", "shell/changed-syntax"),
         ("rust-native", "interop/rust"),
         ("native-full", "native/releasesafe-suite"),
@@ -1666,6 +1685,7 @@ def print_report(plan: VerificationPlan) -> None:
     for flag, label in (
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
+        ("native-unary-load-focused", "python/native-unary-load"),
         ("shell-changed", "shell/changed-syntax"),
         ("rust-native", "interop/rust"),
         ("native-full", "native/releasesafe-suite"),

@@ -1372,6 +1372,18 @@ if [ "$affected_profile" -eq 1 ] &&
     fi
 fi
 
+if [ "$affected_profile" -eq 1 ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "native-unary-load-focused"; then
+    if [ "$has_python" -eq 1 ]; then
+        run_gate "python/native-unary-load" \
+            python3 -m unittest bench.tests.test_native_unary_server_load
+    else
+        record_skip "python/native-unary-load" \
+            "requires a working python3 executable"
+    fi
+fi
+
 if [ "$profile" = "affected-fast" ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "verification-policy-focused"; then

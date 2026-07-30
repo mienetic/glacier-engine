@@ -395,7 +395,10 @@ formats, and independent verifiers.
   request, one-worker/one-pending FIFO pause/resume, exact queued
   accept-origin full-request timeout, and repeated drain over one running plus
   one queued socket. All finish with exact conservation and zero service/Bank
-  ownership.
+  ownership. A separate callback-order inversion timestamp regression
+  deliberately delivers the dispatch observer callback before the enqueue
+  observer callback and proves both event timestamps remain ordered by their
+  lifecycle-mutex linearization points; it is not a fifth behavior scenario.
 
   The existing `unary-server-process-test` root also retains four Phase F1
   profiles in native POSIX child processes over real loopback sockets: a
@@ -414,11 +417,25 @@ formats, and independent verifiers.
   service capacity, and non-observed idempotency conflict. It checks canonical
   request digests, Scheduler event identity, managed connection owners,
   callback counts, unchanged rejected-work sequencing, and zero ownership
-  without adding an artifact or compile root.
-  The campaign uses real child processes and TCP loopback over a generated
-  synthetic tiny-model fixture; it is not native-load/performance, GPU, or
-  native foreign-OS evidence. Phase F1 concurrent serving is explicitly
-  unsupported on Windows today: the
+  without adding an artifact or compile root. The campaign uses real child
+  processes and TCP loopback over a generated synthetic tiny-model fixture. It
+  is real child-process/native POSIX loopback correctness evidence, not a
+  simulation, performance, GPU, or native foreign-OS result.
+
+  The separate manual `unary-server-native-load-test` target reuses the exact
+  process-test artifact and compile root. One real native child runs 8 warmup
+  plus 64 measured loopback requests across eight flows, two workers, and
+  eight pending slots. The
+  independent verifier binds the executable and machine/boot identity, exact
+  request/work/transport and HTTP-response handles, output/terminal/completion
+  roots, lifecycle-linearized timestamps, throughput, outcome mix, and final
+  zero ownership. It is an all-completed tiny serialized CPU fixture, not
+  overload, large-model, first-token, fairness, physical-parallelism, GPU, or
+  cross-OS performance evidence. macOS captures may pass the environment
+  publication gate; Linux runs remain diagnostic until external CPU-load
+  attribution is available.
+
+  Phase F1 concurrent serving is explicitly unsupported on Windows today: the
   entrypoint returns
   `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
   cannot prove and restore the caller's original `FIONBIO` mode. Native Windows
@@ -1518,6 +1535,10 @@ hardware-independent surface without those native backend dependencies.
 | Platforms | Native macOS development-host evidence, including the 49-death ActionOutbox POSIX recovery campaign, the 27-death/54-injected-error workload-store production-publisher/reference-recovery campaign, the 49-death prepared-text source/target recovery campaign, the four-death direct-terminal prepared-text smoke, and on-demand Metal diagnostic-readiness, allocation-ownership, production workload-report, controlled-disruption, cancellation-storm, segmented-soak, post-segment process-kill, controlled in-flight process-kill, and supervisor/recovery-process death gates; hosted Ubuntu x86_64 ReleaseSafe runtime, interop, process-restart, and controlled-fault CI including the same four-boundary direct-terminal smoke, through acquired descriptor-relative directory authority that preflights before mutation and owns one sync-capable handle through commit; affected-path verification with target-specific core/CPU/durable/device/host-tool compile profiles, a complete consumer compile closure for shared APIs, full per-target fallback, and one shared DAG per selected target; full opt-in production, benchmark/diagnostic, and test-compile gates for Linux x86_64/AArch64 musl, Windows x86_64 GNU, and FreeBSD x86_64; a CLI-only default install plus opt-in benchmark installation; a bounded Linux available-memory adapter implementation with a retained machine envelope still pending; exported package modules; compile-time adapter-availability inventory; read-only POSIX/Windows model-file mapping; portable process-ID and forced-termination fixtures; compile-only core probes for Android and iOS AArch64; real `fsync` and process-death gates do not provide physical power-loss evidence | Retain reproducible Linux machine/filesystem envelopes; move acquired durable POSIX modules behind the final platform boundary and turn verification profiles into distributable products; run native Windows/FreeBSD CPU, observer, mapping, recovery, telemetry, and packaging gates; implement the Windows durable-file adapter; then add mobile and reduced edge profiles |
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-b4 controlled event-blocked in-flight process kill with a fresh production control, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward, and W7b-b5 generation-six supervisor-death plus prepared-generation-twelve recovery-process-death cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b active-kernel, broader supervisor/recovery interruption, adapter, and physical device/storage/driver/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses, five domain compile profiles plus one complete consumer-closure profile, CLI-only default install, and opt-in benchmark installation | Distributable product profiles, installer, stable library API, and simpler fixture workflow |
+
+The AI-runtime row's native-load milestone now means broadening the initial
+opt-in CPU capture to overload, production models, repeated machines,
+publication-eligible native Linux, and separately declared GPU campaigns.
 
 The R1d Common artifact remains request-specific, while the additive R1k-b2
 package manifest supplies a separate request-independent portable identity and

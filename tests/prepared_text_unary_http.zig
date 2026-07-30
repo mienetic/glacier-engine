@@ -505,9 +505,14 @@ const ConcurrentEventLog = struct {
     event_count: usize = 0,
     overflowed: bool = false,
     block_first_dispatch: bool = false,
+    block_first_enqueued_until_dispatch: bool = false,
+    enqueued_count: usize = 0,
     dispatch_count: usize = 0,
     first_dispatch_reached: std.Thread.ResetEvent = .{},
     first_dispatch_release: std.Thread.ResetEvent = .{},
+    first_enqueued_callback_reached: std.Thread.ResetEvent = .{},
+    first_inverted_dispatch_completed: std.Thread.ResetEvent = .{},
+    inverted_callback_wait_failed: bool = false,
 
     fn observer(
         self: *ConcurrentEventLog,
@@ -524,24 +529,63 @@ const ConcurrentEventLog = struct {
     ) void {
         const self: *ConcurrentEventLog =
             @ptrCast(@alignCast(context));
-        var should_block = false;
+        var should_block_dispatch = false;
+        var should_block_enqueued = false;
+        var should_wait_for_enqueued = false;
         self.mutex.lock();
+        if (event.kind == .enqueued) {
+            self.enqueued_count += 1;
+            should_block_enqueued =
+                self.block_first_enqueued_until_dispatch and
+                self.enqueued_count == 1;
+        }
+        if (event.kind == .dispatched) {
+            self.dispatch_count += 1;
+            should_block_dispatch =
+                self.block_first_dispatch and
+                self.dispatch_count == 1;
+            should_wait_for_enqueued =
+                self.block_first_enqueued_until_dispatch and
+                self.dispatch_count == 1;
+        }
+        if (should_block_enqueued or should_wait_for_enqueued) {
+            self.mutex.unlock();
+            if (should_block_enqueued) {
+                self.first_enqueued_callback_reached.set();
+                self.first_inverted_dispatch_completed.timedWait(
+                    concurrent_test_watchdog_ns,
+                ) catch {
+                    self.mutex.lock();
+                    self.inverted_callback_wait_failed = true;
+                    self.changed.broadcast();
+                    self.mutex.unlock();
+                };
+            } else {
+                self.first_enqueued_callback_reached.timedWait(
+                    concurrent_test_watchdog_ns,
+                ) catch {
+                    self.mutex.lock();
+                    self.inverted_callback_wait_failed = true;
+                    self.changed.broadcast();
+                    self.mutex.unlock();
+                };
+            }
+            self.mutex.lock();
+        }
+
         if (self.event_count == self.events.len) {
             self.overflowed = true;
         } else {
             self.events[self.event_count] = event;
             self.event_count += 1;
         }
-        if (event.kind == .dispatched) {
-            self.dispatch_count += 1;
-            should_block =
-                self.block_first_dispatch and
-                self.dispatch_count == 1;
-        }
         self.changed.broadcast();
         self.mutex.unlock();
 
-        if (should_block) {
+        if (should_wait_for_enqueued) {
+            self.first_inverted_dispatch_completed.set();
+        }
+        if (should_block_dispatch) {
             self.first_dispatch_reached.set();
             self.first_dispatch_release.wait();
         }
@@ -654,6 +698,20 @@ const ConcurrentEventLog = struct {
         return self.event_count;
     }
 
+    fn firstIndexOfKind(
+        self: *ConcurrentEventLog,
+        kind: server_api.ManagedConcurrentEventKindV1,
+    ) !usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.ConcurrentEventLogOverflow;
+        for (self.events[0..self.event_count], 0..) |event, index| {
+            if (event.kind == kind) return index;
+        }
+        return error.ConcurrentEventKindNotObserved;
+    }
+
     fn waitForFirstDispatch(self: *ConcurrentEventLog) !void {
         try waitForConcurrentTestEvent(
             &self.first_dispatch_reached,
@@ -662,6 +720,33 @@ const ConcurrentEventLog = struct {
 
     fn releaseFirstDispatch(self: *ConcurrentEventLog) void {
         self.first_dispatch_release.set();
+    }
+
+    fn waitForFirstEnqueuedCallback(self: *ConcurrentEventLog) !void {
+        try waitForConcurrentTestEvent(
+            &self.first_enqueued_callback_reached,
+        );
+    }
+
+    fn waitForFirstInvertedDispatch(self: *ConcurrentEventLog) !void {
+        try waitForConcurrentTestEvent(
+            &self.first_inverted_dispatch_completed,
+        );
+    }
+
+    fn expectNoInvertedCallbackWaitFailure(
+        self: *ConcurrentEventLog,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try testing.expect(!self.inverted_callback_wait_failed);
+    }
+
+    fn releaseInvertedCallbackBarrier(
+        self: *ConcurrentEventLog,
+    ) void {
+        self.first_enqueued_callback_reached.set();
+        self.first_inverted_dispatch_completed.set();
     }
 };
 
@@ -1927,6 +2012,133 @@ fn runConcurrentDrainScenario(
     service_closed = true;
 }
 
+// Regression: timestamps remain ordinal-aligned when callback delivery inverts.
+fn runConcurrentLinearizedTimestampScenario(
+    binding: unary.ModelBindingV1,
+) !void {
+    var service_harness: ServiceHarness(1, 1) = .{};
+    try service_harness.init(
+        binding,
+        0x4854_5450_4645,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = service_harness.service.closeV1() catch {};
+    };
+
+    var runtime = try server.initV1(
+        &service_harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            0x4645_0000_0000_0001,
+            .{
+                .worker_count = 1,
+                .pending_connection_capacity = 1,
+            },
+        );
+    try lifecycle.markReadyV1();
+    var event_log: ConcurrentEventLog = .{
+        .block_first_enqueued_until_dispatch = true,
+    };
+    var transport: ConcurrentServerHarness = .{};
+    var models_call: ModelsCall = .{};
+    try transport.start(
+        &runtime,
+        &lifecycle,
+        .{},
+        event_log.observer(),
+    );
+    defer {
+        event_log.releaseInvertedCallbackBarrier();
+        transport.deinit();
+        models_call.deinit();
+    }
+
+    try models_call.start(transport.port());
+    try event_log.waitForFirstEnqueuedCallback();
+    try event_log.waitForFirstInvertedDispatch();
+    try event_log.expectNoInvertedCallbackWaitFailure();
+    try models_call.finish(&runtime.model_id);
+    _ = try event_log.waitForKind(.retired, 1);
+    try transport.drain();
+    try transport.finish();
+
+    const enqueued = try event_log.waitForKind(.enqueued, 1);
+    const dispatched = try event_log.waitForKind(.dispatched, 1);
+    try testing.expect(enqueued.ordinal < dispatched.ordinal);
+    try testing.expectEqual(
+        enqueued.lease.?.connection_sequence,
+        dispatched.lease.?.connection_sequence,
+    );
+    try testing.expect(
+        try event_log.firstIndexOfKind(.dispatched) <
+            try event_log.firstIndexOfKind(.enqueued),
+    );
+    if (comptime builtin.os.tag == .windows or
+        builtin.os.tag == .wasi or
+        builtin.os.tag == .uefi)
+    {
+        try testing.expectEqual(
+            @as(u64, 0),
+            enqueued.linearized_monotonic_ns,
+        );
+        try testing.expectEqual(
+            @as(u64, 0),
+            dispatched.linearized_monotonic_ns,
+        );
+    } else {
+        try testing.expect(
+            enqueued.linearized_monotonic_ns != 0,
+        );
+        try testing.expect(
+            dispatched.linearized_monotonic_ns != 0,
+        );
+        try testing.expect(
+            enqueued.linearized_monotonic_ns <=
+                dispatched.linearized_monotonic_ns,
+        );
+    }
+
+    const final_snapshot = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        final_snapshot,
+    );
+    try testing.expectEqual(
+        server_api.ManagedStateV1.stopped,
+        final_snapshot.managed.state,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.managed.completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        final_snapshot.managed.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.queue_enqueued_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.queue_dispatched_connections,
+    );
+    try testing.expectEqual(
+        final_snapshot.event_ordinal,
+        @as(u64, @intCast(try event_log.totalCount())),
+    );
+    try expectModelOnlyServiceCleanup(
+        &service_harness.service,
+    );
+    service_closed = true;
+}
+
 test "phase F1 bounded concurrent transport is deterministic over native loopback" {
     var fixture = try ModelFixture.init();
     defer fixture.deinit();
@@ -1946,6 +2158,13 @@ test "phase F1 bounded concurrent transport is deterministic over native loopbac
     };
     runConcurrentDrainScenario(binding) catch |err| {
         std.log.err("F1 scenario D failed", .{});
+        return err;
+    };
+    runConcurrentLinearizedTimestampScenario(binding) catch |err| {
+        std.log.err(
+            "F1 callback-order timestamp regression failed",
+            .{},
+        );
         return err;
     };
 }

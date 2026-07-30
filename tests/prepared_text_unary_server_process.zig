@@ -7,6 +7,7 @@ const protocol = engine.prepared_text_unary_http_v1;
 const http_server = engine.prepared_text_unary_http_server;
 const http_client = engine.prepared_text_unary_http_client;
 const server_api = engine.server_api;
+const native_report = engine.native_workload_report;
 
 const fixture_license =
     "Glacier unary server process synthetic fixture\n";
@@ -19,6 +20,7 @@ const fixture_config =
 ;
 
 const worker_mode = "worker";
+const native_load_mode = "--native-load";
 const loopback_host = "127.0.0.1";
 const drain_command = "drain\n";
 const drain_head_command = "drain-head\n";
@@ -36,6 +38,7 @@ const complete_response_writing_command =
     "complete-response-writing\n";
 const concurrent_release_command = "concurrent-release\n";
 const concurrent_fault_command = "concurrent-stale-owner-failure\n";
+const native_load_drain_command = "native-load-drain\n";
 const prompt = "http-probe-6";
 const generation_a: u64 = 0x4753_5052_0000_0101;
 const generation_partial_head: u64 = 0x4753_5052_0000_0102;
@@ -72,8 +75,42 @@ const generation_concurrent_stale_owner_failure: u64 =
     0x4753_5052_0000_0114;
 const generation_application_rejection: u64 =
     0x4753_5052_0000_0115;
+const generation_native_load: u64 =
+    0x4753_5052_0000_0116;
 const frame_max_bytes = 1024;
-const concurrent_event_capacity = 64;
+const concurrent_event_capacity = 512;
+const native_load_flow_count: usize = 8;
+const native_load_warmup_count: usize = 8;
+const native_load_measured_count: usize = 64;
+const native_load_record_count: usize =
+    native_load_warmup_count + native_load_measured_count;
+const native_load_wave_count: usize =
+    native_load_record_count / native_load_flow_count;
+const native_load_worker_count: u8 = 2;
+const native_load_pending_capacity: u8 = 8;
+const native_load_sidecar_bytes: usize = 296;
+const native_load_closure_u64_count: usize = 28;
+const native_load_closure_bytes: usize =
+    native_load_closure_u64_count * @sizeOf(u64);
+const native_load_outer_header_bytes: usize = 40;
+const native_load_outer_digest_bytes: usize = 64;
+const native_load_inner_bytes: usize =
+    native_report.minimum_encoded_bytes +
+    native_load_record_count * native_report.record_wire_bytes;
+const native_load_outer_bytes: usize =
+    native_load_outer_header_bytes +
+    native_load_record_count * native_load_sidecar_bytes +
+    native_load_closure_bytes +
+    native_load_inner_bytes +
+    native_load_outer_digest_bytes;
+const native_load_outer_magic =
+    [_]u8{ 'G', 'F', '1', 'L', 'O', 'A', 'D', '1' };
+const native_load_outer_abi: u64 =
+    0x4746_314c_0000_0001;
+const native_load_outer_body_domain =
+    "glacier-f1-native-unary-load-body-v1\x00";
+const native_load_outer_footer_domain =
+    "glacier-f1-native-unary-load-footer-v1\x00";
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
 const retained_receive_timeout_ns =
@@ -110,6 +147,7 @@ const WorkerProfile = enum {
     concurrent_drain,
     concurrent_stale_owner_failure,
     application_rejection,
+    native_load,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -132,6 +170,7 @@ const WorkerProfile = enum {
             .concurrent_drain => "concurrent-drain",
             .concurrent_stale_owner_failure => "concurrent-stale-owner-failure",
             .application_rejection => "application-rejection",
+            .native_load => "native-load",
         };
     }
 
@@ -164,6 +203,7 @@ const WorkerProfile = enum {
             .concurrent_drain,
             .concurrent_stale_owner_failure,
             .application_rejection,
+            .native_load,
             => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
@@ -189,6 +229,7 @@ const WorkerProfile = enum {
             .concurrent_drain,
             .concurrent_stale_owner_failure,
             .application_rejection,
+            .native_load,
             => 0,
             .concurrent_queued_receive_timeout => retained_receive_timeout_ns,
         };
@@ -265,6 +306,7 @@ const WorkerProfile = enum {
             .concurrent_queued_full_request_timeout,
             .concurrent_drain,
             .concurrent_stale_owner_failure,
+            .native_load,
             => true,
             .application_rejection => false,
             else => false,
@@ -290,6 +332,16 @@ fn supportedMain() !void {
 
     if (args.len == 1) {
         return runSupervisor(allocator);
+    }
+    if (args.len == 5 and
+        std.mem.eql(u8, args[1], native_load_mode))
+    {
+        return runNativeLoadSupervisor(
+            allocator,
+            args[2],
+            args[3],
+            args[4],
+        );
     }
     if (args.len != 7 or
         !std.mem.eql(u8, args[1], worker_mode))
@@ -655,7 +707,302 @@ const ConcurrentEventLog = struct {
                 return error.MissingConcurrentEventOrdinal;
         }
     }
+
+    fn waitForRetiredCount(
+        self: *ConcurrentEventLog,
+        expected: usize,
+    ) !void {
+        var timer = try std.time.Timer.start();
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        while (true) {
+            if (self.overflowed)
+                return error.ConcurrentEventLogOverflow;
+            var retired: usize = 0;
+            for (self.events[0..self.event_count]) |event| {
+                if (event.kind == .retired) retired += 1;
+            }
+            if (retired >= expected) return;
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= worker_timeout_ns)
+                return error.ConcurrentEventTimedOut;
+            self.changed.timedWait(
+                &self.mutex,
+                worker_timeout_ns - elapsed_ns,
+            ) catch return error.ConcurrentEventTimedOut;
+        }
+    }
 };
+
+fn nativeLoadMonotonicNs() !u64 {
+    const tag = builtin.os.tag;
+    if (comptime tag == .windows or tag == .wasi or
+        tag == .uefi)
+    {
+        return error.NativeLoadClockUnavailable;
+    }
+    const clock_id = if (comptime tag == .macos or
+        tag == .ios or tag == .tvos or tag == .watchos or
+        tag == .visionos)
+        std.posix.CLOCK.UPTIME_RAW
+    else if (comptime tag == .linux)
+        std.posix.CLOCK.MONOTONIC_RAW
+    else
+        std.posix.CLOCK.MONOTONIC;
+    const timestamp = std.posix.clock_gettime(clock_id) catch
+        return error.NativeLoadClockUnavailable;
+    const seconds = std.math.cast(
+        u64,
+        timestamp.sec,
+    ) orelse return error.NativeLoadClockInvalid;
+    const nanoseconds = std.math.cast(
+        u64,
+        timestamp.nsec,
+    ) orelse return error.NativeLoadClockInvalid;
+    if (nanoseconds >= std.time.ns_per_s)
+        return error.NativeLoadClockInvalid;
+    return std.math.add(
+        u64,
+        std.math.mul(
+            u64,
+            seconds,
+            std.time.ns_per_s,
+        ) catch return error.NativeLoadClockOverflow,
+        nanoseconds,
+    ) catch return error.NativeLoadClockOverflow;
+}
+
+const NativeLoadWorkRecord = struct {
+    publication: http_server.WorkPublicationV1,
+    published_ns: u64,
+    retired: bool = false,
+};
+
+const NativeLoadWorkLog = struct {
+    mutex: std.Thread.Mutex = .{},
+    records: [native_load_record_count]NativeLoadWorkRecord =
+        undefined,
+    count: usize = 0,
+    invalid: bool = false,
+
+    fn admittedOpaque(
+        context: *anyopaque,
+        identity: http_server.WorkIdentityV1,
+    ) anyerror!http_server.WorkDispositionV1 {
+        _ = context;
+        _ = identity;
+        return .proceed;
+    }
+
+    fn publishedOpaque(
+        context: *anyopaque,
+        publication: http_server.WorkPublicationV1,
+    ) void {
+        const self: *NativeLoadWorkLog =
+            @ptrCast(@alignCast(context));
+        const observed_ns = nativeLoadMonotonicNs() catch 0;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (observed_ns == 0 or
+            publication.transport_owner == null or
+            self.count == self.records.len)
+        {
+            self.invalid = true;
+            return;
+        }
+        for (self.records[0..self.count]) |record| {
+            if (std.mem.eql(
+                u8,
+                &record.publication.request_sha256,
+                &publication.request_sha256,
+            ) or std.meta.eql(
+                record.publication.identity,
+                publication.identity,
+            )) {
+                self.invalid = true;
+                return;
+            }
+        }
+        self.records[self.count] = .{
+            .publication = publication,
+            .published_ns = observed_ns,
+        };
+        self.count += 1;
+    }
+
+    fn retiredOpaque(
+        context: *anyopaque,
+        identity: http_server.WorkIdentityV1,
+    ) void {
+        const self: *NativeLoadWorkLog =
+            @ptrCast(@alignCast(context));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        var matched = false;
+        for (self.records[0..self.count]) |*record| {
+            if (!std.meta.eql(
+                record.publication.identity,
+                identity,
+            )) continue;
+            if (matched or record.retired) {
+                self.invalid = true;
+                return;
+            }
+            record.retired = true;
+            matched = true;
+        }
+        if (!matched) self.invalid = true;
+    }
+
+    fn control(
+        self: *NativeLoadWorkLog,
+    ) http_server.RequestWorkControlV1 {
+        return .{
+            .context = self,
+            .admitted_fn = admittedOpaque,
+            .retired_fn = retiredOpaque,
+            .published_fn = publishedOpaque,
+        };
+    }
+
+    fn validateComplete(self: *NativeLoadWorkLog) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.invalid or self.count != self.records.len)
+            return error.InvalidNativeLoadWorkLog;
+        for (self.records[0..self.count]) |record| {
+            if (!record.retired)
+                return error.InvalidNativeLoadWorkRetirement;
+        }
+    }
+};
+
+const NativeLoadServerRecord = struct {
+    request_sha256: protocol.Digest,
+    handle_sha256: protocol.Digest,
+    work_sequence: u64,
+    process_generation: u64,
+    connection_sequence: u64,
+    slot_generation: u64,
+    slot_index: u8,
+    worker_index: u8,
+    enqueue_ordinal: u64,
+    dispatch_ordinal: u64,
+    retired_ordinal: u64,
+    enqueue_ns: u64,
+    dispatch_ns: u64,
+    published_ns: u64,
+    retired_ns: u64,
+};
+
+fn sameNativeLoadLease(
+    lease: server_api.ManagedConnectionLeaseV1,
+    owner: http_server.TransportOwnerTokenV1,
+) bool {
+    return lease.process_generation ==
+        owner.process_generation and
+        lease.connection_sequence ==
+            owner.connection_sequence and
+        lease.slot_index == owner.slot_index and
+        lease.slot_generation == owner.slot_generation;
+}
+
+fn collectNativeLoadServerRecords(
+    work_log: *NativeLoadWorkLog,
+    event_log: *ConcurrentEventLog,
+    destination: *[native_load_record_count]NativeLoadServerRecord,
+) !void {
+    try work_log.validateComplete();
+    work_log.mutex.lock();
+    defer work_log.mutex.unlock();
+    event_log.mutex.lock();
+    defer event_log.mutex.unlock();
+    if (event_log.overflowed)
+        return error.ConcurrentEventLogOverflow;
+
+    for (work_log.records[0..work_log.count], 0..) |
+        work,
+        output_index,
+    | {
+        const owner = work.publication.transport_owner orelse
+            return error.MissingNativeLoadTransportOwner;
+        var enqueue: ?server_api.ManagedConcurrentEventV1 =
+            null;
+        var dispatch: ?server_api.ManagedConcurrentEventV1 =
+            null;
+        var retired: ?server_api.ManagedConcurrentEventV1 =
+            null;
+        var enqueue_ns: u64 = 0;
+        var dispatch_ns: u64 = 0;
+        var retired_ns: u64 = 0;
+        for (
+            event_log.events[0..event_log.event_count],
+        ) |event| {
+            const lease = event.lease orelse continue;
+            if (!sameNativeLoadLease(lease, owner)) continue;
+            switch (event.kind) {
+                .enqueued => {
+                    if (enqueue != null)
+                        return error.DuplicateNativeLoadEnqueue;
+                    enqueue = event;
+                    enqueue_ns =
+                        event.linearized_monotonic_ns;
+                },
+                .dispatched => {
+                    if (dispatch != null)
+                        return error.DuplicateNativeLoadDispatch;
+                    dispatch = event;
+                    dispatch_ns =
+                        event.linearized_monotonic_ns;
+                },
+                .retired => {
+                    if (retired != null)
+                        return error.DuplicateNativeLoadRetirement;
+                    retired = event;
+                    retired_ns =
+                        event.linearized_monotonic_ns;
+                },
+                else => {},
+            }
+        }
+        const enqueued = enqueue orelse
+            return error.MissingNativeLoadEnqueue;
+        const dispatched = dispatch orelse
+            return error.MissingNativeLoadDispatch;
+        const settled = retired orelse
+            return error.MissingNativeLoadRetirement;
+        const worker_index = dispatched.worker_index orelse
+            return error.MissingNativeLoadWorker;
+        if (settled.worker_index != worker_index or
+            enqueue_ns == 0 or dispatch_ns == 0 or
+            work.published_ns == 0 or retired_ns == 0 or
+            enqueue_ns > dispatch_ns or
+            dispatch_ns > work.published_ns or
+            work.published_ns > retired_ns or
+            enqueued.ordinal >= dispatched.ordinal or
+            dispatched.ordinal >= settled.ordinal)
+        {
+            return error.InvalidNativeLoadServerTimeline;
+        }
+        destination[output_index] = .{
+            .request_sha256 = work.publication.request_sha256,
+            .handle_sha256 = work.publication.identity.handle_sha256,
+            .work_sequence = work.publication.identity.sequence,
+            .process_generation = owner.process_generation,
+            .connection_sequence = owner.connection_sequence,
+            .slot_generation = owner.slot_generation,
+            .slot_index = owner.slot_index,
+            .worker_index = worker_index,
+            .enqueue_ordinal = enqueued.ordinal,
+            .dispatch_ordinal = dispatched.ordinal,
+            .retired_ordinal = settled.ordinal,
+            .enqueue_ns = enqueue_ns,
+            .dispatch_ns = dispatch_ns,
+            .published_ns = work.published_ns,
+            .retired_ns = retired_ns,
+        };
+    }
+}
 
 const ConcurrentDrainRequest = struct {
     lifecycle: *server_api.ManagedConcurrentLifecycleV1,
@@ -980,6 +1327,13 @@ fn runWorker(
     );
     if (profile == .application_rejection) {
         return runApplicationRejectionWorker(
+            allocator,
+            binding,
+            generation,
+        );
+    }
+    if (profile == .native_load) {
+        return runNativeLoadWorker(
             allocator,
             binding,
             generation,
@@ -1741,6 +2095,281 @@ fn runConcurrentWorker(
         joined,
         serving_after_join,
     );
+}
+
+fn emitNativeLoadWave(expected: usize) !void {
+    var storage: [64]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &storage,
+        "NATIVE-LOAD-WAVE {d}\n",
+        .{expected},
+    );
+    try std.fs.File.stdout().writeAll(frame);
+}
+
+fn emitNativeLoadServerRecords(
+    records: *const [native_load_record_count]NativeLoadServerRecord,
+) !void {
+    var storage: [frame_max_bytes]u8 = undefined;
+    for (records, 0..) |record, index| {
+        const request_hex =
+            std.fmt.bytesToHex(record.request_sha256, .lower);
+        const handle_hex =
+            std.fmt.bytesToHex(record.handle_sha256, .lower);
+        const frame = try std.fmt.bufPrint(
+            &storage,
+            "NATIVE-LOAD-RECORD " ++
+                "{d} {s} {s} {d} {d} {d} {d} {d} {d} " ++
+                "{d} {d} {d} {d} {d} {d} {d}\n",
+            .{
+                index,
+                &request_hex,
+                &handle_hex,
+                record.work_sequence,
+                record.process_generation,
+                record.connection_sequence,
+                record.slot_index,
+                record.slot_generation,
+                record.worker_index,
+                record.enqueue_ordinal,
+                record.enqueue_ns,
+                record.dispatch_ordinal,
+                record.dispatch_ns,
+                record.published_ns,
+                record.retired_ordinal,
+                record.retired_ns,
+            },
+        );
+        try std.fs.File.stdout().writeAll(frame);
+    }
+}
+
+fn emitNativeLoadClosure(
+    values: *const [native_load_closure_u64_count]u64,
+) !void {
+    var storage: [frame_max_bytes]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&storage);
+    const writer = stream.writer();
+    try writer.writeAll("NATIVE-LOAD-CLOSED");
+    for (values) |value| {
+        try writer.print(" {d}", .{value});
+    }
+    try writer.writeByte('\n');
+    try std.fs.File.stdout().writeAll(
+        stream.getWritten(),
+    );
+}
+
+fn runNativeLoadWorker(
+    allocator: std.mem.Allocator,
+    binding: unary.ModelBindingV1,
+    generation: u64,
+) !void {
+    if (generation != generation_native_load)
+        return error.InvalidNativeLoadGeneration;
+    if (comptime builtin.os.tag == .windows or
+        builtin.os.tag == .wasi or builtin.os.tag == .uefi)
+    {
+        return error.NativeLoadUnsupported;
+    }
+    _ = try nativeLoadMonotonicNs();
+
+    var harness: ServiceHarness(1, native_load_record_count) = .{};
+    try harness.init(
+        allocator,
+        binding,
+        generation,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = harness.service.closeV1() catch {};
+    };
+    var runtime = try http_server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            generation,
+            .{
+                .worker_count = native_load_worker_count,
+                .pending_connection_capacity = native_load_pending_capacity,
+            },
+        );
+    try lifecycle.markReadyV1();
+
+    const bind_address =
+        try std.net.Address.parseIp(loopback_host, 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+    const listen_address = listener.listen_address;
+    var event_log: ConcurrentEventLog = .{};
+    var work_log: NativeLoadWorkLog = .{};
+    var serve_context: ConcurrentServeContext = .{
+        .listener = &listener,
+        .runtime = &runtime,
+        .lifecycle = &lifecycle,
+        .config = .{},
+        .event_observer = event_log.observer(),
+        .work_observer = work_log.control(),
+    };
+    const serve_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentServeContext.run,
+        .{&serve_context},
+    );
+    var joined = false;
+    defer if (!joined) {
+        server_api.requestManagedConcurrentDrainAndWakeV1(
+            &lifecycle,
+            &runtime,
+            listen_address,
+        ) catch {};
+        serve_thread.join();
+    };
+
+    try emitReady(
+        generation,
+        listen_address.getPort(),
+        &runtime.model_id,
+    );
+    const stdin = std.fs.File.stdin();
+    for (1..native_load_wave_count + 1) |wave| {
+        const expected = wave * native_load_flow_count;
+        var command_storage: [64]u8 = undefined;
+        const command = try std.fmt.bufPrint(
+            &command_storage,
+            "native-load-wave {d}\n",
+            .{expected},
+        );
+        try expectControlLine(stdin, command);
+        try event_log.waitForRetiredCount(expected);
+        try emitNativeLoadWave(expected);
+    }
+    try expectControlLine(
+        stdin,
+        native_load_drain_command,
+    );
+    try server_api.requestManagedConcurrentDrainAndWakeV1(
+        &lifecycle,
+        &runtime,
+        listen_address,
+    );
+    serve_thread.join();
+    joined = true;
+    if (serve_context.thread_error) |err| return err;
+
+    const stopped = lifecycle.snapshotV1();
+    const service_snapshot =
+        try harness.service.snapshotV1();
+    const scheduler_snapshot =
+        service_snapshot.scheduler orelse
+        return error.MissingNativeLoadSchedulerSnapshot;
+    const bank_snapshot = service_snapshot.bank orelse
+        return error.MissingNativeLoadBankSnapshot;
+    const scheduler_zero =
+        scheduler_snapshot.active == 0 and
+        scheduler_snapshot.finished == 0 and
+        scheduler_snapshot.used.isZero() and
+        !scheduler_snapshot.poisoned and
+        !scheduler_snapshot.closed;
+    const bank_zero =
+        bank_snapshot.used.isZero() and
+        bank_snapshot.active_reservations == 0 and
+        bank_snapshot.committed_receipts == 0;
+    lifecycle.managed.mutex.lock();
+    const serving_after_join = lifecycle.serving;
+    lifecycle.managed.mutex.unlock();
+    if (stopped.managed.state != .stopped or
+        stopped.worker_count != native_load_worker_count or
+        stopped.pending_connection_capacity !=
+            native_load_pending_capacity or
+        stopped.managed.accepted_connections !=
+            native_load_record_count or
+        stopped.managed.completed_connections !=
+            native_load_record_count or
+        stopped.managed.failed_connections != 0 or
+        stopped.queue_enqueued_connections !=
+            native_load_record_count or
+        stopped.queue_dispatched_connections !=
+            native_load_record_count or
+        stopped.managed.active_connections != 0 or
+        stopped.managed.queued_connections != 0 or
+        stopped.running_connections != 0 or
+        stopped.drain_cancelled_queued_connections != 0 or
+        stopped.failure_cancelled_queued_connections != 0 or
+        stopped.receive_timeout_queued_connections != 0 or
+        stopped.full_request_timeout_queued_connections != 0 or
+        stopped.listener_backpressure_activations !=
+            stopped.listener_backpressure_resumptions or
+        stopped.accept_paused or stopped.cleanup_failed or
+        service_snapshot.active_requests != 0 or
+        service_snapshot.terminal_records !=
+            native_load_record_count or
+        service_snapshot.completed_records !=
+            native_load_record_count or
+        service_snapshot.cancelled_records != 0 or
+        service_snapshot.failed_records != 0 or
+        service_snapshot.recovery_required != 0 or
+        !scheduler_zero or !bank_zero or
+        !joined or serving_after_join)
+    {
+        return error.InvalidNativeLoadClosure;
+    }
+    var server_records: [native_load_record_count]NativeLoadServerRecord =
+        undefined;
+    try collectNativeLoadServerRecords(
+        &work_log,
+        &event_log,
+        &server_records,
+    );
+    try event_log.validateOrdinals();
+    const event_count = try event_log.totalCount();
+    if (event_count != stopped.event_ordinal)
+        return error.InvalidNativeLoadEventCount;
+
+    const close_receipt = try harness.service.closeV1();
+    service_closed = true;
+    if (!close_receipt.bank_snapshot.used.isZero() or
+        close_receipt.bank_snapshot.active_reservations != 0 or
+        close_receipt.bank_snapshot.committed_receipts != 0)
+    {
+        return error.InvalidNativeLoadCloseReceipt;
+    }
+    const closure = [native_load_closure_u64_count]u64{
+        stopped.managed.accepted_connections,
+        stopped.managed.completed_connections,
+        stopped.managed.failed_connections,
+        stopped.queue_enqueued_connections,
+        stopped.queue_dispatched_connections,
+        stopped.queue_high_watermark,
+        stopped.running_high_watermark,
+        stopped.listener_backpressure_activations,
+        stopped.listener_backpressure_resumptions,
+        stopped.drain_cancelled_queued_connections,
+        stopped.failure_cancelled_queued_connections,
+        stopped.receive_timeout_queued_connections,
+        stopped.full_request_timeout_queued_connections,
+        stopped.managed.active_connections,
+        stopped.managed.queued_connections,
+        stopped.running_connections,
+        @intFromBool(stopped.cleanup_failed),
+        service_snapshot.active_requests,
+        service_snapshot.terminal_records,
+        service_snapshot.completed_records,
+        service_snapshot.cancelled_records,
+        service_snapshot.failed_records,
+        service_snapshot.recovery_required,
+        @intFromBool(scheduler_zero),
+        @intFromBool(bank_zero),
+        @intFromBool(joined),
+        @intFromBool(serving_after_join),
+        event_count,
+    };
+    try emitNativeLoadServerRecords(&server_records);
+    try emitNativeLoadClosure(&closure);
 }
 
 fn runConcurrentQueuedTimeoutWorker(
@@ -2544,6 +3173,7 @@ fn profileMatchesControl(
         .concurrent_drain,
         .concurrent_stale_owner_failure,
         .application_rejection,
+        .native_load,
         => false,
         .standard,
         .drain_with_deadline,
@@ -4210,6 +4840,300 @@ const LocalOracle = struct {
     content_byte: u8,
 };
 
+const NativeLoadClientObservation = struct {
+    planned_ordinal: u32 = 0,
+    flow_id: u32 = 0,
+    request_sha256: protocol.Digest =
+        [_]u8{0} ** 32,
+    response_handle_sha256: protocol.Digest =
+        [_]u8{0} ** 32,
+    output_sha256: protocol.Digest =
+        [_]u8{0} ** 32,
+    terminal_sha256: protocol.Digest =
+        [_]u8{0} ** 32,
+    completion_sha256: protocol.Digest =
+        [_]u8{0} ** 32,
+    arrival_ns: u64 = 0,
+    first_output_ns: u64 = 0,
+    terminal_ns: u64 = 0,
+    client_settlement_ns: u64 = 0,
+    response_bytes: u32 = 0,
+    output_token: u32 = 0,
+    content_byte: u8 = 0,
+};
+
+const NativeLoadClientContext = struct {
+    ready: ReadyFrame,
+    oracle: LocalOracle,
+    planned_ordinal: u32,
+    flow_id: u32,
+    start: *std.Thread.ResetEvent,
+    observation: NativeLoadClientObservation = .{},
+    thread_error: ?anyerror = null,
+
+    fn run(self: *NativeLoadClientContext) void {
+        self.execute() catch |err| {
+            self.thread_error = err;
+        };
+    }
+
+    fn execute(self: *NativeLoadClientContext) !void {
+        var idempotency_storage: [protocol.idempotency_key_max_bytes]u8 =
+            undefined;
+        const idempotency_key = try std.fmt.bufPrint(
+            &idempotency_storage,
+            "native-load-{d}",
+            .{self.planned_ordinal},
+        );
+        const tenant_key: u64 =
+            10_000 + self.flow_id;
+        const request: protocol.RequestV1 = .{
+            .model_id = &self.ready.model_id,
+            .tenant_key = tenant_key,
+            .idempotency_key = idempotency_key,
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        };
+        const request_sha256 =
+            try protocol.requestSha256V1(request);
+        var body_storage: [protocol.request_body_max_bytes]u8 =
+            undefined;
+        const body = try protocol.encodeRequestV1(
+            request,
+            &body_storage,
+        );
+        var head_storage: [1024]u8 = undefined;
+        const head = try std.fmt.bufPrint(
+            &head_storage,
+            "POST {s} HTTP/1.1\r\n" ++
+                "Host: {s}:{d}\r\n" ++
+                "Content-Type: {s}\r\n" ++
+                "Content-Length: {d}\r\n" ++
+                "{s}: {s}\r\n" ++
+                "{s}: {d}\r\n" ++
+                "Connection: close\r\n\r\n",
+            .{
+                protocol.completions_path_v1,
+                loopback_host,
+                self.ready.port,
+                protocol.json_content_type,
+                body.len,
+                protocol.idempotency_header,
+                idempotency_key,
+                protocol.tenant_header,
+                tenant_key,
+            },
+        );
+
+        self.start.wait();
+        const arrival_ns = try nativeLoadMonotonicNs();
+        const address = try std.net.Address.parseIp(
+            loopback_host,
+            self.ready.port,
+        );
+        const peer =
+            try std.net.tcpConnectToAddress(address);
+        defer peer.close();
+        try peer.writeAll(head);
+        try peer.writeAll(body);
+
+        var response_storage: [
+            protocol.header_max_bytes +
+                protocol.response_body_max_bytes
+        ]u8 =
+            undefined;
+        var used: usize = 0;
+        var first_output_ns: u64 = 0;
+        while (used < response_storage.len) {
+            const read_count =
+                try peer.read(response_storage[used..]);
+            if (read_count == 0) break;
+            if (first_output_ns == 0)
+                first_output_ns =
+                    try nativeLoadMonotonicNs();
+            used += read_count;
+        }
+        if (used == 0 or used == response_storage.len or
+            first_output_ns == 0)
+        {
+            return error.InvalidNativeLoadResponseSize;
+        }
+        const response = response_storage[0..used];
+        const response_body =
+            try parseNativeLoadResponseBody(response);
+        var parser_storage: [protocol.parser_workspace_bytes]u8 =
+            undefined;
+        var parser =
+            std.heap.FixedBufferAllocator.init(
+                &parser_storage,
+            );
+        const completion =
+            try protocol.decodeCompletionV1(
+                parser.allocator(),
+                response_body,
+            );
+        const response_handle_sha256 = try parseDigestHex(
+            completion.id[protocol.completion_id_prefix.len..],
+        );
+        if (!std.mem.eql(
+            u8,
+            &completion.request_sha256,
+            &request_sha256,
+        ) or !std.mem.eql(
+            u8,
+            &completion.model_id,
+            &self.oracle.model_id,
+        ) or completion.prompt_tokens != prompt.len or
+            completion.output_count != 1 or
+            completion.output_tokens[0] !=
+                self.oracle.output_token or
+            completion.content_bytes != 1 or
+            completion.content[0] !=
+                self.oracle.content_byte)
+        {
+            return error.InvalidNativeLoadCompletion;
+        }
+        const terminal_ns = try nativeLoadMonotonicNs();
+        self.observation = .{
+            .planned_ordinal = self.planned_ordinal,
+            .flow_id = self.flow_id,
+            .request_sha256 = request_sha256,
+            .response_handle_sha256 = response_handle_sha256,
+            .output_sha256 = completion.output_sha256,
+            .terminal_sha256 = completion.terminal_evidence_sha256,
+            .completion_sha256 = completion.response_sha256,
+            .arrival_ns = arrival_ns,
+            .first_output_ns = first_output_ns,
+            .terminal_ns = terminal_ns,
+            .client_settlement_ns = try nativeLoadMonotonicNs(),
+            .response_bytes = @intCast(used),
+            .output_token = completion.output_tokens[0],
+            .content_byte = completion.content[0],
+        };
+    }
+};
+
+fn parseNativeLoadResponseBody(
+    response: []const u8,
+) ![]const u8 {
+    const head_end = std.mem.indexOf(
+        u8,
+        response,
+        "\r\n\r\n",
+    ) orelse return error.InvalidNativeLoadResponseHead;
+    const head = response[0..head_end];
+    var lines = std.mem.splitSequence(
+        u8,
+        head,
+        "\r\n",
+    );
+    const status = lines.next() orelse
+        return error.InvalidNativeLoadResponseHead;
+    if (!std.mem.eql(
+        u8,
+        status,
+        "HTTP/1.1 200 OK",
+    )) return error.InvalidNativeLoadStatus;
+    var content_length: ?usize = null;
+    var content_type = false;
+    var connection_close = false;
+    while (lines.next()) |line| {
+        const separator =
+            std.mem.indexOfScalar(u8, line, ':') orelse
+            return error.InvalidNativeLoadResponseHeader;
+        const name = line[0..separator];
+        const value = std.mem.trim(
+            u8,
+            line[separator + 1 ..],
+            " \t",
+        );
+        if (std.ascii.eqlIgnoreCase(
+            name,
+            "content-length",
+        )) {
+            if (content_length != null)
+                return error.DuplicateNativeLoadContentLength;
+            content_length = try parseCanonicalInt(
+                usize,
+                value,
+            );
+        } else if (std.ascii.eqlIgnoreCase(
+            name,
+            "content-type",
+        )) {
+            if (content_type or !std.mem.eql(
+                u8,
+                value,
+                protocol.json_content_type,
+            )) return error.InvalidNativeLoadContentType;
+            content_type = true;
+        } else if (std.ascii.eqlIgnoreCase(
+            name,
+            "connection",
+        )) {
+            if (connection_close or
+                !std.ascii.eqlIgnoreCase(
+                    value,
+                    "close",
+                ))
+            {
+                return error.InvalidNativeLoadConnection;
+            }
+            connection_close = true;
+        } else if (forbiddenNativeLoadResponseHeader(
+            name,
+        )) {
+            return error.UnsupportedNativeLoadEncoding;
+        }
+    }
+    const body_start = head_end + 4;
+    const length = content_length orelse
+        return error.MissingNativeLoadContentLength;
+    if (!content_type or !connection_close or length == 0 or
+        length > protocol.response_body_max_bytes or
+        body_start + length != response.len)
+    {
+        return error.InvalidNativeLoadResponseLength;
+    }
+    return response[body_start..];
+}
+
+fn forbiddenNativeLoadResponseHeader(
+    name: []const u8,
+) bool {
+    return std.ascii.eqlIgnoreCase(
+        name,
+        "transfer-encoding",
+    ) or std.ascii.eqlIgnoreCase(
+        name,
+        "content-encoding",
+    ) or std.ascii.eqlIgnoreCase(
+        name,
+        "trailer",
+    ) or std.ascii.eqlIgnoreCase(
+        name,
+        "upgrade",
+    );
+}
+
+comptime {
+    if (!forbiddenNativeLoadResponseHeader(
+        "Transfer-Encoding",
+    ) or !forbiddenNativeLoadResponseHeader(
+        "Content-Encoding",
+    ) or !forbiddenNativeLoadResponseHeader(
+        "Trailer",
+    ) or !forbiddenNativeLoadResponseHeader(
+        "Upgrade",
+    ) or forbiddenNativeLoadResponseHeader(
+        "Content-Type",
+    )) {
+        @compileError(
+            "native-load forbidden response header oracle drifted",
+        );
+    }
+}
+
 fn makeLocalOracle(
     allocator: std.mem.Allocator,
     fixture: *const Fixture,
@@ -4267,6 +5191,1049 @@ fn makeLocalOracle(
         .output_token = output[0],
         .content_byte = content_byte,
     };
+}
+
+fn parseDigestHex(
+    text: []const u8,
+) !protocol.Digest {
+    if (text.len != 64)
+        return error.InvalidDigestHex;
+    var result: protocol.Digest = undefined;
+    _ = std.fmt.hexToBytes(&result, text) catch
+        return error.InvalidDigestHex;
+    return result;
+}
+
+fn parseNativeLoadWave(
+    line: []const u8,
+    expected: usize,
+) !void {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse
+        return error.InvalidFrame;
+    const count = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(
+            u8,
+            name,
+            "NATIVE-LOAD-WAVE",
+        ) or try parseCanonicalInt(
+        usize,
+        count,
+    ) != expected) {
+        return error.InvalidNativeLoadWave;
+    }
+}
+
+fn parseNativeLoadServerRecord(
+    line: []const u8,
+    expected_index: usize,
+) !NativeLoadServerRecord {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse
+        return error.InvalidFrame;
+    const index = fields.next() orelse
+        return error.InvalidFrame;
+    const request = fields.next() orelse
+        return error.InvalidFrame;
+    const handle = fields.next() orelse
+        return error.InvalidFrame;
+    const work_sequence = fields.next() orelse
+        return error.InvalidFrame;
+    const process_generation = fields.next() orelse
+        return error.InvalidFrame;
+    const connection_sequence = fields.next() orelse
+        return error.InvalidFrame;
+    const slot_index = fields.next() orelse
+        return error.InvalidFrame;
+    const slot_generation = fields.next() orelse
+        return error.InvalidFrame;
+    const worker_index = fields.next() orelse
+        return error.InvalidFrame;
+    const enqueue_ordinal = fields.next() orelse
+        return error.InvalidFrame;
+    const enqueue_ns = fields.next() orelse
+        return error.InvalidFrame;
+    const dispatch_ordinal = fields.next() orelse
+        return error.InvalidFrame;
+    const dispatch_ns = fields.next() orelse
+        return error.InvalidFrame;
+    const published_ns = fields.next() orelse
+        return error.InvalidFrame;
+    const retired_ordinal = fields.next() orelse
+        return error.InvalidFrame;
+    const retired_ns = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(
+            u8,
+            name,
+            "NATIVE-LOAD-RECORD",
+        ) or try parseCanonicalInt(
+        usize,
+        index,
+    ) != expected_index) {
+        return error.InvalidNativeLoadRecordFrame;
+    }
+    const result: NativeLoadServerRecord = .{
+        .request_sha256 = try parseDigestHex(request),
+        .handle_sha256 = try parseDigestHex(handle),
+        .work_sequence = try parseCanonicalInt(
+            u64,
+            work_sequence,
+        ),
+        .process_generation = try parseCanonicalInt(
+            u64,
+            process_generation,
+        ),
+        .connection_sequence = try parseCanonicalInt(
+            u64,
+            connection_sequence,
+        ),
+        .slot_index = try parseCanonicalInt(
+            u8,
+            slot_index,
+        ),
+        .slot_generation = try parseCanonicalInt(
+            u64,
+            slot_generation,
+        ),
+        .worker_index = try parseCanonicalInt(
+            u8,
+            worker_index,
+        ),
+        .enqueue_ordinal = try parseCanonicalInt(
+            u64,
+            enqueue_ordinal,
+        ),
+        .enqueue_ns = try parseCanonicalInt(
+            u64,
+            enqueue_ns,
+        ),
+        .dispatch_ordinal = try parseCanonicalInt(
+            u64,
+            dispatch_ordinal,
+        ),
+        .dispatch_ns = try parseCanonicalInt(
+            u64,
+            dispatch_ns,
+        ),
+        .published_ns = try parseCanonicalInt(
+            u64,
+            published_ns,
+        ),
+        .retired_ordinal = try parseCanonicalInt(
+            u64,
+            retired_ordinal,
+        ),
+        .retired_ns = try parseCanonicalInt(
+            u64,
+            retired_ns,
+        ),
+    };
+    if (result.work_sequence == 0 or
+        result.process_generation !=
+            generation_native_load or
+        result.connection_sequence == 0 or
+        result.slot_index >=
+            native_load_worker_count +
+                native_load_pending_capacity or
+        result.slot_generation == 0 or
+        result.worker_index >=
+            native_load_worker_count or
+        result.enqueue_ordinal == 0 or
+        result.dispatch_ordinal == 0 or
+        result.retired_ordinal == 0 or
+        result.enqueue_ns == 0 or
+        result.dispatch_ns == 0 or
+        result.published_ns == 0 or
+        result.retired_ns == 0 or
+        result.enqueue_ordinal >=
+            result.dispatch_ordinal or
+        result.dispatch_ordinal >=
+            result.retired_ordinal or
+        result.enqueue_ns > result.dispatch_ns or
+        result.dispatch_ns > result.published_ns or
+        result.published_ns > result.retired_ns)
+    {
+        return error.InvalidNativeLoadServerRecord;
+    }
+    return result;
+}
+
+fn parseNativeLoadClosure(
+    line: []const u8,
+) ![native_load_closure_u64_count]u64 {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse
+        return error.InvalidFrame;
+    if (!std.mem.eql(
+        u8,
+        name,
+        "NATIVE-LOAD-CLOSED",
+    )) return error.InvalidNativeLoadClosureFrame;
+    var result: [native_load_closure_u64_count]u64 =
+        undefined;
+    for (&result) |*value| {
+        const text = fields.next() orelse
+            return error.InvalidNativeLoadClosureFrame;
+        value.* = try parseCanonicalInt(u64, text);
+    }
+    if (fields.next() != null)
+        return error.InvalidNativeLoadClosureFrame;
+    return result;
+}
+
+fn hashNativeLoadU64(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u64,
+) void {
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &bytes, value, .little);
+    hash.update(&bytes);
+}
+
+fn hashNativeLoadU32(
+    hash: *std.crypto.hash.sha2.Sha256,
+    value: u32,
+) void {
+    var bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &bytes, value, .little);
+    hash.update(&bytes);
+}
+
+fn finishNativeLoadHash(
+    hash: *std.crypto.hash.sha2.Sha256,
+) protocol.Digest {
+    var result: protocol.Digest = undefined;
+    hash.final(&result);
+    return result;
+}
+
+fn nativeLoadPinRoot(
+    server: NativeLoadServerRecord,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-f1-native-unary-load-pin-v1\x00",
+    );
+    hashNativeLoadU64(
+        &hash,
+        server.process_generation,
+    );
+    hashNativeLoadU64(
+        &hash,
+        server.connection_sequence,
+    );
+    hash.update(&.{server.slot_index});
+    hashNativeLoadU64(
+        &hash,
+        server.slot_generation,
+    );
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadDispatchRoot(
+    server: NativeLoadServerRecord,
+    pin_sha256: protocol.Digest,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-f1-native-unary-load-dispatch-v1\x00",
+    );
+    hash.update(&pin_sha256);
+    hashNativeLoadU64(&hash, server.enqueue_ordinal);
+    hashNativeLoadU64(&hash, server.enqueue_ns);
+    hashNativeLoadU64(&hash, server.dispatch_ordinal);
+    hashNativeLoadU64(&hash, server.dispatch_ns);
+    hash.update(&.{server.worker_index});
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadSubmissionRoot(
+    client: NativeLoadClientObservation,
+    server: NativeLoadServerRecord,
+    pin_sha256: protocol.Digest,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-f1-native-unary-load-submission-v1\x00",
+    );
+    hash.update(&client.request_sha256);
+    hash.update(&server.handle_sha256);
+    hash.update(&pin_sha256);
+    hashNativeLoadU64(&hash, server.work_sequence);
+    hashNativeLoadU64(&hash, server.published_ns);
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadOracleRoot(
+    output_token: u32,
+    content_byte: u8,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-f1-native-unary-load-oracle-v1\x00",
+    );
+    hashNativeLoadU32(&hash, output_token);
+    hash.update(&.{content_byte});
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadUnavailableReason(
+    label: []const u8,
+    ordinal: u32,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        "glacier-f1-native-unary-load-unavailable-v1\x00",
+    );
+    hashNativeLoadU32(&hash, @intCast(label.len));
+    hash.update(label);
+    hashNativeLoadU32(&hash, ordinal);
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadHostClockIdentity() protocol.Digest {
+    return switch (builtin.os.tag) {
+        .macos, .ios, .tvos, .watchos, .visionos => native_report.digestV1(
+            "darwin-clock-uptime-raw/v1",
+        ),
+        .linux => native_report.digestV1(
+            "linux-clock-monotonic-raw/v1",
+        ),
+        else => native_report.digestV1(
+            "posix-clock-monotonic/v1",
+        ),
+    };
+}
+
+const NativeLoadJoinedRecord = struct {
+    client: NativeLoadClientObservation,
+    server: NativeLoadServerRecord,
+};
+
+const NativeLoadSequencePoint = struct {
+    ns: u64,
+    record_index: u16,
+    event_index: u8,
+};
+
+fn nativeLoadJoinedLessThan(
+    _: void,
+    left: NativeLoadJoinedRecord,
+    right: NativeLoadJoinedRecord,
+) bool {
+    if (left.client.arrival_ns !=
+        right.client.arrival_ns)
+    {
+        return left.client.arrival_ns <
+            right.client.arrival_ns;
+    }
+    return left.client.planned_ordinal <
+        right.client.planned_ordinal;
+}
+
+fn nativeLoadSequenceLessThan(
+    _: void,
+    left: NativeLoadSequencePoint,
+    right: NativeLoadSequencePoint,
+) bool {
+    if (left.ns != right.ns) return left.ns < right.ns;
+    if (left.event_index != right.event_index)
+        return left.event_index < right.event_index;
+    return left.record_index < right.record_index;
+}
+
+fn nativeLoadTimestamps(
+    joined: NativeLoadJoinedRecord,
+) ![native_report.event_count]u64 {
+    const settlement_ns = @max(
+        joined.client.client_settlement_ns,
+        joined.server.retired_ns,
+    );
+    const result =
+        [native_report.event_count]u64{
+            joined.client.arrival_ns,
+            joined.server.enqueue_ns,
+            joined.server.dispatch_ns,
+            joined.server.published_ns,
+            joined.client.first_output_ns,
+            joined.client.terminal_ns,
+            settlement_ns,
+        };
+    for (result[1..], result[0 .. result.len - 1]) |
+        current,
+        previous,
+    | {
+        if (previous > current)
+            return error.InvalidNativeLoadJoinedTimeline;
+    }
+    return result;
+}
+
+fn makeNativeLoadHostEvents(
+    timestamps: [native_report.event_count]u64,
+    sequences: [native_report.event_count]u64,
+) native_report.HostEventsV1 {
+    return .{
+        .presence_mask = native_report.event_presence_all,
+        .arrival = .{
+            .ns = timestamps[0],
+            .sequence = sequences[0],
+        },
+        .admission = .{
+            .ns = timestamps[1],
+            .sequence = sequences[1],
+        },
+        .first_service = .{
+            .ns = timestamps[2],
+            .sequence = sequences[2],
+        },
+        .submit_return = .{
+            .ns = timestamps[3],
+            .sequence = sequences[3],
+        },
+        .first_output = .{
+            .ns = timestamps[4],
+            .sequence = sequences[4],
+        },
+        .terminal = .{
+            .ns = timestamps[5],
+            .sequence = sequences[5],
+        },
+        .settlement = .{
+            .ns = timestamps[6],
+            .sequence = sequences[6],
+        },
+    };
+}
+
+fn makeNativeLoadScenario(
+    fixture: *const Fixture,
+    challenge_sha256: protocol.Digest,
+    build_sha256: protocol.Digest,
+    machine_sha256: protocol.Digest,
+) !native_report.ScenarioV1 {
+    return native_report.makeScenarioV1(.{
+        .mode = .closed,
+        .evidence = .production_native,
+        .warmup_count = native_load_warmup_count,
+        .measured_count = native_load_measured_count,
+        .max_in_flight = native_load_flow_count,
+        .queue_count = native_load_worker_count +
+            native_load_pending_capacity,
+        .flow_count = native_load_flow_count,
+        .workload_sha256 = native_report.digestV1(
+            "glacier-f1-native-unary-load-workload/v1",
+        ),
+        .profile_sha256 = native_report.digestV1(
+            "glacier-f1-native-unary-load-profile/" ++ "8-warmup-64-measured-8-flow-2-worker/v1",
+        ),
+        .artifact_sha256 = fixture.bundle.package.model_content_sha256,
+        .build_sha256 = build_sha256,
+        .machine_sha256 = machine_sha256,
+        .backend_sha256 = native_report.digestV1(
+            "glacier-prepared-text-unary-cpu-backend/v1",
+        ),
+        .device_sha256 = native_report.digestV1(
+            "host-cpu-device-physical-metrics-unavailable/v1",
+        ),
+        .placement_sha256 = native_report.digestV1(
+            "managed-concurrent-loopback-2-worker-8-pending/v1",
+        ),
+        .host_source_sha256 = native_report.digestV1(
+            "f1-native-load-parent-child-observers/v1",
+        ),
+        .host_clock_sha256 = nativeLoadHostClockIdentity(),
+        .device_source_sha256 = native_report.digestV1(
+            "f1-native-load-device-observer-unsupported/v1",
+        ),
+        .device_clock_sha256 = native_report.digestV1(
+            "f1-native-load-device-clock-unsupported/v1",
+        ),
+        .challenge_sha256 = challenge_sha256,
+    });
+}
+
+fn buildNativeLoadInnerReport(
+    fixture: *const Fixture,
+    joined: *[native_load_record_count]NativeLoadJoinedRecord,
+    challenge_sha256: protocol.Digest,
+    build_sha256: protocol.Digest,
+    machine_sha256: protocol.Digest,
+    record_storage: *[native_load_record_count]native_report.RecordV1,
+    encoded_storage: *[native_load_inner_bytes]u8,
+) ![]const u8 {
+    std.mem.sort(
+        NativeLoadJoinedRecord,
+        joined,
+        {},
+        nativeLoadJoinedLessThan,
+    );
+    for (joined[0..native_load_warmup_count]) |record| {
+        if (record.client.planned_ordinal >=
+            native_load_warmup_count)
+        {
+            return error.InvalidNativeLoadWarmupOrder;
+        }
+    }
+    for (joined[native_load_warmup_count..]) |record| {
+        if (record.client.planned_ordinal <
+            native_load_warmup_count)
+        {
+            return error.InvalidNativeLoadMeasuredOrder;
+        }
+    }
+
+    var timestamps: [native_load_record_count][native_report.event_count]u64 =
+        undefined;
+    var sequence_points: [
+        native_load_record_count *
+            native_report.event_count
+    ]NativeLoadSequencePoint =
+        undefined;
+    var point_count: usize = 0;
+    for (joined, 0..) |record, record_index| {
+        timestamps[record_index] =
+            try nativeLoadTimestamps(record);
+        for (
+            timestamps[record_index],
+            0..,
+        ) |ns, event_index| {
+            sequence_points[point_count] = .{
+                .ns = ns,
+                .record_index = @intCast(record_index),
+                .event_index = @intCast(event_index),
+            };
+            point_count += 1;
+        }
+    }
+    std.mem.sort(
+        NativeLoadSequencePoint,
+        &sequence_points,
+        {},
+        nativeLoadSequenceLessThan,
+    );
+    var sequences: [native_load_record_count][native_report.event_count]u64 =
+        [_][native_report.event_count]u64{
+            [_]u64{0} ** native_report.event_count,
+        } ** native_load_record_count;
+    for (sequence_points, 0..) |point, index| {
+        sequences[point.record_index][point.event_index] =
+            index + 1;
+    }
+
+    const scenario = try makeNativeLoadScenario(
+        fixture,
+        challenge_sha256,
+        build_sha256,
+        machine_sha256,
+    );
+    for (joined, 0..) |record, index| {
+        if (!std.mem.eql(
+            u8,
+            &record.client.request_sha256,
+            &record.server.request_sha256,
+        )) return error.NativeLoadRequestCorrelationMismatch;
+        const pin_sha256 =
+            nativeLoadPinRoot(record.server);
+        const ordinal: u32 = @intCast(index);
+        record_storage[index] =
+            try native_report.makeRecordV1(.{
+                .ordinal = ordinal,
+                .cohort = if (index <
+                    native_load_warmup_count)
+                    .warmup
+                else
+                    .measured,
+                .outcome = .completed,
+                .correctness = .correct,
+                .fallback = false,
+                .flow_id = record.client.flow_id,
+                .work_units = 1,
+                .adapter_queue_slot = record.server.slot_index,
+                .host = makeNativeLoadHostEvents(
+                    timestamps[index],
+                    sequences[index],
+                ),
+                .roots = .{
+                    .request_sha256 = record.client.request_sha256,
+                    .ticket_sha256 = record.server.handle_sha256,
+                    .pin_sha256 = pin_sha256,
+                    .dispatch_sha256 = nativeLoadDispatchRoot(
+                        record.server,
+                        pin_sha256,
+                    ),
+                    .submission_sha256 = nativeLoadSubmissionRoot(
+                        record.client,
+                        record.server,
+                        pin_sha256,
+                    ),
+                    .output_sha256 = record.client.output_sha256,
+                    .oracle_sha256 = nativeLoadOracleRoot(
+                        record.client.output_token,
+                        record.client.content_byte,
+                    ),
+                    .terminal_sha256 = record.client.terminal_sha256,
+                    .completion_sha256 = record.client.completion_sha256,
+                },
+                .maximum_abs_error_f64_bits = @bitCast(@as(f64, 0)),
+                .device_timing = .{
+                    .availability = .unsupported,
+                    .source_sha256 = scenario.device_source_sha256,
+                    .clock_sha256 = scenario.device_clock_sha256,
+                    .reason_sha256 = nativeLoadUnavailableReason(
+                        "device timing",
+                        ordinal,
+                    ),
+                },
+                .allocated_context = .{
+                    .availability = .unsupported,
+                    .source_sha256 = scenario.device_source_sha256,
+                    .reason_sha256 = nativeLoadUnavailableReason(
+                        "allocated context",
+                        ordinal,
+                    ),
+                },
+                .logical = .{
+                    .bank_acquisitions = 1,
+                    .bank_completions = 1,
+                },
+            });
+    }
+    const closure = try native_report.makeClosureV1(
+        native_load_record_count,
+        native_load_record_count,
+    );
+    const report = try native_report.sealV1(
+        scenario,
+        record_storage,
+        closure,
+    );
+    return native_report.encodeV1(
+        report,
+        encoded_storage,
+    );
+}
+
+fn nativeLoadDomainDigest(
+    domain: []const u8,
+    bytes: []const u8,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(domain);
+    hash.update(bytes);
+    return finishNativeLoadHash(&hash);
+}
+
+const NativeLoadOuterWriter = struct {
+    bytes: []u8,
+    position: usize = 0,
+
+    fn writeBytes(
+        self: *NativeLoadOuterWriter,
+        value: []const u8,
+    ) !void {
+        const end = std.math.add(
+            usize,
+            self.position,
+            value.len,
+        ) catch return error.NativeLoadOuterOverflow;
+        if (end > self.bytes.len)
+            return error.NativeLoadOuterOverflow;
+        @memcpy(self.bytes[self.position..end], value);
+        self.position = end;
+    }
+
+    fn writeU8(
+        self: *NativeLoadOuterWriter,
+        value: u8,
+    ) !void {
+        try self.writeBytes(&.{value});
+    }
+
+    fn writeU32(
+        self: *NativeLoadOuterWriter,
+        value: u32,
+    ) !void {
+        var bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &bytes, value, .little);
+        try self.writeBytes(&bytes);
+    }
+
+    fn writeU64(
+        self: *NativeLoadOuterWriter,
+        value: u64,
+    ) !void {
+        var bytes: [8]u8 = undefined;
+        std.mem.writeInt(u64, &bytes, value, .little);
+        try self.writeBytes(&bytes);
+    }
+
+    fn writeDigest(
+        self: *NativeLoadOuterWriter,
+        value: protocol.Digest,
+    ) !void {
+        try self.writeBytes(&value);
+    }
+
+    fn writeReserved(
+        self: *NativeLoadOuterWriter,
+        count: usize,
+    ) !void {
+        if (count > 16)
+            return error.NativeLoadOuterOverflow;
+        try self.writeBytes(
+            ([_]u8{0} ** 16)[0..count],
+        );
+    }
+};
+
+fn validateNativeLoadClosureValues(
+    values: *const [native_load_closure_u64_count]u64,
+) !void {
+    if (values[0] != native_load_record_count or
+        values[1] != native_load_record_count or
+        values[2] != 0 or
+        values[3] != native_load_record_count or
+        values[4] != native_load_record_count or
+        values[5] == 0 or
+        values[5] > native_load_pending_capacity or
+        values[6] == 0 or
+        values[6] > native_load_worker_count or
+        values[7] != values[8] or
+        values[9] != 0 or values[10] != 0 or
+        values[11] != 0 or values[12] != 0 or
+        values[13] != 0 or values[14] != 0 or
+        values[15] != 0 or values[16] != 0 or
+        values[17] != 0 or
+        values[18] != native_load_record_count or
+        values[19] != native_load_record_count or
+        values[20] != 0 or values[21] != 0 or
+        values[22] != 0 or values[23] != 1 or
+        values[24] != 1 or values[25] != 1 or
+        values[26] != 0 or values[27] == 0)
+    {
+        return error.InvalidNativeLoadClosure;
+    }
+}
+
+fn encodeNativeLoadOuter(
+    joined: *const [native_load_record_count]NativeLoadJoinedRecord,
+    closure: *const [native_load_closure_u64_count]u64,
+    inner: []const u8,
+    output: *[native_load_outer_bytes]u8,
+) ![]const u8 {
+    if (inner.len != native_load_inner_bytes)
+        return error.InvalidNativeLoadInnerLength;
+    try validateNativeLoadClosureValues(closure);
+    @memset(output, 0);
+    var writer: NativeLoadOuterWriter = .{
+        .bytes = output,
+    };
+    try writer.writeBytes(&native_load_outer_magic);
+    try writer.writeU64(native_load_outer_abi);
+    try writer.writeU64(native_load_outer_bytes);
+    try writer.writeU32(native_load_record_count);
+    try writer.writeU32(native_load_sidecar_bytes);
+    try writer.writeU32(native_load_closure_bytes);
+    try writer.writeU32(native_load_inner_bytes);
+    if (writer.position !=
+        native_load_outer_header_bytes)
+    {
+        return error.InvalidNativeLoadOuterHeader;
+    }
+
+    const body_start = writer.position;
+    for (joined, 0..) |record, index| {
+        const sidecar_start = writer.position;
+        try writer.writeU32(@intCast(index));
+        try writer.writeU32(
+            record.client.response_bytes,
+        );
+        try writer.writeU64(
+            record.server.enqueue_ordinal,
+        );
+        try writer.writeU64(
+            record.server.dispatch_ordinal,
+        );
+        try writer.writeU64(
+            record.server.retired_ordinal,
+        );
+        try writer.writeU64(record.server.enqueue_ns);
+        try writer.writeU64(record.server.dispatch_ns);
+        try writer.writeU64(
+            record.server.published_ns,
+        );
+        try writer.writeU64(record.server.retired_ns);
+        try writer.writeU64(
+            record.server.work_sequence,
+        );
+        try writer.writeU64(
+            record.server.process_generation,
+        );
+        try writer.writeU64(
+            record.server.connection_sequence,
+        );
+        try writer.writeU64(
+            record.server.slot_generation,
+        );
+        try writer.writeU8(record.server.slot_index);
+        try writer.writeU8(
+            record.server.worker_index,
+        );
+        try writer.writeU8(record.client.content_byte);
+        try writer.writeReserved(1);
+        try writer.writeU32(record.client.output_token);
+        try writer.writeDigest(
+            record.client.request_sha256,
+        );
+        try writer.writeDigest(
+            record.client.response_handle_sha256,
+        );
+        try writer.writeDigest(
+            record.server.handle_sha256,
+        );
+        try writer.writeDigest(
+            record.client.output_sha256,
+        );
+        try writer.writeDigest(
+            record.client.terminal_sha256,
+        );
+        try writer.writeDigest(
+            record.client.completion_sha256,
+        );
+        if (writer.position - sidecar_start !=
+            native_load_sidecar_bytes)
+        {
+            return error.InvalidNativeLoadSidecarLayout;
+        }
+    }
+    for (closure) |value| try writer.writeU64(value);
+    try writer.writeBytes(inner);
+    const body_end = writer.position;
+    if (body_end + native_load_outer_digest_bytes !=
+        output.len)
+    {
+        return error.InvalidNativeLoadOuterLayout;
+    }
+    try writer.writeDigest(nativeLoadDomainDigest(
+        native_load_outer_body_domain,
+        output[body_start..body_end],
+    ));
+    try writer.writeDigest(nativeLoadDomainDigest(
+        native_load_outer_footer_domain,
+        output[0..writer.position],
+    ));
+    if (writer.position != output.len)
+        return error.InvalidNativeLoadOuterLayout;
+    return output;
+}
+
+fn runNativeLoadSupervisor(
+    allocator: std.mem.Allocator,
+    challenge_hex: []const u8,
+    build_hex: []const u8,
+    machine_hex: []const u8,
+) !void {
+    if (comptime builtin.os.tag == .windows or
+        builtin.os.tag == .wasi or builtin.os.tag == .uefi)
+    {
+        return error.NativeLoadUnsupported;
+    }
+    _ = try nativeLoadMonotonicNs();
+    const challenge_sha256 =
+        try parseDigestHex(challenge_hex);
+    const build_sha256 =
+        try parseDigestHex(build_hex);
+    const machine_sha256 =
+        try parseDigestHex(machine_hex);
+
+    var fixture = try Fixture.init(allocator);
+    defer fixture.deinit();
+    const executable =
+        try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(executable);
+    const oracle =
+        try makeLocalOracle(allocator, &fixture);
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        &fixture,
+        generation_native_load,
+        .native_load,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    if (ready.generation != generation_native_load or
+        !std.mem.eql(
+            u8,
+            &ready.model_id,
+            &oracle.model_id,
+        ))
+    {
+        return error.InvalidNativeLoadReady;
+    }
+
+    var client_observations: [native_load_record_count]NativeLoadClientObservation =
+        undefined;
+    for (0..native_load_wave_count) |wave| {
+        var start: std.Thread.ResetEvent = .{};
+        var contexts: [native_load_flow_count]NativeLoadClientContext =
+            undefined;
+        var threads: [native_load_flow_count]std.Thread =
+            undefined;
+        var spawned: usize = 0;
+        errdefer {
+            start.set();
+            for (threads[0..spawned]) |thread|
+                thread.join();
+        }
+        for (0..native_load_flow_count) |flow| {
+            const planned =
+                wave * native_load_flow_count + flow;
+            contexts[flow] = .{
+                .ready = ready,
+                .oracle = oracle,
+                .planned_ordinal = @intCast(planned),
+                .flow_id = @intCast(flow),
+                .start = &start,
+            };
+            threads[flow] = try std.Thread.spawn(
+                .{},
+                NativeLoadClientContext.run,
+                .{&contexts[flow]},
+            );
+            spawned += 1;
+        }
+        start.set();
+        for (threads) |thread| thread.join();
+        spawned = 0;
+        for (contexts, 0..) |context, flow| {
+            if (context.thread_error) |err| return err;
+            const planned =
+                wave * native_load_flow_count + flow;
+            client_observations[planned] =
+                context.observation;
+        }
+
+        const expected =
+            (wave + 1) * native_load_flow_count;
+        var command_storage: [64]u8 = undefined;
+        const command = try std.fmt.bufPrint(
+            &command_storage,
+            "native-load-wave {d}\n",
+            .{expected},
+        );
+        try child.stdin.?.writeAll(command);
+        try parseNativeLoadWave(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            expected,
+        );
+    }
+    try child.stdin.?.writeAll(
+        native_load_drain_command,
+    );
+    child.stdin.?.close();
+    child.stdin = null;
+
+    var server_records: [native_load_record_count]NativeLoadServerRecord =
+        undefined;
+    for (&server_records, 0..) |*record, index| {
+        record.* = try parseNativeLoadServerRecord(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            index,
+        );
+    }
+    const closure = try parseNativeLoadClosure(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try requireWorkerEof(child.stdout.?);
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| if (code != 0)
+            return error.NativeLoadWorkerFailed,
+        else => return error.UnexpectedWorkerTermination,
+    }
+
+    var joined: [native_load_record_count]NativeLoadJoinedRecord =
+        undefined;
+    var matched =
+        [_]bool{false} ** native_load_record_count;
+    for (client_observations, 0..) |
+        client,
+        client_index,
+    | {
+        var found: ?usize = null;
+        for (server_records, 0..) |
+            server,
+            server_index,
+        | {
+            if (!std.mem.eql(
+                u8,
+                &client.request_sha256,
+                &server.request_sha256,
+            )) continue;
+            if (found != null or matched[server_index])
+                return error.DuplicateNativeLoadCorrelation;
+            found = server_index;
+        }
+        const server_index = found orelse
+            return error.MissingNativeLoadCorrelation;
+        if (!std.mem.eql(
+            u8,
+            &client.response_handle_sha256,
+            &server_records[server_index].handle_sha256,
+        )) return error.NativeLoadResponseHandleMismatch;
+        matched[server_index] = true;
+        joined[client_index] = .{
+            .client = client,
+            .server = server_records[server_index],
+        };
+    }
+    for (matched) |present| {
+        if (!present)
+            return error.MissingNativeLoadCorrelation;
+    }
+
+    var report_records: [native_load_record_count]native_report.RecordV1 =
+        undefined;
+    var inner_storage: [native_load_inner_bytes]u8 = undefined;
+    const inner = try buildNativeLoadInnerReport(
+        &fixture,
+        &joined,
+        challenge_sha256,
+        build_sha256,
+        machine_sha256,
+        &report_records,
+        &inner_storage,
+    );
+    var outer_storage: [native_load_outer_bytes]u8 = undefined;
+    const outer = try encodeNativeLoadOuter(
+        &joined,
+        &closure,
+        inner,
+        &outer_storage,
+    );
+    var stdout_storage: [8192]u8 = undefined;
+    var stdout =
+        std.fs.File.stdout().writer(&stdout_storage);
+    try stdout.interface.writeAll(outer);
+    try stdout.interface.flush();
 }
 
 fn runSupervisor(allocator: std.mem.Allocator) !void {
@@ -6935,7 +8902,10 @@ fn spawnWorker(
     );
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Ignore;
+    child.stderr_behavior = if (profile == .native_load)
+        .Inherit
+    else
+        .Ignore;
     try child.spawn();
     child.argv = &.{};
     return child;

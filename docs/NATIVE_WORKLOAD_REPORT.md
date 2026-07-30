@@ -26,6 +26,16 @@ authenticate who captured the observations. Native publication additionally
 requires an addressable artifact, its source commit, a clean capture state,
 and the declared machine-state envelope.
 
+The Phase F1 unary load producer embeds a complete Native Workload Report V1
+inside a transport-specific outer envelope. The generic W6 verifier validates
+the inner report; the dedicated native-unary verifier additionally validates
+request-to-transport correlation, owner generations, the HTTP response handle,
+output/terminal/completion roots, HTTP timing boundaries, exact serving
+closure, producer challenge, and capture-environment eligibility. Passing only
+the inner verifier is therefore not complete Phase F1 load evidence. See
+[Bounded Prepared-Text Unary Service](PREPARED_TEXT_UNARY_SERVICE.md) and
+[Benchmarks](BENCHMARKS.md).
+
 The hard native Metal verifier creates a fresh 256-bit challenge for every
 invocation and passes it through a dedicated, sanitized environment variable;
 the runner accepts no command-line arguments. The runner binds that challenge

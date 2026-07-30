@@ -412,8 +412,13 @@ proves one-worker/one-pending FIFO dispatch, exact passive pause/resume, and
 healthy successor service. Scenario C retires the exact queued lease at its
 accept-origin full-request deadline without an HTTP response, then serves a
 successor. Scenario D makes two concurrent drain calls converge over one
-active receive and one queued socket. All four validate snapshot/event
-conservation, joined shutdown, and final zero service/Bank ownership.
+active receive and one queued socket. All four behavior scenarios validate
+snapshot/event conservation, joined shutdown, and final zero service/Bank
+ownership. A separate callback-order inversion timestamp regression
+deliberately delivers the dispatch observer callback before the enqueue
+observer callback while requiring both nonzero event timestamps to retain
+their lifecycle-mutex linearization order. That regression is not a fifth
+behavior scenario.
 
 That gate is same-process native-loopback correctness, not real-process
 overload, native load, latency, throughput, GPU, or native foreign-OS evidence.
@@ -573,10 +578,69 @@ zig build unary-server-process-compile \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
+Run the separate native-load profile only on an otherwise quiet native host:
+
+```sh
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1
+```
+
+The load capture uses the optional `RequestWorkControlV1.published_fn`
+observation. `WorkPublicationV1` carries the exact work identity, canonical
+request SHA-256, and current managed transport owner after admission returns
+`proceed` and before the first status or drive operation. The callback is
+synchronous while the HTTP request mutex remains held, but lifecycle/control
+and Service locks do not; it must be bounded, non-blocking, and must not
+re-enter serving.
+
+This manual target reuses the exact `glacier-unary-server-process-test`
+artifact, then runs it alone as a real child process over loopback. It adds no
+compile root and is not part of the default build, `affected-fast`, ordinary
+CI, or the correctness targets above. Optional
+`-Dunary-server-native-load-output=PATH` and
+`-Dunary-server-native-load-manifest-output=PATH` retain the verified
+79,780-byte envelope and its JSON capture manifest atomically.
+
+The fixed profile runs 8 warmup and 64 measured requests in eight flows, with
+2 transport workers and 8 pending slots. It correlates each client request
+with the exact server enqueue, worker dispatch, admitted-work publication, and
+transport/connection retirement observations. Its embedded W6 report retains
+accept/enqueue delay, queue delay, HTTP first-positive-read latency, decoded
+terminal-response latency, exact throughput rational, all-completed outcome
+mix, and zero connection, Service, Scheduler, and Bank ownership at close.
+With 64 measured records, nearest-rank p99 is the measured maximum; it is not
+a tail estimate for a wider population.
+
+The event mapping is explicit: arrival is immediately before client connect;
+admission is the accepted connection entering the FIFO; first service is
+worker dispatch; submit return is the exact admitted-work observation; first
+output is the client's first positive HTTP read; terminal is complete response
+decode plus oracle validation; and settlement is the later of client
+settlement and exact server transport/connection retirement. Lifecycle event
+timestamps are captured at the same mutex linearization boundary as their
+ordinals, not when an outside-lock observer callback happens to run.
+
+The public harness executes on Darwin and Linux. Only Darwin can currently
+mark a capture `publication_eligible`: it requires stable pre-run admission,
+AC power, Low Power Mode off, nominal available thermal signals, bounded
+before/after external CPU load, and a stable host/boot identity. Linux emits
+verified diagnostic evidence but remains ineligible because the current
+observer cannot attribute external CPU load strongly enough. Other operating
+systems reject before execution. Missing telemetry stays unavailable; it is
+never encoded as a measured zero.
+
+This profile uses the tiny deterministic CPU fixture and completes every
+measured request. It is not overload or rejection evidence, and it makes no
+production-model, first-token, fairness, physical-parallelism, GPU,
+temperature, frequency, power, energy, or foreign-OS performance claim. HTTP
+first byte is a transport observation, not first-token latency. A passing run
+is evidence for that exact executable, machine, environment, and profile only.
+
 The ReleaseSafe `unary-http-test` command above retains Phase F1 same-process
-native-loopback scenarios A-D: sibling liveness, accepted-FIFO
+native-loopback behavior scenarios A-D: sibling liveness, accepted-FIFO
 backpressure/order, exact queued full-request timeout, and repeated drain with
-conservation plus zero ownership.
+conservation plus zero ownership. It also retains the separate callback-order
+inversion timestamp regression described above.
 
 The existing process commands retain Phases A-D through Phase E2b, the four
 Phase F1 native POSIX child-process profiles described above, and one serial
@@ -650,8 +714,9 @@ Phase F1 makes multiple transport workers available around one bounded
 accepted FIFO, but model admission and execution remain serialized. FIFO
 therefore says nothing about completion order or scheduler fairness. Passive
 accept backpressure leaves peers in the kernel backlog and sends no pre-parse
-429/503. The retained real-process campaign validates bounded correctness,
-cleanup, and ownership; it is not a native-load or performance campaign.
+429/503. The retained correctness campaign validates bounded lifecycle and
+ownership. The separate opt-in native-load profile measures only its declared
+all-completed deterministic CPU workload.
 
 `RequestWorkControlV1.admission_rejected_fn` is an optional evidence boundary
 for a canonical request whose Service admission returns either
@@ -682,17 +747,20 @@ response write nor peer delivery.
 This work does not establish a packaged production daemon, non-loopback
 serving, streaming publication, durable idempotency or crash recovery,
 process-death recovery, authentication, authorization, TLS, automatic retry,
-quota enforcement, GPU execution, production-model quality, native load, or
-performance. Retained-target compilation is not native Windows or FreeBSD
-serving proof, and native reset, response-write, deadline, queue, watchdog, and
-drain behavior on those systems remains unproven. The next serving slices are:
+quota enforcement, GPU execution, production-model quality, overload
+performance, or a replicated performance claim. Retained-target compilation
+is not native Windows or FreeBSD serving proof, and native reset,
+response-write, deadline, queue, watchdog, and drain behavior on those systems
+remains unproven. The next serving slices are:
 
-1. later run a separate native-load campaign reporting
-   accept/admission and queue delay, HTTP first-byte latency for this
+1. broaden the initial fixed all-completed native CPU load capture with
+   overload/capacity-rejection, queued-timeout, and mixed-outcome profiles,
+   then retain eligible captures across reproducible native machines. Continue
+   to report accept/admission and queue delay, HTTP first-byte latency for this
    non-streaming unary profile, terminal-response latency, throughput, outcome
-   mix, and cleanup under a declared machine/OS/backend/power/thermal
-   envelope; do not label HTTP first byte as first-token latency or infer
-   fairness, GPU performance, or native foreign-OS behavior;
+   mix, and cleanup under a declared machine/OS/backend/power/thermal envelope;
+   do not label HTTP first byte as first-token latency or infer fairness, GPU
+   performance, or native foreign-OS behavior;
 2. define body-complete half-close, cancellation, response, and outcome
    ownership policy before extending orderly-FIN abandonment detection with
    exact connection accounting;
