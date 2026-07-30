@@ -27,11 +27,63 @@ const prompt = "http-probe-6";
 const generation_a: u64 = 0x4753_5052_0000_0101;
 const generation_partial_head: u64 = 0x4753_5052_0000_0102;
 const generation_partial_body: u64 = 0x4753_5052_0000_0103;
-const generation_b: u64 = 0x4753_5052_0000_0104;
+const generation_timeout_head: u64 = 0x4753_5052_0000_0104;
+const generation_timeout_body: u64 = 0x4753_5052_0000_0105;
+const generation_b: u64 = 0x4753_5052_0000_0106;
 const frame_max_bytes = 256;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
+const retained_receive_timeout_ns =
+    std.time.ns_per_s;
+const retained_receive_timeout_minimum_observation_ns =
+    retained_receive_timeout_ns - 200 * std.time.ns_per_ms;
+const retained_receive_timeout_maximum_observation_ns =
+    retained_receive_timeout_ns + 400 * std.time.ns_per_ms;
+const timeout_head_trickle_interval_ns = 200 * std.time.ns_per_ms;
+const timeout_head_trickle_count = 3;
 const control_poll_limit: usize = 500;
+
+const WorkerProfile = enum {
+    standard,
+    drain_with_deadline,
+    timeout_head,
+    timeout_body,
+
+    fn wire(self: WorkerProfile) []const u8 {
+        return switch (self) {
+            .standard => "standard",
+            .drain_with_deadline => "drain-with-deadline",
+            .timeout_head => "timeout-head",
+            .timeout_body => "timeout-body",
+        };
+    }
+
+    fn parse(value: []const u8) !WorkerProfile {
+        inline for (std.meta.tags(WorkerProfile)) |profile| {
+            if (std.mem.eql(u8, value, profile.wire()))
+                return profile;
+        }
+        return error.InvalidWorkerProfile;
+    }
+
+    fn timeoutPhase(
+        self: WorkerProfile,
+    ) ?server_api.ManagedConnectionPhaseV1 {
+        return switch (self) {
+            .standard, .drain_with_deadline => null,
+            .timeout_head => .receiving_head,
+            .timeout_body => .request_head_received,
+        };
+    }
+
+    fn receiveTimeoutNs(self: WorkerProfile) u64 {
+        return switch (self) {
+            .standard => 0,
+            .drain_with_deadline => server_api.maximum_receive_timeout_ns,
+            .timeout_head, .timeout_body => retained_receive_timeout_ns,
+        };
+    }
+};
 
 pub fn main() !void {
     if (comptime engine.bounded_file_input.availableV1() and
@@ -52,18 +104,20 @@ fn supportedMain() !void {
     if (args.len == 1) {
         return runSupervisor(allocator);
     }
-    if (args.len != 6 or
+    if (args.len != 7 or
         !std.mem.eql(u8, args[1], worker_mode))
     {
         return error.InvalidUsage;
     }
     const generation = try parseCanonicalInt(u64, args[5]);
+    const profile = try WorkerProfile.parse(args[6]);
     runWorker(
         allocator,
         args[2],
         args[3],
         args[4],
         generation,
+        profile,
     ) catch std.process.exit(2);
 }
 
@@ -261,12 +315,13 @@ const ServeContext = struct {
     listener: *std.net.Server,
     runtime: *http_server.RuntimeV1,
     lifecycle: *server_api.ManagedLifecycleV1,
+    config: server_api.ServerConfig,
     thread_error: ?anyerror = null,
 
     fn run(self: *ServeContext) void {
         server_api.serveManagedListenerV1(
             self.listener,
-            .{},
+            self.config,
             self.runtime,
             self.lifecycle,
         ) catch |err| {
@@ -281,6 +336,7 @@ fn runWorker(
     package_path: []const u8,
     license_path: []const u8,
     generation: u64,
+    profile: WorkerProfile,
 ) !void {
     var lifecycle =
         try server_api.ManagedLifecycleV1.initV1(generation);
@@ -369,6 +425,9 @@ fn runWorker(
         .listener = &listener,
         .runtime = &runtime,
         .lifecycle = &lifecycle,
+        .config = .{
+            .receive_timeout_ns = profile.receiveTimeoutNs(),
+        },
     };
     const serve_thread = try std.Thread.spawn(
         .{},
@@ -390,6 +449,26 @@ fn runWorker(
         listen_address.getPort(),
         &runtime.model_id,
     );
+    if (profile.timeoutPhase()) |phase| {
+        const timed_out = try waitForReceiveTimeout(
+            &lifecycle,
+            phase,
+        );
+        if (!http_server.acceptingCompletionsV1(&runtime))
+            return error.TimeoutClosedAdmission;
+        const service_snapshot = try harness.service.snapshotV1();
+        if (service_snapshot.active_requests != 0 or
+            service_snapshot.terminal_records != 0 or
+            service_snapshot.bank == null or
+            !service_snapshot.bank.?.used.isZero())
+        {
+            return error.InvalidTimeoutServiceReceipt;
+        }
+        try emitTimedOut(
+            timed_out.process_generation,
+            timed_out.last_receive_timeout_signaled_phase,
+        );
+    }
     const drain_control =
         try readDrainControl(std.fs.File.stdin());
     if (drain_control.requestedPhase()) |phase| {
@@ -550,6 +629,36 @@ fn waitForInactiveConnection(
     return error.InactiveConnectionTimeout;
 }
 
+fn waitForReceiveTimeout(
+    lifecycle: *server_api.ManagedLifecycleV1,
+    expected_phase: server_api.ManagedConnectionPhaseV1,
+) !server_api.ManagedSnapshotV1 {
+    var polls: usize = 0;
+    while (polls < control_poll_limit) : (polls += 1) {
+        const snapshot = lifecycle.snapshotV1();
+        if (snapshot.state != .ready)
+            return error.UnexpectedLifecycleState;
+        if (snapshot.receive_timeout_signaled_connections == 1 and
+            snapshot.last_receive_timeout_signaled_phase ==
+                expected_phase and
+            snapshot.active_connections == 0 and
+            snapshot.active_connection_phase == .none)
+        {
+            if (snapshot.accepted_connections != 1 or
+                snapshot.completed_connections != 0 or
+                snapshot.failed_connections != 1 or
+                snapshot.drain_signaled_connections != 0 or
+                snapshot.last_drain_signaled_phase != .none)
+            {
+                return error.InvalidReceiveTimeoutReceipt;
+            }
+            return snapshot;
+        }
+        std.Thread.sleep(watchdog_poll_ns);
+    }
+    return error.ReceiveTimeoutObservationTimeout;
+}
+
 fn validateDrainSignalReceipt(
     snapshot: server_api.ManagedSnapshotV1,
     expected_phase: ?server_api.ManagedConnectionPhaseV1,
@@ -587,7 +696,7 @@ fn emitDraining(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "DRAINING {d} {d} {d} {d} {d} {d} {d}\n",
+        "DRAINING {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -596,6 +705,26 @@ fn emitDraining(
             snapshot.active_connections,
             snapshot.drain_signaled_connections,
             @intFromEnum(snapshot.last_drain_signaled_phase),
+            snapshot.receive_timeout_signaled_connections,
+            @intFromEnum(
+                snapshot.last_receive_timeout_signaled_phase,
+            ),
+        },
+    );
+    try std.fs.File.stdout().writeAll(frame);
+}
+
+fn emitTimedOut(
+    generation: u64,
+    phase: server_api.ManagedConnectionPhaseV1,
+) !void {
+    var storage: [frame_max_bytes]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &storage,
+        "TIMED_OUT {d} {d}\n",
+        .{
+            generation,
+            @intFromEnum(phase),
         },
     );
     try std.fs.File.stdout().writeAll(frame);
@@ -609,7 +738,7 @@ fn emitClosed(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
+        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -618,6 +747,10 @@ fn emitClosed(
             snapshot.active_connections,
             snapshot.drain_signaled_connections,
             @intFromEnum(snapshot.last_drain_signaled_phase),
+            snapshot.receive_timeout_signaled_connections,
+            @intFromEnum(
+                snapshot.last_receive_timeout_signaled_phase,
+            ),
             service_active,
             terminal_records,
         },
@@ -639,6 +772,13 @@ const ActivityFrame = struct {
     active: u8,
     drain_signaled: u64,
     last_drain_phase: server_api.ManagedConnectionPhaseV1,
+    receive_timeout_signaled: u64,
+    last_receive_timeout_phase: server_api.ManagedConnectionPhaseV1,
+};
+
+const TimeoutFrame = struct {
+    generation: u64,
+    phase: server_api.ManagedConnectionPhaseV1,
 };
 
 const ClosedFrame = struct {
@@ -718,6 +858,10 @@ fn parseActivity(
         return error.InvalidFrame;
     const last_drain_phase = fields.next() orelse
         return error.InvalidFrame;
+    const receive_timeout_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_receive_timeout_phase = fields.next() orelse
+        return error.InvalidFrame;
     if (fields.next() != null or
         !std.mem.eql(u8, name, expected_name))
     {
@@ -731,6 +875,31 @@ fn parseActivity(
         .active = try parseCanonicalInt(u8, active),
         .drain_signaled = try parseCanonicalInt(u64, drain_signaled),
         .last_drain_phase = try parseConnectionPhase(last_drain_phase),
+        .receive_timeout_signaled = try parseCanonicalInt(
+            u64,
+            receive_timeout_signaled,
+        ),
+        .last_receive_timeout_phase = try parseConnectionPhase(
+            last_receive_timeout_phase,
+        ),
+    };
+}
+
+fn parseTimedOut(line: []const u8) !TimeoutFrame {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse return error.InvalidFrame;
+    const generation = fields.next() orelse
+        return error.InvalidFrame;
+    const phase = fields.next() orelse
+        return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(u8, name, "TIMED_OUT"))
+    {
+        return error.InvalidFrame;
+    }
+    return .{
+        .generation = try parseCanonicalInt(u64, generation),
+        .phase = try parseConnectionPhase(phase),
     };
 }
 
@@ -750,6 +919,10 @@ fn parseClosed(line: []const u8) !ClosedFrame {
     const drain_signaled = fields.next() orelse
         return error.InvalidFrame;
     const last_drain_phase = fields.next() orelse
+        return error.InvalidFrame;
+    const receive_timeout_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_receive_timeout_phase = fields.next() orelse
         return error.InvalidFrame;
     const service_active = fields.next() orelse
         return error.InvalidFrame;
@@ -774,6 +947,13 @@ fn parseClosed(line: []const u8) !ClosedFrame {
             .active = try parseCanonicalInt(u8, active),
             .drain_signaled = try parseCanonicalInt(u64, drain_signaled),
             .last_drain_phase = try parseConnectionPhase(last_drain_phase),
+            .receive_timeout_signaled = try parseCanonicalInt(
+                u64,
+                receive_timeout_signaled,
+            ),
+            .last_receive_timeout_phase = try parseConnectionPhase(
+                last_receive_timeout_phase,
+            ),
         },
         .service_active = try parseCanonicalInt(u32, service_active),
         .terminal_records = try parseCanonicalInt(u32, terminal_records),
@@ -788,6 +968,7 @@ fn parseConnectionPhase(
         0 => .none,
         1 => .receiving_head,
         2 => .request_head_received,
+        3 => .request_received,
         else => error.InvalidFrame,
     };
 }
@@ -931,6 +1112,22 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         executable,
         &fixture,
         generation_partial_body,
+        .body,
+        &oracle.model_id,
+    );
+    try exerciseReceiveTimeout(
+        allocator,
+        executable,
+        &fixture,
+        generation_timeout_head,
+        .head,
+        &oracle.model_id,
+    );
+    try exerciseReceiveTimeout(
+        allocator,
+        executable,
+        &fixture,
+        generation_timeout_body,
         .body,
         &oracle.model_id,
     );
@@ -1079,6 +1276,7 @@ fn proveInvalidStartup(
         executable,
         fixture,
         0,
+        .standard,
     );
     var waited = false;
     defer if (!waited) terminateChild(&child);
@@ -1146,6 +1344,7 @@ fn exercisePartialDrain(
         executable,
         fixture,
         generation,
+        .drain_with_deadline,
     );
     var waited = false;
     defer if (!waited) terminateChild(&child);
@@ -1193,6 +1392,8 @@ fn exercisePartialDrain(
         1,
         1,
         kind.phase(),
+        0,
+        .none,
     );
     try requirePeerEofWithoutResponse(peer);
 
@@ -1205,6 +1406,147 @@ fn exercisePartialDrain(
         1,
         0,
         1,
+        1,
+        kind.phase(),
+        0,
+        .none,
+    );
+    try require(closed.service_active == 0);
+    try require(closed.terminal_records == 0);
+    try require(closed.bank_zero == 1);
+    try requireWorkerEof(child.stdout.?);
+
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| try require(code == 0),
+        else => return error.UnexpectedWorkerTermination,
+    }
+}
+
+fn exerciseReceiveTimeout(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    generation: u64,
+    kind: PartialDrainKind,
+    expected_model_id: *const [protocol.model_id_bytes]u8,
+) !void {
+    const profile: WorkerProfile = switch (kind) {
+        .head => .timeout_head,
+        .body => .timeout_body,
+    };
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        fixture,
+        generation,
+        profile,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == generation);
+    try require(std.mem.eql(
+        u8,
+        &ready.model_id,
+        expected_model_id,
+    ));
+
+    const address = try std.net.Address.parseIp(
+        loopback_host,
+        ready.port,
+    );
+    const peer = try std.net.tcpConnectToAddress(address);
+    defer peer.close();
+    var timeout_timer = try std.time.Timer.start();
+    try writePartialRequest(peer, ready, kind);
+    if (kind == .head) {
+        for (0..timeout_head_trickle_count) |_| {
+            std.Thread.sleep(timeout_head_trickle_interval_ns);
+            try peer.writeAll("x");
+        }
+    }
+
+    const timed_out = try parseTimedOut(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    const observed_timeout_ns = timeout_timer.read();
+    if (observed_timeout_ns <
+        retained_receive_timeout_minimum_observation_ns)
+    {
+        return error.ReceiveTimeoutTooEarly;
+    }
+    if (kind == .head and
+        observed_timeout_ns >
+            retained_receive_timeout_maximum_observation_ns)
+    {
+        return error.ReceiveTimeoutTooLate;
+    }
+    try require(timed_out.generation == generation);
+    try require(timed_out.phase == kind.phase());
+    try requirePeerEofWithoutResponse(peer);
+
+    var client = try http_client.ClientV1.initLoopback(
+        allocator,
+        loopback_host,
+        ready.port,
+    );
+    defer client.deinit();
+    const models = try expectModels(
+        try client.listModelsV1(),
+    );
+    try require(std.mem.eql(
+        u8,
+        &models.model_id,
+        expected_model_id,
+    ));
+
+    try child.stdin.?.writeAll(drain_command);
+    child.stdin.?.close();
+    child.stdin = null;
+
+    const draining = try parseActivity(
+        try readFrame(child.stdout.?, &frame_storage),
+        "DRAINING",
+    );
+    try validateActivity(
+        draining,
+        generation,
+        2,
+        1,
+        1,
+        0,
+        .none,
+        1,
+        kind.phase(),
+    );
+    const closed = try parseClosed(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try validateActivity(
+        closed.activity,
+        generation,
+        2,
+        1,
+        1,
+        0,
+        .none,
         1,
         kind.phase(),
     );
@@ -1299,6 +1641,7 @@ fn exerciseWorker(
         executable,
         fixture,
         generation,
+        .standard,
     );
     var waited = false;
     defer if (!waited) terminateChild(&child);
@@ -1387,6 +1730,8 @@ fn exerciseWorker(
         expected_failed,
         0,
         .none,
+        0,
+        .none,
     );
     try validateActivity(
         closed.activity,
@@ -1394,6 +1739,8 @@ fn exerciseWorker(
         expected_accepted,
         expected_completed,
         expected_failed,
+        0,
+        .none,
         0,
         .none,
     );
@@ -1429,6 +1776,7 @@ fn spawnWorker(
     executable: []const u8,
     fixture: *const Fixture,
     generation: u64,
+    profile: WorkerProfile,
 ) !std.process.Child {
     var generation_storage: [20]u8 = undefined;
     const generation_text = try std.fmt.bufPrint(
@@ -1444,6 +1792,7 @@ fn spawnWorker(
             fixture.package_path,
             fixture.license_path,
             generation_text,
+            profile.wire(),
         },
         allocator,
     );
@@ -1472,6 +1821,8 @@ fn validateActivity(
     failed: u64,
     drain_signaled: u64,
     last_drain_phase: server_api.ManagedConnectionPhaseV1,
+    receive_timeout_signaled: u64,
+    last_receive_timeout_phase: server_api.ManagedConnectionPhaseV1,
 ) !void {
     try require(activity.generation == generation);
     try require(activity.accepted == accepted);
@@ -1481,6 +1832,14 @@ fn validateActivity(
     try require(activity.drain_signaled == drain_signaled);
     try require(
         activity.last_drain_phase == last_drain_phase,
+    );
+    try require(
+        activity.receive_timeout_signaled ==
+            receive_timeout_signaled,
+    );
+    try require(
+        activity.last_receive_timeout_phase ==
+            last_receive_timeout_phase,
     );
 }
 

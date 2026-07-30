@@ -1939,7 +1939,7 @@ graceful drain, restart, durable idempotency, process-death recovery, native
 multi-OS serving, GPU execution, production-model quality, or performance
 evidence.
 
-#### R1k-b8 — Managed unary server process lifecycle, Phases A-B
+#### R1k-b8 — Managed unary server process lifecycle, Phases A-C
 
 Status: **integrated experimental host-process lifecycle slice**.
 
@@ -1954,14 +1954,34 @@ readiness or liveness service guarantee.
 Phase B adds one active-connection lease fenced by process generation,
 connection sequence, and native handle. The lease starts in exact phase
 `receiving_head` and advances once to `request_head_received` after the HTTP
-head has been received. The drain boundary remains an execution-admission
-boundary: before managed state exposes `draining`, the runtime closes
-completion admission. While still holding the lifecycle lock, drain performs
+head has been received. Receipt of every byte required by the selected route
+advances it to `request_received`. The drain boundary remains an
+execution-admission boundary: before managed state exposes `draining`, the
+runtime closes completion admission. While still holding the lifecycle lock,
+drain performs
 receive-side shutdown on a leased connection or uses the existing loopback
 wake when no connection is active. The serving thread is the sole connection
 closer. It accounts the outcome and retires the fenced lease before its
 deferred close, so drain does not race a second owner closing a reused handle.
 The HTTP R1 model-list and completion profile remains unchanged.
+
+Phase C adds an optional timeout to the managed listener only.
+`receive_timeout_ns = 0` disables it; valid nonzero values are inclusive from
+1 millisecond through 60 seconds. A single monotonic timer starts immediately
+after accept and is never reset after the HTTP head. Head transition, complete
+request receipt, and every competing retirement path are serialized under the
+lifecycle lock. Competing rejection, disconnect, drain, and timer-expiry
+retirements linearize by acquiring that lock; exactly one outcome is retained.
+Only an exact still-active generation/sequence/native-handle lease in
+`receiving_head` or `request_head_received` may be retired for timeout. The
+serving thread waits for socket readability within the remaining monotonic
+budget before every receive and recomputes that budget after each read,
+preventing incremental peer progress from extending the absolute deadline.
+The timer is joined before lease retirement and the serving thread remains the
+sole socket reader and closer. Timeout count and last phase are separate from
+drain evidence. A timeout leaves the lifecycle `ready` and completion
+admission open. This elapsed receive deadline is separate from
+`Glacier-Deadline-Tick`, which remains an absolute logical Scheduler deadline.
 
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
@@ -1978,25 +1998,31 @@ partial body open. Drain meets those peers in `receiving_head` and
 `request_head_received`, respectively, receive-cancels each, records exactly
 one accepted, zero completed, one failed, and zero active connection, and
 closes with zero active service requests, zero terminal service records, and
-zero Bank ownership. Generation zero fails before any `READY` frame.
+zero Bank ownership. Two further child generations use a one-second Phase C
+deadline to expire the same partial-header and partial-body shapes without
+drain. Each publishes exact timeout phase evidence with no drain signal or
+response to the interrupted peer, remains ready with completion admission
+open, serves a valid model-list request in the same child, then drains with
+exactly two accepted, one completed, one failed, zero service records, and zero
+Bank ownership. Generation zero fails before any `READY` frame.
 
 `unary-server-process-test` runs that real host-process fixture without the
 broad model-forward suite. `unary-server-process-compile` supplies compile-only
 evidence for retained targets; it does not execute a child or establish native
 serving support there. Shared kernel or server implementation changes compose
-the service, HTTP, and process roots in one host Zig invocation. Phase B reuses
-the same dual-mode executable and these existing targets; it adds no compile
-root.
+the service, HTTP, and process roots in one host Zig invocation. Phases B-C
+reuse the same dual-mode executable and these existing targets; they add no
+compile root.
 
-Phases A-B do not retain idempotency records or active execution across process
-restart. Receive-side drain cancellation before service admission is not a
-wall-clock request timeout, a post-admission accepted-work cancellation
-matrix, or slow-response-write cancellation. This slice adds no durable or
-process-death recovery, concurrent serving, overload queue, streaming, early
-EOS, authentication, authorization, TLS, quota, GPU execution, load evidence,
-or performance claim. Retained-target compile closure is not native serving
-proof on Windows or FreeBSD, and shutdown of a pending overlapped receive on
-Windows remains unproven. It does not meet the full serving promotion gate.
+Phases A-C do not retain idempotency records or active execution across process
+restart. Phase C is a pre-admission receive timeout, not a full-request or
+service-level guarantee; it does not cancel admitted execution or a blocked
+response write. This slice adds no durable or process-death recovery,
+concurrent listener queue, process-wide overload policy, streaming, early EOS,
+authentication, authorization, TLS, quota, GPU execution, load evidence, or
+performance claim. Retained-target compile closure is not native serving proof
+on Windows or FreeBSD, and native deadline behavior on those systems remains
+unproven. It does not meet the full serving promotion gate.
 
 #### Public durable-runtime composition foundation
 
@@ -2052,11 +2078,12 @@ the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
 than an exhaustive storage or power-loss campaign. Ordinary-package production
 and admission now include checked durable fixed output `1..64`, with focused
 `N=2`, fresh-process `N=4`, and `N=64` evidence for one narrow CPU/POSIX
-profile. R1k-b8 Phases A-B now prove a clean managed child-process drain,
-receive-side cancellation of held-open partial HTTP heads and bodies before
-service admission, zero-ownership close, and same-package fresh restart. They
-do not prove wall-clock timeout, post-admission accepted-work or
-slow-response-write cancellation, durable request state, crash recovery, or
+profile. R1k-b8 Phases A-C now prove a clean managed child-process drain,
+receive-side drain cancellation of held-open partial HTTP heads and bodies,
+bounded monotonic pre-admission receive timeout with separate evidence,
+same-child liveness after timeout, zero-ownership close, and same-package fresh
+restart. They do not prove full-request timeout, post-admission accepted-work
+or slow-response-write cancellation, durable request state, crash recovery, or
 the full serving lifecycle. Production artifacts, remote delivery, broader
 tokenizers/models, GPU package execution, and multi-OS requirements remain
 open. The combined 49-boundary worker now carries an admitted ordinary-profile

@@ -35,6 +35,55 @@ pub const WorkspaceV1 = struct {
     output: [protocol.output_max_tokens]u8,
 };
 
+/// Optional transport-owned boundary for one complete request receive.
+///
+/// `complete_fn` runs only after every request byte required by the selected
+/// route has been received. `stop_fn` atomically retires a pending receive
+/// deadline when the adapter rejects or loses the request before that
+/// boundary. It returns true when retirement won; false means timeout already
+/// won and the adapter must not write a response.
+pub const RequestReceiveControlV1 = struct {
+    context: *anyopaque,
+    complete_fn: *const fn (*anyopaque) anyerror!void,
+    stop_fn: *const fn (*anyopaque) anyerror!bool,
+
+    fn complete(self: RequestReceiveControlV1) !void {
+        return self.complete_fn(self.context);
+    }
+
+    fn stop(self: RequestReceiveControlV1) !bool {
+        return self.stop_fn(self.context);
+    }
+};
+
+const RequestReceiveGuardV1 = struct {
+    control: ?RequestReceiveControlV1,
+    stopped: bool = false,
+    timeout_won: bool = false,
+
+    fn complete(self: *RequestReceiveGuardV1) !void {
+        if (self.stopped) return;
+        if (self.control) |control| {
+            control.complete() catch |err| {
+                _ = self.stop() catch {};
+                return err;
+            };
+        }
+        self.stopped = true;
+    }
+
+    fn stop(self: *RequestReceiveGuardV1) !bool {
+        if (self.stopped) return !self.timeout_won;
+        const retired = if (self.control) |control|
+            try control.stop()
+        else
+            true;
+        self.stopped = true;
+        self.timeout_won = !retired;
+        return retired;
+    }
+};
+
 const OwnedHeaderFactsV1 = struct {
     idempotency_key_bytes: usize,
     tenant_key_bytes: usize,
@@ -116,8 +165,28 @@ pub fn serveRequestV1(
     request: *std.http.Server.Request,
     workspace: *WorkspaceV1,
 ) !void {
+    return serveRequestWithReceiveControlV1(
+        runtime,
+        request,
+        workspace,
+        null,
+    );
+}
+
+pub fn serveRequestWithReceiveControlV1(
+    runtime: *RuntimeV1,
+    request: *std.http.Server.Request,
+    workspace: *WorkspaceV1,
+    receive_control: ?RequestReceiveControlV1,
+) !void {
+    var receive_guard: RequestReceiveGuardV1 = .{
+        .control = receive_control,
+    };
+    defer _ = receive_guard.stop() catch {};
+
     if (request.head.version != .@"HTTP/1.1") {
-        return respondApiError(
+        return respondApiErrorBeforeReceiveRetirement(
+            &receive_guard,
             request,
             workspace,
             .http_version_not_supported,
@@ -131,14 +200,20 @@ pub fn serveRequestV1(
         protocol.models_path_v1,
     )) {
         if (request.head.method != .GET) {
-            return respondApiError(
+            return respondApiErrorBeforeReceiveRetirement(
+                &receive_guard,
                 request,
                 workspace,
                 .method_not_allowed,
                 null,
             );
         }
-        return serveModelsV1(runtime, request, workspace);
+        return serveModelsV1(
+            runtime,
+            request,
+            workspace,
+            &receive_guard,
+        );
     }
 
     if (std.mem.eql(
@@ -147,17 +222,24 @@ pub fn serveRequestV1(
         protocol.completions_path_v1,
     )) {
         if (request.head.method != .POST) {
-            return respondApiError(
+            return respondApiErrorBeforeReceiveRetirement(
+                &receive_guard,
                 request,
                 workspace,
                 .method_not_allowed,
                 null,
             );
         }
-        return serveCompletionV1(runtime, request, workspace);
+        return serveCompletionV1(
+            runtime,
+            request,
+            workspace,
+            &receive_guard,
+        );
     }
 
-    return respondApiError(
+    return respondApiErrorBeforeReceiveRetirement(
+        &receive_guard,
         request,
         workspace,
         .route_not_found,
@@ -165,20 +247,40 @@ pub fn serveRequestV1(
     );
 }
 
+fn respondApiErrorBeforeReceiveRetirement(
+    receive_guard: *RequestReceiveGuardV1,
+    request: *std.http.Server.Request,
+    workspace: *WorkspaceV1,
+    code: protocol.ErrorCodeV1,
+    request_sha256: ?protocol.Digest,
+) !void {
+    if (!(try receive_guard.stop()))
+        return error.ConnectionReceiveTimedOut;
+    return respondApiError(
+        request,
+        workspace,
+        code,
+        request_sha256,
+    );
+}
+
 fn serveModelsV1(
     runtime: *RuntimeV1,
     request: *std.http.Server.Request,
     workspace: *WorkspaceV1,
+    receive_guard: *RequestReceiveGuardV1,
 ) !void {
     validateModelListHeaders(request) catch {
         request.head.expect = null;
-        return respondApiError(
+        return respondApiErrorBeforeReceiveRetirement(
+            receive_guard,
             request,
             workspace,
             .invalid_request,
             null,
         );
     };
+    try receive_guard.complete();
     const body = protocol.encodeModelListV1(
         &runtime.model_id,
         runtime.model_binding_sha256,
@@ -202,10 +304,12 @@ fn serveCompletionV1(
     runtime: *RuntimeV1,
     request: *std.http.Server.Request,
     workspace: *WorkspaceV1,
+    receive_guard: *RequestReceiveGuardV1,
 ) !void {
     const content_length_u64 = request.head.content_length orelse {
         request.head.expect = null;
-        return respondApiError(
+        return respondApiErrorBeforeReceiveRetirement(
+            receive_guard,
             request,
             workspace,
             .missing_content_length,
@@ -216,7 +320,8 @@ fn serveCompletionV1(
         content_length_u64 > protocol.request_body_max_bytes)
     {
         request.head.expect = null;
-        return respondApiError(
+        return respondApiErrorBeforeReceiveRetirement(
+            receive_guard,
             request,
             workspace,
             .request_too_large,
@@ -230,7 +335,8 @@ fn serveCompletionV1(
         content_length_u64,
     ) catch |err| {
         request.head.expect = null;
-        return respondApiError(
+        return respondApiErrorBeforeReceiveRetirement(
+            receive_guard,
             request,
             workspace,
             switch (err) {
@@ -249,6 +355,8 @@ fn serveCompletionV1(
     body_reader.readSliceAll(
         workspace.body[0..content_length],
     ) catch {
+        if (!(try receive_guard.stop()))
+            return error.ConnectionReceiveTimedOut;
         // Managed drain interrupts only the receive side. Do not turn that
         // transport cancellation into a client-visible malformed-body reply.
         if (!acceptingCompletionsV1(runtime))
@@ -260,6 +368,7 @@ fn serveCompletionV1(
             null,
         );
     };
+    try receive_guard.complete();
 
     var parser = std.heap.FixedBufferAllocator.init(
         &workspace.parser,

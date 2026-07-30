@@ -27,27 +27,42 @@ before the first stable release.
   values, rejects redirects, and validates response correlation. It does not
   add authentication, TLS, streaming, automatic retry, durable idempotency,
   restart, disconnect, production-model, GPU, or performance evidence.
-- R1k-b8 Phases A-B add an experimental managed lifecycle around that serial
+- R1k-b8 Phases A-C add an experimental managed lifecycle around that serial
   loopback server. `ManagedLifecycleV1` records one nonzero process generation,
   exact connection outcomes, and the monotone
   `starting -> ready -> draining -> stopped` path with a terminal `failed`
   state. Phase B adds one generation/sequence/handle-fenced active-connection
-  lease with exact `receiving_head` and `request_head_received` phases.
+  lease with exact `receiving_head`, `request_head_received`, and
+  `request_received` phases.
   Out-of-band drain closes completion admission before publishing `draining`,
   then performs receive-side shutdown under the lifecycle lock. The serving
   thread remains the sole connection closer and retires the lease before that
-  close. The same focused dual-mode real-process fixture now also holds one
+  close. Phase C adds an optional managed receive deadline: zero disables it;
+  enabled values are bounded from 1 millisecond through 60 seconds. One
+  monotonic elapsed-time budget starts immediately after accept and does not
+  reset after the HTTP head. The serving thread waits for socket readability
+  against the remaining absolute budget before every receive, so incremental
+  peer progress cannot turn the deadline into an inactivity timeout. On
+  expiry, the timer may retire only the exact still-active fenced lease before
+  `request_received`; it records a timeout count and phase separately from
+  drain and is joined before lease retirement. A receive timeout leaves the
+  process ready and completion admission open. The same focused dual-mode
+  real-process fixture now also
+  holds one
   partial-header peer and one declared-length partial-body peer open in
   separate child generations, drain-cancels each, and records exactly one
   failed connection with zero active service requests, zero terminal service
-  records, and zero Bank ownership. Existing model-list, completion/replay,
-  malformed-peer, clean-close, and same-package fresh-restart checks remain.
-  This is not a wall-clock timeout,
+  records, and zero Bank ownership. Two further generations let the same peers
+  expire without drain, require no response to the interrupted peer, verify
+  exact timeout evidence, then serve a valid model-list request in the same
+  still-ready child before clean drain. Existing model-list,
+  completion/replay, malformed-peer, clean-close, and same-package
+  fresh-restart checks remain. The elapsed receive deadline is distinct from
+  the request's logical Scheduler deadline. It is not a full-request timeout,
   post-admission accepted-work cancellation matrix, or slow-response-write
-  cancellation. It adds no concurrent serving, overload policy, durable
-  idempotency or crash recovery, native Windows/FreeBSD serving proof, load,
-  or performance evidence. Shutdown of a pending overlapped receive on
-  Windows remains unproven.
+  cancellation. It adds no concurrent serving, durable idempotency or crash
+  recovery, native Windows/FreeBSD serving proof, load, or performance
+  evidence. Native deadline behavior on Windows and FreeBSD remains unproven.
 
 ### Changed
 
@@ -83,8 +98,8 @@ before the first stable release.
   server-process lifecycle changes add `unary-server-process-test` to that
   shared host invocation; complete affected verification selects only its
   `unary-server-process-compile` companion on retained targets. The Phase B
-  partial-receive drain cases reuse the same dual-mode artifact and targets,
-  adding no compile root.
+  partial-receive drain cases and Phase C monotonic receive-timeout cases reuse
+  the same dual-mode artifact and targets, adding no compile root.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
   only the host-tool profile; both reuse that same host golden DAG instead of
