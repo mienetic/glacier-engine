@@ -53,11 +53,19 @@ const generation_drain_response_writing: u64 =
     0x4753_5052_0000_010b;
 const generation_complete_response_writing: u64 =
     0x4753_5052_0000_010c;
-const generation_b: u64 = 0x4753_5052_0000_010d;
-const frame_max_bytes = 256;
+const generation_full_request_timeout_request_admitted: u64 =
+    0x4753_5052_0000_010d;
+const generation_full_request_timeout_response_ready: u64 =
+    0x4753_5052_0000_010e;
+const generation_full_request_timeout_response_writing: u64 =
+    0x4753_5052_0000_010f;
+const generation_b: u64 = 0x4753_5052_0000_0110;
+const frame_max_bytes = 512;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
 const retained_receive_timeout_ns =
+    std.time.ns_per_s;
+const retained_full_request_timeout_ns =
     std.time.ns_per_s;
 const retained_peer_reset_poll_timeout_ns =
     server_api.maximum_peer_reset_poll_timeout_ns;
@@ -81,6 +89,9 @@ const WorkerProfile = enum {
     complete_response_ready,
     drain_response_writing,
     complete_response_writing,
+    full_request_timeout_request_admitted,
+    full_request_timeout_response_ready,
+    full_request_timeout_response_writing,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -95,6 +106,9 @@ const WorkerProfile = enum {
             .complete_response_ready => "complete-response-ready",
             .drain_response_writing => "drain-response-writing",
             .complete_response_writing => "complete-response-writing",
+            .full_request_timeout_request_admitted => "full-request-timeout-request-admitted",
+            .full_request_timeout_response_ready => "full-request-timeout-response-ready",
+            .full_request_timeout_response_writing => "full-request-timeout-response-writing",
         };
     }
 
@@ -119,6 +133,9 @@ const WorkerProfile = enum {
             .complete_response_ready,
             .drain_response_writing,
             .complete_response_writing,
+            .full_request_timeout_request_admitted,
+            .full_request_timeout_response_ready,
+            .full_request_timeout_response_writing,
             => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
@@ -137,8 +154,34 @@ const WorkerProfile = enum {
             .complete_response_ready,
             .drain_response_writing,
             .complete_response_writing,
+            .full_request_timeout_request_admitted,
+            .full_request_timeout_response_ready,
+            .full_request_timeout_response_writing,
             => 0,
         };
+    }
+
+    fn fullRequestTimeoutPhase(
+        self: WorkerProfile,
+    ) ?server_api.ManagedConnectionPhaseV1 {
+        return switch (self) {
+            .full_request_timeout_request_admitted => .request_admitted,
+            .full_request_timeout_response_ready => .response_ready,
+            .full_request_timeout_response_writing => .response_writing,
+            else => null,
+        };
+    }
+
+    fn fullRequestTimeoutNs(self: WorkerProfile) u64 {
+        if (self.isFullRequestTimeout())
+            return retained_full_request_timeout_ns;
+        if (self == .complete_response_writing)
+            return server_api.maximum_full_request_timeout_ns;
+        return 0;
+    }
+
+    fn isFullRequestTimeout(self: WorkerProfile) bool {
+        return self.fullRequestTimeoutPhase() != null;
     }
 
     fn peerResetPollTimeoutNs(self: WorkerProfile) u64 {
@@ -151,18 +194,21 @@ const WorkerProfile = enum {
     fn usesWorkBarrier(self: WorkerProfile) bool {
         return self == .drain_work or
             self == .drain_terminal_work or
-            self == .peer_reset_work;
+            self == .peer_reset_work or
+            self == .full_request_timeout_request_admitted;
     }
 
     fn usesResponseBarrier(self: WorkerProfile) bool {
         return self == .drain_response_ready or
             self == .complete_response_ready or
+            self == .full_request_timeout_response_ready or
             self.usesResponseProgressBarrier();
     }
 
     fn usesResponseProgressBarrier(self: WorkerProfile) bool {
         return self == .drain_response_writing or
-            self == .complete_response_writing;
+            self == .complete_response_writing or
+            self == .full_request_timeout_response_writing;
     }
 
     fn responseWriteQuantumBytes(self: WorkerProfile) u16 {
@@ -174,7 +220,8 @@ const WorkerProfile = enum {
 
     fn isPhaseE(self: WorkerProfile) bool {
         return self == .peer_reset_work or
-            self.usesResponseBarrier();
+            self.usesResponseBarrier() or
+            self.isFullRequestTimeout();
     }
 };
 
@@ -537,10 +584,15 @@ const ResponseReadyBarrierV1 = struct {
     progress_calls: u64 = 0,
     progress_bytes: u64 = 0,
     outcome: ?http_server.ResponseWriteOutcomeV1 = null,
+    passthrough_response: bool = false,
 
     fn readyOpaque(context: *anyopaque) anyerror!void {
         const self: *ResponseReadyBarrierV1 =
             @ptrCast(@alignCast(context));
+        if (self.outcome != null) {
+            self.passthrough_response = true;
+            return;
+        }
         if (self.ready_calls != 0)
             return error.DuplicateResponseReady;
         self.ready_calls = 1;
@@ -553,6 +605,8 @@ const ResponseReadyBarrierV1 = struct {
     ) anyerror!http_server.ResponseWriteDispositionV1 {
         const self: *ResponseReadyBarrierV1 =
             @ptrCast(@alignCast(context));
+        if (self.passthrough_response)
+            return .proceed;
         if (self.writing_calls != 0)
             return error.DuplicateResponseWriting;
         self.writing_calls = 1;
@@ -565,6 +619,7 @@ const ResponseReadyBarrierV1 = struct {
     ) anyerror!void {
         const self: *ResponseReadyBarrierV1 =
             @ptrCast(@alignCast(context));
+        if (self.passthrough_response) return;
         if (bytes_sent != 1)
             return error.InvalidResponseWriteProgress;
         self.progress_calls = try std.math.add(
@@ -589,6 +644,10 @@ const ResponseReadyBarrierV1 = struct {
     ) void {
         const self: *ResponseReadyBarrierV1 =
             @ptrCast(@alignCast(context));
+        if (self.passthrough_response) {
+            self.passthrough_response = false;
+            return;
+        }
         if (self.outcome != null) {
             self.outcome = .write_failed;
         } else {
@@ -713,6 +772,7 @@ fn runWorker(
         .lifecycle = &lifecycle,
         .config = .{
             .receive_timeout_ns = profile.receiveTimeoutNs(),
+            .full_request_timeout_ns = profile.fullRequestTimeoutNs(),
             .peer_reset_poll_timeout_ns = profile.peerResetPollTimeoutNs(),
             .response_write_quantum_bytes = profile.responseWriteQuantumBytes(),
         },
@@ -771,6 +831,15 @@ fn runWorker(
         try emitTimedOut(
             timed_out.process_generation,
             timed_out.last_receive_timeout_signaled_phase,
+        );
+    }
+    if (profile.isFullRequestTimeout()) {
+        try observeFullRequestTimeoutWorker(
+            &lifecycle,
+            profile,
+            &work_barrier,
+            &response_barrier,
+            generation,
         );
     }
     const stdin = std.fs.File.stdin();
@@ -962,10 +1031,21 @@ fn runWorker(
                 return error.InvalidPeerResetServiceReceipt;
             }
         },
+        .full_request_timeout_request_admitted => {
+            if (service_snapshot.terminal_records != 1 or
+                service_snapshot.cancelled_records != 1 or
+                service_snapshot.completed_records != 0 or
+                service_snapshot.failed_records != 0)
+            {
+                return error.InvalidFullRequestTimeoutServiceReceipt;
+            }
+        },
         .drain_response_ready,
         .complete_response_ready,
         .drain_response_writing,
         .complete_response_writing,
+        .full_request_timeout_response_ready,
+        .full_request_timeout_response_writing,
         => {
             if (service_snapshot.terminal_records != 1 or
                 service_snapshot.completed_records != 1 or
@@ -986,6 +1066,199 @@ fn runWorker(
         close_receipt.terminal_records,
         response_barrier.outcome,
     );
+}
+
+fn observeFullRequestTimeoutWorker(
+    lifecycle: *server_api.ManagedLifecycleV1,
+    profile: WorkerProfile,
+    work_barrier: *WorkAdmissionBarrierV1,
+    response_barrier: *ResponseReadyBarrierV1,
+    generation: u64,
+) !void {
+    const expected_phase = profile.fullRequestTimeoutPhase() orelse
+        return error.InvalidWorkerProfile;
+    switch (profile) {
+        .full_request_timeout_request_admitted => {
+            work_barrier.reached.wait();
+        },
+        .full_request_timeout_response_ready => {
+            response_barrier.reached.wait();
+        },
+        .full_request_timeout_response_writing => {
+            response_barrier.reached.wait();
+            response_barrier.release.set();
+            response_barrier.progress_reached.wait();
+            if (response_barrier.ready_calls != 1 or
+                response_barrier.writing_calls != 1 or
+                response_barrier.progress_calls != 1 or
+                response_barrier.progress_bytes != 1)
+            {
+                return error.InvalidResponseProgressReceipt;
+            }
+        },
+        else => unreachable,
+    }
+
+    const signaled = try waitForFullRequestTimeoutSignal(
+        lifecycle,
+        expected_phase,
+    );
+    try validateFullRequestTimeoutSignalReceipt(
+        signaled,
+        profile,
+    );
+
+    switch (profile) {
+        .full_request_timeout_request_admitted => {
+            work_barrier.release.set();
+            work_barrier.checkpoint_result_reached.wait();
+            const cancellation = work_barrier.cancellation orelse
+                return error.MissingFullRequestTimeoutCancellation;
+            if (work_barrier.cancellation_identity_mismatch or
+                work_barrier.checkpoint_failed or
+                cancellation.requested_cause !=
+                    .full_request_timeout or
+                cancellation.winner != .full_request_timeout or
+                cancellation.outcome != .cancelled or
+                !cancellation.cancellation_was_new)
+            {
+                return error.InvalidFullRequestTimeoutCancellation;
+            }
+            work_barrier.retired_reached.wait();
+        },
+        .full_request_timeout_response_ready => {
+            response_barrier.release.set();
+            response_barrier.retired_reached.wait();
+            if (response_barrier.outcome !=
+                .cancelled_before_write or
+                response_barrier.ready_calls != 1 or
+                response_barrier.writing_calls != 0 or
+                response_barrier.progress_calls != 0 or
+                response_barrier.progress_bytes != 0)
+            {
+                return error.InvalidFullRequestTimeoutResponseReceipt;
+            }
+        },
+        .full_request_timeout_response_writing => {
+            response_barrier.progress_release.set();
+            response_barrier.retired_reached.wait();
+            if (response_barrier.outcome !=
+                .cancelled_during_write or
+                response_barrier.ready_calls != 1 or
+                response_barrier.writing_calls != 1 or
+                response_barrier.progress_calls != 1 or
+                response_barrier.progress_bytes != 1)
+            {
+                return error.InvalidFullRequestTimeoutResponseReceipt;
+            }
+        },
+        else => unreachable,
+    }
+
+    const retired =
+        try waitForReadyInactiveFullRequestTimeout(lifecycle);
+    try validateDrainSignalReceipt(retired, null);
+    try validateDrainWorkReceipt(retired, false);
+    try validatePhaseEReceipt(retired, profile);
+    try emitCheckpoint("FULL_REQUEST_TIMEOUT", generation);
+}
+
+fn waitForFullRequestTimeoutSignal(
+    lifecycle: *server_api.ManagedLifecycleV1,
+    expected_phase: server_api.ManagedConnectionPhaseV1,
+) !server_api.ManagedSnapshotV1 {
+    while (true) {
+        const snapshot = lifecycle.snapshotV1();
+        if (snapshot.state != .ready)
+            return error.UnexpectedLifecycleState;
+        if (snapshot.full_request_timeout_signaled_connections == 1) {
+            if (snapshot.last_full_request_timeout_signaled_phase !=
+                expected_phase or
+                snapshot.accepted_connections != 1 or
+                snapshot.completed_connections != 0 or
+                snapshot.failed_connections != 0 or
+                snapshot.active_connections != 1 or
+                snapshot.active_connection_phase != expected_phase or
+                snapshot.drain_signaled_connections != 0 or
+                snapshot.receive_timeout_signaled_connections != 0)
+            {
+                return error.InvalidFullRequestTimeoutSignalReceipt;
+            }
+            return snapshot;
+        }
+        if (snapshot.full_request_timeout_signaled_connections != 0 or
+            snapshot.accepted_connections != 1 or
+            snapshot.completed_connections != 0 or
+            snapshot.failed_connections != 0 or
+            snapshot.active_connections != 1 or
+            snapshot.active_connection_phase != expected_phase)
+        {
+            return error.InvalidFullRequestTimeoutSignalReceipt;
+        }
+        std.Thread.yield() catch {};
+    }
+}
+
+fn validateFullRequestTimeoutSignalReceipt(
+    snapshot: server_api.ManagedSnapshotV1,
+    profile: WorkerProfile,
+) !void {
+    const response_cancelled: u64 =
+        if (profile == .full_request_timeout_response_ready)
+            1
+        else
+            0;
+    const response_write_requested: u64 =
+        if (profile == .full_request_timeout_response_writing)
+            1
+        else
+            0;
+    const response_phase: server_api.ManagedConnectionPhaseV1 =
+        if (response_cancelled == 1) .response_ready else .none;
+    const response_write_phase: server_api.ManagedConnectionPhaseV1 =
+        if (response_write_requested == 1)
+            .response_writing
+        else
+            .none;
+    if (snapshot.full_request_timeout_cancelled_work_connections != 0 or
+        snapshot.last_full_request_timeout_cancelled_work_phase !=
+            .none or
+        snapshot.full_request_timeout_cancelled_response_connections !=
+            response_cancelled or
+        snapshot.last_full_request_timeout_cancelled_response_phase !=
+            response_phase or
+        snapshot.full_request_timeout_requested_response_write_connections !=
+            response_write_requested or
+        snapshot.last_full_request_timeout_requested_response_write_phase !=
+            response_write_phase or
+        snapshot.full_request_timeout_cancelled_response_write_connections !=
+            0 or
+        snapshot.last_full_request_timeout_cancelled_response_write_phase !=
+            .none)
+    {
+        return error.InvalidFullRequestTimeoutSignalReceipt;
+    }
+}
+
+fn waitForReadyInactiveFullRequestTimeout(
+    lifecycle: *server_api.ManagedLifecycleV1,
+) !server_api.ManagedSnapshotV1 {
+    while (true) {
+        const snapshot = lifecycle.snapshotV1();
+        if (snapshot.state != .ready)
+            return error.UnexpectedLifecycleState;
+        if (snapshot.active_connections == 0) {
+            if (snapshot.active_connection_phase != .none or
+                snapshot.accepted_connections != 1 or
+                snapshot.completed_connections != 0 or
+                snapshot.failed_connections != 1)
+            {
+                return error.InvalidFullRequestTimeoutRetirementReceipt;
+            }
+            return snapshot;
+        }
+        std.Thread.yield() catch {};
+    }
 }
 
 fn forceDrainAndWake(
@@ -1072,6 +1345,10 @@ fn profileMatchesControl(
         .complete_response_ready => control == .response_completed,
         .drain_response_writing => control == .response_writing,
         .complete_response_writing => control == .response_writing_completed,
+        .full_request_timeout_request_admitted,
+        .full_request_timeout_response_ready,
+        .full_request_timeout_response_writing,
+        => control == .immediate,
         .peer_reset_work => false,
         .standard,
         .drain_with_deadline,
@@ -1293,6 +1570,23 @@ fn validatePhaseEReceipt(
         if (profile == .drain_response_ready) 1 else 0;
     const expected_response_write_cancel: u64 =
         if (profile == .drain_response_writing) 1 else 0;
+    const expected_full_request_timeout: u64 =
+        if (profile.isFullRequestTimeout()) 1 else 0;
+    const expected_full_request_timeout_work: u64 =
+        if (profile == .full_request_timeout_request_admitted)
+            1
+        else
+            0;
+    const expected_full_request_timeout_response: u64 =
+        if (profile == .full_request_timeout_response_ready)
+            1
+        else
+            0;
+    const expected_full_request_timeout_response_write: u64 =
+        if (profile == .full_request_timeout_response_writing)
+            1
+        else
+            0;
     const expected_peer_reset_phase: server_api.ManagedConnectionPhaseV1 =
         if (expected_peer_reset == 1)
             .request_admitted
@@ -1308,6 +1602,23 @@ fn validatePhaseEReceipt(
             .response_writing
         else
             .none;
+    const expected_full_request_timeout_phase =
+        profile.fullRequestTimeoutPhase() orelse .none;
+    const expected_full_request_timeout_work_phase: server_api.ManagedConnectionPhaseV1 =
+        if (expected_full_request_timeout_work == 1)
+            .request_admitted
+        else
+            .none;
+    const expected_full_request_timeout_response_phase: server_api.ManagedConnectionPhaseV1 =
+        if (expected_full_request_timeout_response == 1)
+            .response_ready
+        else
+            .none;
+    const expected_full_request_timeout_response_write_phase: server_api.ManagedConnectionPhaseV1 =
+        if (expected_full_request_timeout_response_write == 1)
+            .response_writing
+        else
+            .none;
     if (snapshot.peer_reset_connections != expected_peer_reset or
         snapshot.peer_reset_cancelled_work_connections !=
             expected_peer_reset or
@@ -1317,6 +1628,16 @@ fn validatePhaseEReceipt(
             expected_response_write_cancel or
         snapshot.drain_cancelled_response_write_connections !=
             expected_response_write_cancel or
+        snapshot.full_request_timeout_signaled_connections !=
+            expected_full_request_timeout or
+        snapshot.full_request_timeout_cancelled_work_connections !=
+            expected_full_request_timeout_work or
+        snapshot.full_request_timeout_cancelled_response_connections !=
+            expected_full_request_timeout_response or
+        snapshot.full_request_timeout_requested_response_write_connections !=
+            expected_full_request_timeout_response_write or
+        snapshot.full_request_timeout_cancelled_response_write_connections !=
+            expected_full_request_timeout_response_write or
         snapshot.response_write_transport_failed_connections != 0 or
         snapshot.last_peer_reset_phase !=
             expected_peer_reset_phase or
@@ -1328,6 +1649,16 @@ fn validatePhaseEReceipt(
             expected_response_write_phase or
         snapshot.last_drain_cancelled_response_write_phase !=
             expected_response_write_phase or
+        snapshot.last_full_request_timeout_signaled_phase !=
+            expected_full_request_timeout_phase or
+        snapshot.last_full_request_timeout_cancelled_work_phase !=
+            expected_full_request_timeout_work_phase or
+        snapshot.last_full_request_timeout_cancelled_response_phase !=
+            expected_full_request_timeout_response_phase or
+        snapshot.last_full_request_timeout_requested_response_write_phase !=
+            expected_full_request_timeout_response_write_phase or
+        snapshot.last_full_request_timeout_cancelled_response_write_phase !=
+            expected_full_request_timeout_response_write_phase or
         snapshot.last_response_write_transport_failed_phase != .none)
     {
         return error.InvalidPhaseEReceipt;
@@ -1372,9 +1703,11 @@ fn emitDraining(
     response_outcome: ?http_server.ResponseWriteOutcomeV1,
 ) !void {
     var storage: [frame_max_bytes]u8 = undefined;
-    const frame = try std.fmt.bufPrint(
+    const prefix = try std.fmt.bufPrint(
         &storage,
-        "DRAINING {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
+        "DRAINING " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} ",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -1391,6 +1724,32 @@ fn emitDraining(
             @intFromEnum(
                 snapshot.last_receive_timeout_signaled_phase,
             ),
+            snapshot.full_request_timeout_signaled_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_signaled_phase,
+            ),
+            snapshot.full_request_timeout_cancelled_work_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_cancelled_work_phase,
+            ),
+            snapshot.full_request_timeout_cancelled_response_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_cancelled_response_phase,
+            ),
+            snapshot.full_request_timeout_requested_response_write_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_requested_response_write_phase,
+            ),
+            snapshot.full_request_timeout_cancelled_response_write_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_cancelled_response_write_phase,
+            ),
+        },
+    );
+    const suffix = try std.fmt.bufPrint(
+        storage[prefix.len..],
+        "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
+        .{
             snapshot.peer_reset_connections,
             snapshot.peer_reset_cancelled_work_connections,
             @intFromEnum(snapshot.last_peer_reset_phase),
@@ -1416,7 +1775,9 @@ fn emitDraining(
             responseOutcomeWire(response_outcome),
         },
     );
-    try std.fs.File.stdout().writeAll(frame);
+    try std.fs.File.stdout().writeAll(
+        storage[0 .. prefix.len + suffix.len],
+    );
 }
 
 fn emitTimedOut(
@@ -1442,9 +1803,11 @@ fn emitClosed(
     response_outcome: ?http_server.ResponseWriteOutcomeV1,
 ) !void {
     var storage: [frame_max_bytes]u8 = undefined;
-    const frame = try std.fmt.bufPrint(
+    const prefix = try std.fmt.bufPrint(
         &storage,
-        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
+        "CLOSED " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} ",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
@@ -1461,6 +1824,33 @@ fn emitClosed(
             @intFromEnum(
                 snapshot.last_receive_timeout_signaled_phase,
             ),
+            snapshot.full_request_timeout_signaled_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_signaled_phase,
+            ),
+            snapshot.full_request_timeout_cancelled_work_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_cancelled_work_phase,
+            ),
+            snapshot.full_request_timeout_cancelled_response_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_cancelled_response_phase,
+            ),
+            snapshot.full_request_timeout_requested_response_write_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_requested_response_write_phase,
+            ),
+            snapshot.full_request_timeout_cancelled_response_write_connections,
+            @intFromEnum(
+                snapshot.last_full_request_timeout_cancelled_response_write_phase,
+            ),
+        },
+    );
+    const suffix = try std.fmt.bufPrint(
+        storage[prefix.len..],
+        "{d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} {d} " ++
+            "{d} {d} 1\n",
+        .{
             snapshot.peer_reset_connections,
             snapshot.peer_reset_cancelled_work_connections,
             @intFromEnum(snapshot.last_peer_reset_phase),
@@ -1488,7 +1878,9 @@ fn emitClosed(
             terminal_records,
         },
     );
-    try std.fs.File.stdout().writeAll(frame);
+    try std.fs.File.stdout().writeAll(
+        storage[0 .. prefix.len + suffix.len],
+    );
 }
 
 const ReadyFrame = struct {
@@ -1509,6 +1901,16 @@ const ActivityFrame = struct {
     last_drain_cancelled_work_phase: server_api.ManagedConnectionPhaseV1,
     receive_timeout_signaled: u64,
     last_receive_timeout_phase: server_api.ManagedConnectionPhaseV1,
+    full_request_timeout_signaled: u64,
+    last_full_request_timeout_signaled_phase: server_api.ManagedConnectionPhaseV1,
+    full_request_timeout_cancelled_work: u64,
+    last_full_request_timeout_cancelled_work_phase: server_api.ManagedConnectionPhaseV1,
+    full_request_timeout_cancelled_response: u64,
+    last_full_request_timeout_cancelled_response_phase: server_api.ManagedConnectionPhaseV1,
+    full_request_timeout_requested_response_write: u64,
+    last_full_request_timeout_requested_response_write_phase: server_api.ManagedConnectionPhaseV1,
+    full_request_timeout_cancelled_response_write: u64,
+    last_full_request_timeout_cancelled_response_write_phase: server_api.ManagedConnectionPhaseV1,
     peer_reset: u64,
     peer_reset_cancelled_work: u64,
     last_peer_reset_phase: server_api.ManagedConnectionPhaseV1,
@@ -1632,6 +2034,26 @@ fn parseActivity(
         return error.InvalidFrame;
     const last_receive_timeout_phase = fields.next() orelse
         return error.InvalidFrame;
+    const full_request_timeout_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_full_request_timeout_signaled_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_cancelled_work =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_cancelled_work_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_cancelled_response =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_cancelled_response_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_requested_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_requested_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_cancelled_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_cancelled_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
     const peer_reset = fields.next() orelse
         return error.InvalidFrame;
     const peer_reset_cancelled_work = fields.next() orelse
@@ -1684,6 +2106,41 @@ fn parseActivity(
         ),
         .last_receive_timeout_phase = try parseConnectionPhase(
             last_receive_timeout_phase,
+        ),
+        .full_request_timeout_signaled = try parseCanonicalInt(
+            u64,
+            full_request_timeout_signaled,
+        ),
+        .last_full_request_timeout_signaled_phase = try parseConnectionPhase(
+            last_full_request_timeout_signaled_phase,
+        ),
+        .full_request_timeout_cancelled_work = try parseCanonicalInt(
+            u64,
+            full_request_timeout_cancelled_work,
+        ),
+        .last_full_request_timeout_cancelled_work_phase = try parseConnectionPhase(
+            last_full_request_timeout_cancelled_work_phase,
+        ),
+        .full_request_timeout_cancelled_response = try parseCanonicalInt(
+            u64,
+            full_request_timeout_cancelled_response,
+        ),
+        .last_full_request_timeout_cancelled_response_phase = try parseConnectionPhase(
+            last_full_request_timeout_cancelled_response_phase,
+        ),
+        .full_request_timeout_requested_response_write = try parseCanonicalInt(
+            u64,
+            full_request_timeout_requested_response_write,
+        ),
+        .last_full_request_timeout_requested_response_write_phase = try parseConnectionPhase(
+            last_full_request_timeout_requested_response_write_phase,
+        ),
+        .full_request_timeout_cancelled_response_write = try parseCanonicalInt(
+            u64,
+            full_request_timeout_cancelled_response_write,
+        ),
+        .last_full_request_timeout_cancelled_response_write_phase = try parseConnectionPhase(
+            last_full_request_timeout_cancelled_response_write_phase,
         ),
         .peer_reset = try parseCanonicalInt(u64, peer_reset),
         .peer_reset_cancelled_work = try parseCanonicalInt(
@@ -1774,6 +2231,26 @@ fn parseClosed(line: []const u8) !ClosedFrame {
         return error.InvalidFrame;
     const last_receive_timeout_phase = fields.next() orelse
         return error.InvalidFrame;
+    const full_request_timeout_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_full_request_timeout_signaled_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_cancelled_work =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_cancelled_work_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_cancelled_response =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_cancelled_response_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_requested_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_requested_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
+    const full_request_timeout_cancelled_response_write =
+        fields.next() orelse return error.InvalidFrame;
+    const last_full_request_timeout_cancelled_response_write_phase =
+        fields.next() orelse return error.InvalidFrame;
     const peer_reset = fields.next() orelse
         return error.InvalidFrame;
     const peer_reset_cancelled_work = fields.next() orelse
@@ -1836,6 +2313,41 @@ fn parseClosed(line: []const u8) !ClosedFrame {
             ),
             .last_receive_timeout_phase = try parseConnectionPhase(
                 last_receive_timeout_phase,
+            ),
+            .full_request_timeout_signaled = try parseCanonicalInt(
+                u64,
+                full_request_timeout_signaled,
+            ),
+            .last_full_request_timeout_signaled_phase = try parseConnectionPhase(
+                last_full_request_timeout_signaled_phase,
+            ),
+            .full_request_timeout_cancelled_work = try parseCanonicalInt(
+                u64,
+                full_request_timeout_cancelled_work,
+            ),
+            .last_full_request_timeout_cancelled_work_phase = try parseConnectionPhase(
+                last_full_request_timeout_cancelled_work_phase,
+            ),
+            .full_request_timeout_cancelled_response = try parseCanonicalInt(
+                u64,
+                full_request_timeout_cancelled_response,
+            ),
+            .last_full_request_timeout_cancelled_response_phase = try parseConnectionPhase(
+                last_full_request_timeout_cancelled_response_phase,
+            ),
+            .full_request_timeout_requested_response_write = try parseCanonicalInt(
+                u64,
+                full_request_timeout_requested_response_write,
+            ),
+            .last_full_request_timeout_requested_response_write_phase = try parseConnectionPhase(
+                last_full_request_timeout_requested_response_write_phase,
+            ),
+            .full_request_timeout_cancelled_response_write = try parseCanonicalInt(
+                u64,
+                full_request_timeout_cancelled_response_write,
+            ),
+            .last_full_request_timeout_cancelled_response_write_phase = try parseConnectionPhase(
+                last_full_request_timeout_cancelled_response_write_phase,
             ),
             .peer_reset = try parseCanonicalInt(u64, peer_reset),
             .peer_reset_cancelled_work = try parseCanonicalInt(
@@ -2113,6 +2625,30 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         &fixture,
         generation_complete_response_writing,
         .complete_response_writing,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_full_request_timeout_request_admitted,
+        .full_request_timeout_request_admitted,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_full_request_timeout_response_ready,
+        .full_request_timeout_response_ready,
+        oracle,
+    );
+    try exercisePhaseE(
+        allocator,
+        executable,
+        &fixture,
+        generation_full_request_timeout_response_writing,
+        .full_request_timeout_response_writing,
         oracle,
     );
     const second = try exerciseWorker(
@@ -2620,6 +3156,32 @@ fn requirePeerEofWithoutResponse(peer: std.net.Stream) !void {
         return error.UnexpectedPartialDrainResponse;
 }
 
+fn requirePeerEofWithoutCompleteResponse(
+    peer: std.net.Stream,
+) !usize {
+    var response: [protocol.header_max_bytes]u8 = undefined;
+    var used: usize = 0;
+    while (used < response.len) {
+        const read_count = peer.read(response[used..]) catch |read_error| {
+            const transport_error: anyerror = read_error;
+            switch (transport_error) {
+                error.ConnectionResetByPeer,
+                error.ConnectionAborted,
+                => break,
+                else => return read_error,
+            }
+        };
+        if (read_count == 0) break;
+        used += read_count;
+    }
+    if (used == response.len or
+        std.mem.indexOf(u8, response[0..used], "\r\n\r\n") != null)
+    {
+        return error.UnexpectedCompleteTimeoutResponse;
+    }
+    return used;
+}
+
 const CancellationClientContext = struct {
     port: u16,
     model_id: [protocol.model_id_bytes]u8,
@@ -3110,6 +3672,63 @@ fn exercisePhaseE(
             child.stdin.?.close();
             child.stdin = null;
         },
+        .full_request_timeout_request_admitted,
+        .full_request_timeout_response_ready,
+        .full_request_timeout_response_writing,
+        => {
+            const tenant_key: u64 = switch (profile) {
+                .full_request_timeout_request_admitted => 59,
+                .full_request_timeout_response_ready => 61,
+                .full_request_timeout_response_writing => 67,
+                else => unreachable,
+            };
+            const idempotency_key = switch (profile) {
+                .full_request_timeout_request_admitted => "server-process-full-timeout-work",
+                .full_request_timeout_response_ready => "server-process-full-timeout-response",
+                .full_request_timeout_response_writing => "server-process-full-timeout-write",
+                else => unreachable,
+            };
+            peer = try openCompletionPeer(
+                ready,
+                tenant_key,
+                idempotency_key,
+            );
+            try expectCheckpointFrame(
+                try readFrame(child.stdout.?, &frame_storage),
+                "FULL_REQUEST_TIMEOUT",
+                generation,
+            );
+            const response_bytes =
+                try requirePeerEofWithoutCompleteResponse(peer.?);
+            if (profile ==
+                .full_request_timeout_response_writing)
+            {
+                try require(response_bytes <= 1);
+            } else {
+                try require(response_bytes == 0);
+            }
+            peer.?.close();
+            peer = null;
+
+            var liveness_client =
+                try http_client.ClientV1.initLoopback(
+                    allocator,
+                    loopback_host,
+                    ready.port,
+                );
+            defer liveness_client.deinit();
+            const models = try expectModels(
+                try liveness_client.listModelsV1(),
+            );
+            try require(std.mem.eql(
+                u8,
+                &models.model_id,
+                &ready.model_id,
+            ));
+            try child.stdin.?.writeAll(drain_command);
+            child.stdin.?.close();
+            child.stdin = null;
+        },
         else => unreachable,
     }
 
@@ -3120,8 +3739,12 @@ fn exercisePhaseE(
     const response_completed =
         profile == .complete_response_ready or
         profile == .complete_response_writing;
+    const full_request_timeout =
+        profile.isFullRequestTimeout();
     const expected_completed: u64 =
-        if (profile == .peer_reset_work or response_completed)
+        if (profile == .peer_reset_work or
+        response_completed or
+        full_request_timeout)
             1
         else
             0;
@@ -3130,7 +3753,11 @@ fn exercisePhaseE(
     try validateActivity(
         draining,
         generation,
-        if (profile == .peer_reset_work) 2 else 1,
+        if (profile == .peer_reset_work or
+            full_request_timeout)
+            2
+        else
+            1,
         expected_completed,
         expected_failed,
         0,
@@ -3189,7 +3816,11 @@ fn exercisePhaseE(
     try validateActivity(
         closed.activity,
         generation,
-        if (profile == .peer_reset_work) 2 else 1,
+        if (profile == .peer_reset_work or
+            full_request_timeout)
+            2
+        else
+            1,
         expected_completed,
         expected_failed,
         0,
@@ -3302,12 +3933,46 @@ fn validatePhaseEActivity(
         if (profile == .drain_response_ready) 1 else 0;
     const response_write: u64 =
         if (profile == .drain_response_writing) 1 else 0;
+    const full_request_timeout: u64 =
+        if (profile.isFullRequestTimeout()) 1 else 0;
+    const full_request_timeout_work: u64 =
+        if (profile == .full_request_timeout_request_admitted)
+            1
+        else
+            0;
+    const full_request_timeout_response: u64 =
+        if (profile == .full_request_timeout_response_ready)
+            1
+        else
+            0;
+    const full_request_timeout_response_write: u64 =
+        if (profile == .full_request_timeout_response_writing)
+            1
+        else
+            0;
     const peer_phase: server_api.ManagedConnectionPhaseV1 =
         if (peer == 1) .request_admitted else .none;
     const response_phase: server_api.ManagedConnectionPhaseV1 =
         if (response == 1) .response_ready else .none;
     const response_write_phase: server_api.ManagedConnectionPhaseV1 =
         if (response_write == 1) .response_writing else .none;
+    const full_request_timeout_phase =
+        profile.fullRequestTimeoutPhase() orelse .none;
+    const full_request_timeout_work_phase: server_api.ManagedConnectionPhaseV1 =
+        if (full_request_timeout_work == 1)
+            .request_admitted
+        else
+            .none;
+    const full_request_timeout_response_phase: server_api.ManagedConnectionPhaseV1 =
+        if (full_request_timeout_response == 1)
+            .response_ready
+        else
+            .none;
+    const full_request_timeout_response_write_phase: server_api.ManagedConnectionPhaseV1 =
+        if (full_request_timeout_response_write == 1)
+            .response_writing
+        else
+            .none;
     try require(activity.peer_reset == peer);
     try require(activity.peer_reset_cancelled_work == peer);
     try require(activity.last_peer_reset_phase == peer_phase);
@@ -3336,15 +4001,59 @@ fn validatePhaseEActivity(
         activity.last_drain_cancelled_response_write_phase ==
             response_write_phase,
     );
+    try require(
+        activity.full_request_timeout_signaled ==
+            full_request_timeout,
+    );
+    try require(
+        activity.last_full_request_timeout_signaled_phase ==
+            full_request_timeout_phase,
+    );
+    try require(
+        activity.full_request_timeout_cancelled_work ==
+            full_request_timeout_work,
+    );
+    try require(
+        activity.last_full_request_timeout_cancelled_work_phase ==
+            full_request_timeout_work_phase,
+    );
+    try require(
+        activity.full_request_timeout_cancelled_response ==
+            full_request_timeout_response,
+    );
+    try require(
+        activity.last_full_request_timeout_cancelled_response_phase ==
+            full_request_timeout_response_phase,
+    );
+    try require(
+        activity.full_request_timeout_requested_response_write ==
+            full_request_timeout_response_write,
+    );
+    try require(
+        activity.last_full_request_timeout_requested_response_write_phase ==
+            full_request_timeout_response_write_phase,
+    );
+    try require(
+        activity.full_request_timeout_cancelled_response_write ==
+            full_request_timeout_response_write,
+    );
+    try require(
+        activity.last_full_request_timeout_cancelled_response_write_phase ==
+            full_request_timeout_response_write_phase,
+    );
     try require(activity.response_write_transport_failed == 0);
     try require(
         activity.last_response_write_transport_failed_phase ==
             .none,
     );
     const outcome: u8 = switch (profile) {
-        .drain_response_ready => responseOutcomeWire(.cancelled_before_write),
+        .drain_response_ready,
+        .full_request_timeout_response_ready,
+        => responseOutcomeWire(.cancelled_before_write),
         .complete_response_ready, .complete_response_writing => responseOutcomeWire(.write_completed),
-        .drain_response_writing => responseOutcomeWire(.cancelled_during_write),
+        .drain_response_writing,
+        .full_request_timeout_response_writing,
+        => responseOutcomeWire(.cancelled_during_write),
         else => 0,
     };
     try require(activity.response_outcome == outcome);

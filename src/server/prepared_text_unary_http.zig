@@ -49,16 +49,19 @@ pub const WorkIdentityV1 = struct {
 pub const WorkDispositionV1 = enum {
     proceed,
     draining,
+    full_request_timeout,
 };
 
 pub const WorkCheckpointDispositionV1 = enum {
     proceed,
     peer_reset,
+    full_request_timeout,
 };
 
 pub const WorkCancellationCauseV1 = enum {
     drain,
     peer_reset,
+    full_request_timeout,
     transport_failure,
     preexisting,
 };
@@ -225,6 +228,7 @@ const ResponseWriteGuardV1 = struct {
 const AwaitResponseDecisionV1 = union(enum) {
     response: unary.ResponseV1,
     peer_reset: WorkCancellationReceiptV1,
+    full_request_timeout: WorkCancellationReceiptV1,
 };
 
 const ActiveWorkGuardV1 = struct {
@@ -392,6 +396,35 @@ pub fn beginDrainV1(
         .cancellation_winner = cancellation.winner,
         .cancellation_was_new = cancellation.cancellation_was_new,
     };
+}
+
+/// Cancels only the currently published work matching the exact transport
+/// identity. The first retained stop decision remains authoritative across
+/// timeout, drain, reset, and terminal races.
+pub fn cancelActiveWorkForFullRequestTimeoutV1(
+    runtime: *RuntimeV1,
+    identity: WorkIdentityV1,
+) unary.Error!WorkCancellationReceiptV1 {
+    runtime.control_mutex.lock();
+    defer runtime.control_mutex.unlock();
+    const active = runtime.active_work orelse
+        return unary.Error.StaleHandle;
+    if (!std.meta.eql(active.identity(), identity))
+        return unary.Error.StaleHandle;
+    if (active.stop_decision) |decision| {
+        return .{
+            .requested_cause = .full_request_timeout,
+            .winner = decision.winner,
+            .outcome = decision.outcome,
+        };
+    }
+    const cancellation = try cancelHandleLockedV1(
+        runtime,
+        active.handle,
+        .full_request_timeout,
+    );
+    runtime.active_work.?.stop_decision = cancellation;
+    return cancellation;
 }
 
 pub fn acceptingCompletionsV1(runtime: *RuntimeV1) bool {
@@ -762,32 +795,49 @@ fn serveCompletionV1(
             }
             return callback_error;
         };
-        if (disposition == .draining) {
-            const cancellation = cancelPublishedWorkV1(
-                runtime,
-                published,
-                .drain,
-            ) catch |err| {
-                return respondApiError(
-                    request,
-                    workspace,
-                    mapServiceError(err),
-                    request_sha256,
-                    response_control,
-                );
-            };
-            if (cancellationHidesResponseV1(
-                cancellation.outcome,
-            )) {
-                work_guard.terminal = true;
-                return respondApiError(
-                    request,
-                    workspace,
-                    .request_cancelled,
-                    request_sha256,
-                    response_control,
-                );
-            }
+        switch (disposition) {
+            .proceed => {},
+            .draining => {
+                const cancellation = cancelPublishedWorkV1(
+                    runtime,
+                    published,
+                    .drain,
+                ) catch |err| {
+                    return respondApiError(
+                        request,
+                        workspace,
+                        mapServiceError(err),
+                        request_sha256,
+                        response_control,
+                    );
+                };
+                if (cancellationHidesResponseV1(
+                    cancellation.outcome,
+                )) {
+                    work_guard.terminal = true;
+                    return respondApiError(
+                        request,
+                        workspace,
+                        .request_cancelled,
+                        request_sha256,
+                        response_control,
+                    );
+                }
+            },
+            .full_request_timeout => {
+                const cancellation =
+                    try cancelPublishedWorkAndNotifyV1(
+                        runtime,
+                        published,
+                        control,
+                        .full_request_timeout,
+                    );
+                work_guard.terminal =
+                    cancellationEndsLeaseV1(
+                        cancellation.outcome,
+                    );
+                return error.ConnectionFullRequestTimedOut;
+            },
         }
     }
 
@@ -831,6 +881,11 @@ fn serveCompletionV1(
             work_guard.terminal =
                 cancellationEndsLeaseV1(receipt.outcome);
             return error.ConnectionPeerReset;
+        },
+        .full_request_timeout => |receipt| {
+            work_guard.terminal =
+                cancellationEndsLeaseV1(receipt.outcome);
+            return error.ConnectionFullRequestTimedOut;
         },
     };
     work_guard.terminal = true;
@@ -979,28 +1034,31 @@ fn awaitResponseV1(
     var drive_calls: usize = 0;
     while (drive_calls <= unary.maximum_output_tokens) : (drive_calls += 1) {
         if (work_control) |control| {
-            const checkpoint = control.checkpoint(
-                published.identity,
-            ) catch return TerminalError.TransportControlFailed;
-            if (checkpoint == .peer_reset) {
-                const cancellation = try cancelPublishedWorkV1(
-                    runtime,
-                    published,
-                    .peer_reset,
-                );
-                control.cancellation(
-                    published.identity,
-                    cancellation,
-                );
-                return .{ .peer_reset = cancellation };
-            }
+            if (try observeWorkCheckpointV1(
+                runtime,
+                published,
+                control,
+            )) |decision| return decision;
         }
 
         const status =
             try runtime.service.statusV1(published.handle);
         switch (status) {
             .completed => return .{ .response = try runtime.service.responseV1(published.handle) },
-            .cancelled => return TerminalError.RequestCancelled,
+            .cancelled => {
+                // A full-request timer may cancel the service after the first
+                // checkpoint and before this status read. Re-check the
+                // transport owner so that race closes the connection instead
+                // of rendering a client-visible generic cancellation.
+                if (work_control) |control| {
+                    if (try observeWorkCheckpointV1(
+                        runtime,
+                        published,
+                        control,
+                    )) |decision| return decision;
+                }
+                return TerminalError.RequestCancelled;
+            },
             .failed => return TerminalError.ExecutionFailed,
             .active => {},
         }
@@ -1018,6 +1076,49 @@ fn awaitResponseV1(
         }
     }
     unreachable;
+}
+
+fn observeWorkCheckpointV1(
+    runtime: *RuntimeV1,
+    published: PublishedWorkV1,
+    control: RequestWorkControlV1,
+) (unary.Error || TerminalError)!?AwaitResponseDecisionV1 {
+    const checkpoint = control.checkpoint(
+        published.identity,
+    ) catch return TerminalError.TransportControlFailed;
+    return switch (checkpoint) {
+        .proceed => null,
+        .peer_reset => .{ .peer_reset = try cancelPublishedWorkAndNotifyV1(
+            runtime,
+            published,
+            control,
+            .peer_reset,
+        ) },
+        .full_request_timeout => .{ .full_request_timeout = try cancelPublishedWorkAndNotifyV1(
+            runtime,
+            published,
+            control,
+            .full_request_timeout,
+        ) },
+    };
+}
+
+fn cancelPublishedWorkAndNotifyV1(
+    runtime: *RuntimeV1,
+    published: PublishedWorkV1,
+    control: RequestWorkControlV1,
+    cause: WorkCancellationCauseV1,
+) unary.Error!WorkCancellationReceiptV1 {
+    const cancellation = try cancelPublishedWorkV1(
+        runtime,
+        published,
+        cause,
+    );
+    control.cancellation(
+        published.identity,
+        cancellation,
+    );
+    return cancellation;
 }
 
 /// Requires `runtime.control_mutex`. This is the only helper that calls
@@ -1199,6 +1300,315 @@ test "active work retirement requires the exact runtime and service fences" {
         handle,
     ));
     try std.testing.expect(runtime.active_work == null);
+}
+
+const FullRequestTimeoutTestControlV1 = struct {
+    proceed_checkpoints: usize = 0,
+    checkpoint_calls: usize = 0,
+    cancellation_calls: usize = 0,
+    cancellation_identity: ?WorkIdentityV1 = null,
+    cancellation_receipt: ?WorkCancellationReceiptV1 = null,
+
+    fn admittedOpaque(
+        context: *anyopaque,
+        identity: WorkIdentityV1,
+    ) anyerror!WorkDispositionV1 {
+        _ = context;
+        _ = identity;
+        return .full_request_timeout;
+    }
+
+    fn retiredOpaque(
+        context: *anyopaque,
+        identity: WorkIdentityV1,
+    ) void {
+        _ = context;
+        _ = identity;
+    }
+
+    fn checkpointOpaque(
+        context: *anyopaque,
+        identity: WorkIdentityV1,
+    ) anyerror!WorkCheckpointDispositionV1 {
+        const self: *FullRequestTimeoutTestControlV1 =
+            @ptrCast(@alignCast(context));
+        _ = identity;
+        self.checkpoint_calls += 1;
+        if (self.checkpoint_calls <= self.proceed_checkpoints)
+            return .proceed;
+        return .full_request_timeout;
+    }
+
+    fn cancellationOpaque(
+        context: *anyopaque,
+        identity: WorkIdentityV1,
+        receipt: WorkCancellationReceiptV1,
+    ) void {
+        const self: *FullRequestTimeoutTestControlV1 =
+            @ptrCast(@alignCast(context));
+        self.cancellation_calls += 1;
+        self.cancellation_identity = identity;
+        self.cancellation_receipt = receipt;
+    }
+
+    fn control(
+        self: *FullRequestTimeoutTestControlV1,
+    ) RequestWorkControlV1 {
+        return .{
+            .context = self,
+            .admitted_fn = admittedOpaque,
+            .retired_fn = retiredOpaque,
+            .checkpoint_fn = checkpointOpaque,
+            .cancellation_fn = cancellationOpaque,
+        };
+    }
+};
+
+fn makeFullRequestTimeoutTestHandleV1(
+    service_epoch: u64,
+    record_index: u32,
+    record_generation: u64,
+    intent_sha256: unary.Digest,
+) unary.HandleV1 {
+    var handle: unary.HandleV1 = .{
+        .service_epoch = service_epoch,
+        .record_index = record_index,
+        .record_generation = record_generation,
+        .intent_sha256 = intent_sha256,
+    };
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("glacier-prepared-text-unary-handle-v1\x00");
+    var u64_bytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &u64_bytes, service_epoch, .little);
+    hash.update(&u64_bytes);
+    var u32_bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &u32_bytes, record_index, .little);
+    hash.update(&u32_bytes);
+    std.mem.writeInt(
+        u64,
+        &u64_bytes,
+        record_generation,
+        .little,
+    );
+    hash.update(&u64_bytes);
+    hash.update(&intent_sha256);
+    hash.final(&handle.handle_sha256);
+    return handle;
+}
+
+test "full request timeout cancellation is exact sticky and observable" {
+    const handle: unary.HandleV1 = .{
+        .service_epoch = 73,
+        .record_index = 5,
+        .record_generation = 29,
+        .intent_sha256 = [_]u8{0x63} ** 32,
+        .handle_sha256 = [_]u8{0x84} ** 32,
+    };
+    const identity: WorkIdentityV1 = .{
+        .sequence = 11,
+        .handle_sha256 = handle.handle_sha256,
+    };
+    var runtime: RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+        .next_work_sequence = identity.sequence,
+        .active_work = .{
+            .sequence = identity.sequence,
+            .handle = handle,
+        },
+    };
+
+    var foreign_sequence = identity;
+    foreign_sequence.sequence += 1;
+    try std.testing.expectError(
+        unary.Error.StaleHandle,
+        cancelActiveWorkForFullRequestTimeoutV1(
+            &runtime,
+            foreign_sequence,
+        ),
+    );
+    var foreign_digest = identity;
+    foreign_digest.handle_sha256[0] ^= 0xff;
+    try std.testing.expectError(
+        unary.Error.StaleHandle,
+        cancelActiveWorkForFullRequestTimeoutV1(
+            &runtime,
+            foreign_digest,
+        ),
+    );
+    try std.testing.expect(
+        runtime.active_work.?.stop_decision == null,
+    );
+
+    runtime.active_work.?.stop_decision = .{
+        .requested_cause = .drain,
+        .winner = .drain,
+        .outcome = .cancelled,
+        .cancellation_was_new = true,
+    };
+    const sticky =
+        try cancelActiveWorkForFullRequestTimeoutV1(
+            &runtime,
+            identity,
+        );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.full_request_timeout,
+        sticky.requested_cause,
+    );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.drain,
+        sticky.winner.?,
+    );
+    try std.testing.expectEqual(
+        DrainCancellationOutcomeV1.cancelled,
+        sticky.outcome,
+    );
+    try std.testing.expect(!sticky.cancellation_was_new);
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.drain,
+        runtime.active_work.?.stop_decision.?.requested_cause,
+    );
+    try std.testing.expect(
+        runtime.active_work.?.stop_decision.?.cancellation_was_new,
+    );
+
+    runtime.active_work.?.stop_decision = .{
+        .requested_cause = .full_request_timeout,
+        .winner = .full_request_timeout,
+        .outcome = .cancelled,
+        .cancellation_was_new = true,
+    };
+    var test_control: FullRequestTimeoutTestControlV1 = .{};
+    const published: PublishedWorkV1 = .{
+        .identity = identity,
+        .handle = handle,
+    };
+    const observed = (try observeWorkCheckpointV1(
+        &runtime,
+        published,
+        test_control.control(),
+    )) orelse return error.TestUnexpectedResult;
+    const receipt = switch (observed) {
+        .full_request_timeout => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(usize, 1), test_control.checkpoint_calls);
+    try std.testing.expectEqual(@as(usize, 1), test_control.cancellation_calls);
+    try std.testing.expectEqualDeep(
+        identity,
+        test_control.cancellation_identity.?,
+    );
+    try std.testing.expectEqualDeep(
+        receipt,
+        test_control.cancellation_receipt.?,
+    );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.full_request_timeout,
+        receipt.requested_cause,
+    );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.full_request_timeout,
+        receipt.winner.?,
+    );
+    try std.testing.expectEqual(
+        DrainCancellationOutcomeV1.cancelled,
+        receipt.outcome,
+    );
+    try std.testing.expect(!receipt.cancellation_was_new);
+}
+
+test "cancelled status rechecks full request timeout checkpoint" {
+    const service_epoch: u64 = 89;
+    const intent_sha256 = [_]u8{0xa5} ** 32;
+    const handle = makeFullRequestTimeoutTestHandleV1(
+        service_epoch,
+        0,
+        1,
+        intent_sha256,
+    );
+    try std.testing.expect(unary.handleValidV1(handle));
+
+    var active_slots = [_]unary.ActiveSlotV1{.{}};
+    var intent: unary.IntentV1 = .{};
+    intent.intent_sha256 = intent_sha256;
+    var records = [_]unary.RecordSlotV1{.{
+        .generation = handle.record_generation,
+        .state = .cancelled,
+        .intent = intent,
+        .handle = handle,
+        .cancellation = std.mem.zeroes(unary.CancellationV1),
+    }};
+    var service: unary.ServiceV1 = .{
+        .state = .closed,
+        .config = .{ .service_epoch = service_epoch },
+        .active_slots = &active_slots,
+        .records = &records,
+    };
+    service.self_address = @intFromPtr(&service);
+    service.active_storage_address =
+        @intFromPtr(active_slots[0..].ptr);
+    service.record_storage_address =
+        @intFromPtr(records[0..].ptr);
+
+    const identity: WorkIdentityV1 = .{
+        .sequence = 13,
+        .handle_sha256 = handle.handle_sha256,
+    };
+    var runtime: RuntimeV1 = .{
+        .service = &service,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+        .next_work_sequence = identity.sequence,
+        .active_work = .{
+            .sequence = identity.sequence,
+            .handle = handle,
+            .stop_decision = .{
+                .requested_cause = .full_request_timeout,
+                .winner = .full_request_timeout,
+                .outcome = .cancelled,
+                .cancellation_was_new = true,
+            },
+        },
+    };
+    var test_control: FullRequestTimeoutTestControlV1 = .{
+        .proceed_checkpoints = 1,
+    };
+    const decision = try awaitResponseV1(
+        &runtime,
+        .{
+            .identity = identity,
+            .handle = handle,
+        },
+        test_control.control(),
+    );
+    const receipt = switch (decision) {
+        .full_request_timeout => |value| value,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(usize, 2), test_control.checkpoint_calls);
+    try std.testing.expectEqual(@as(usize, 1), test_control.cancellation_calls);
+    try std.testing.expectEqualDeep(
+        identity,
+        test_control.cancellation_identity.?,
+    );
+    try std.testing.expectEqualDeep(
+        receipt,
+        test_control.cancellation_receipt.?,
+    );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.full_request_timeout,
+        receipt.requested_cause,
+    );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.full_request_timeout,
+        receipt.winner.?,
+    );
+    try std.testing.expectEqual(
+        DrainCancellationOutcomeV1.cancelled,
+        receipt.outcome,
+    );
+    try std.testing.expect(!receipt.cancellation_was_new);
 }
 
 fn validateModelListHeaders(

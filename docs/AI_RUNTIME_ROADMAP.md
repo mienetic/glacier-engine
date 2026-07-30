@@ -1984,7 +1984,7 @@ graceful drain, restart, durable idempotency, process-death recovery, native
 multi-OS serving, GPU execution, production-model quality, or performance
 evidence.
 
-#### R1k-b8 — Managed unary server process lifecycle, Phases A-D plus Phase E2a
+#### R1k-b8 — Managed unary server process lifecycle, Phases A-D through Phase E2b
 
 Status: **integrated experimental host-process lifecycle slice**.
 
@@ -2077,6 +2077,47 @@ positive send is deferred until another send is necessary, so local
 `write_completed` wins when no bytes remain. None of these local facts proves
 peer delivery.
 
+Phase E2b adds one managed full-request elapsed boundary.
+`full_request_timeout_ns = 0` disables it; valid nonzero values are inclusive
+from 1 millisecond through 60 seconds. Its monotonic clock starts immediately
+after `accept` and remains anchored to that origin through response retirement.
+When both elapsed timers are enabled, `receive_timeout_ns` must be strictly
+less than `full_request_timeout_ns`, so the shorter receive boundary uniquely
+wins while an incomplete head or body remains in
+`receiving_head` or `request_head_received`.
+
+This elapsed boundary is not wall time and does not reinterpret
+`Glacier-Deadline-Tick`. That header remains an absolute logical Scheduler
+tick and part of canonical request intent; the accept-origin timeout remains
+server-local transport policy and does not alter idempotency identity. Timeout
+claim and retirement are fenced by process generation, connection sequence,
+native handle, and, after admission, the exact full work handle. It may wait
+for a current bounded service-drive or kernel-send quantum, but no later drive
+or send begins after the timeout is observed.
+
+Before admission, expiry shuts down the receive side and creates no service
+record. At `request_received` or `request_admitted`, it cancels only the exact
+published work. At `response_ready`, it prevents the first response byte. At
+`response_writing`, it records stop intent separately from the later writer
+checkpoint that makes cancellation effective. The adapter closes the failed
+transport and never synthesizes a post-deadline HTTP timeout response. A
+writing peer may retain only the bounded prefix already sent, while a complete
+local write that retired before timeout observation remains the winner.
+
+The snapshot records one exact general signal and last phase in
+`full_request_timeout_signaled_connections` and
+`last_full_request_timeout_signaled_phase`. Its distinct outcome subsets are
+`full_request_timeout_cancelled_work_connections`,
+`full_request_timeout_cancelled_response_connections`,
+`full_request_timeout_requested_response_write_connections`, and
+`full_request_timeout_cancelled_response_write_connections`, each with its
+matching `last_*_phase`. The write-request counter records intent rather than
+effective cancellation. These facts do not relabel receive timeout, drain,
+reset, or independent transport failure. A cancelled service record remains
+exact-replay evidence with retry policy `never`; a completion retained before
+transport suppression remains available to an explicit exact process-local
+retry. The retained client still performs no automatic retry.
+
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
 The child accepts only an exact out-of-band `drain\n` command followed by EOF,
@@ -2132,7 +2173,22 @@ completion sibling releases the same post-send boundary without drain,
 retains the oracle-matched response, and keeps every new counter zero. A
 focused native-loopback saturation primitive separately reaches real
 `WouldBlock` and proves its cancellation checkpoint. These are deterministic
-correctness cases, not latency or throughput measurements. Generation zero
+correctness cases, not latency or throughput measurements.
+
+Three Phase E2b siblings meet the same child server at exact
+post-admission/pre-drive,
+`response_ready`, and post-first-positive-send `response_writing` barriers.
+Each timer begins at accept, and the supervisor waits for exact lifecycle
+timeout evidence at the selected phase rather than sleeping or inferring model
+duration. The admitted case records one general signal and one newly cancelled
+work handle; the response-ready case records one general signal and one
+`cancelled_before_write` response; the response-writing case records one
+general signal, one stop request, and one effective
+`cancelled_during_write`. No case receives a complete timed-out HTTP response;
+the writing case may retain only its already-sent bounded prefix. Each child
+keeps listener and completion admission open, serves a valid model-list
+follow-up in that same process, then drains with zero active service requests
+and zero Bank ownership. Unrelated counters remain zero. Generation zero
 fails before any `READY` frame.
 
 `unary-server-process-test` runs that real host-process fixture without the
@@ -2142,31 +2198,35 @@ serving support there. A unary-kernel implementation change selects the
 service, HTTP, and process roots. A shared server adapter/API change selects
 the HTTP and process roots without the service-only root. A
 process-fixture-only change selects the process root alone. All selected host
-roots share one Zig invocation. Phases B-E2a reuse the same dual-mode
-executable and these existing targets; they add no compile root. Ordinary pull
+roots share one Zig invocation. Phases B-E2b reuse the same dual-mode
+executable and existing targets; they add no compile root. Ordinary pull
 requests and `main` pushes run only the bounded Debug `affected-fast` host
 plan. Complete affected, exhaustive, retained-target, and hardware
 verification remains an explicit manual, tagged-release, or milestone
-promotion action.
+promotion action. The retained x86_64/AArch64 Linux musl, x86_64 Windows GNU,
+and x86_64 FreeBSD companions provide multi-OS compile closure only; they do
+not execute the child or establish native timer, socket, cancellation, or
+serving behavior.
 
-Phases A-D plus Phase E2a do not retain idempotency records or active execution
-across process restart. Phase C is a pre-admission receive timeout, not a
-full-request or service-level guarantee. Phase D cancels admitted execution
-only when managed drain wins. Phase E1 detects reset only at a between-quantum
-checkpoint and adds cancellation at `response_ready`, before its first write.
-Phase E2a bounds nonblocking sends and adds progress/`WouldBlock` cancellation
-after writing starts. It does not detect orderly FIN abandonment, preempt an
-in-flight model drive or kernel call, add a full-request elapsed timeout, or
-prove peer receipt. This slice adds no
+Phases A-D through Phase E2b do not retain idempotency records or active
+execution across process restart. Phase C remains the shorter pre-admission
+receive timeout. Phase D cancels admitted execution only when managed drain
+wins. Phase E1 detects reset only at a between-quantum checkpoint and adds
+cancellation at `response_ready`, before its first write. Phase E2a bounds
+nonblocking sends and adds progress/`WouldBlock` cancellation after writing
+starts. Phase E2b bounds full-request elapsed time but does not detect orderly
+FIN abandonment, preempt an in-flight model drive or kernel call, prove peer
+receipt, or turn the logical Scheduler deadline into wall time. This slice
+adds no
 durable or process-death recovery, concurrent listener queue, process-wide
 overload policy, streaming, early EOS, authentication, authorization, TLS,
 quota, GPU execution, load evidence, or performance claim. Retained-target
 compile closure is not native serving proof on Windows or FreeBSD; native
 reset, response-write, and deadline behavior on those systems remains
-unproven. The next serving order is a full-request elapsed timeout, then a
-bounded queue/concurrent-transport campaign, then load evidence; orderly-FIN
-abandonment remains a separate open boundary. It does not meet the full
-serving promotion gate.
+unproven. The next serving order is a bounded
+queue/backpressure/concurrent-transport campaign, then separate load evidence;
+orderly-FIN abandonment remains a separate open boundary. It does not meet the
+full serving promotion gate.
 
 #### Public durable-runtime composition foundation
 
@@ -2238,20 +2298,23 @@ the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
 than an exhaustive storage or power-loss campaign. Ordinary-package production
 and admission now include checked durable fixed output `1..64`, with focused
 `N=2`, fresh-process `N=4`, and `N=64` evidence for one narrow CPU/POSIX
-profile. R1k-b8 Phases A-D plus Phase E2a now prove a clean managed
+profile. R1k-b8 Phases A-D through Phase E2b now prove a clean managed
 child-process drain,
 receive-side drain cancellation of held-open partial HTTP heads and bodies,
 bounded monotonic pre-admission receive timeout with separate evidence,
 same-child liveness after timeout, exact fenced cancellation of admitted work
 when drain wins, reset-detected cancellation between drive quanta,
 response-ready cancellation before the first write, bounded response-write
-cancellation after a real positive send, zero-ownership close, and same-package
-fresh restart. They do not prove a full-request timeout, orderly-FIN
+cancellation after a real positive send, one accept-origin full-request
+deadline with exact phase-specific cancellation evidence and no synthesized
+post-deadline HTTP response, same-child follow-up liveness, zero-ownership
+close, and same-package fresh restart. They do not prove orderly-FIN
 abandonment, peer delivery acknowledgement, kernel preemption, durable request
-state, crash recovery, or the full serving lifecycle. Production artifacts,
+state, crash recovery, a bounded concurrent queue, load behavior, or the full
+serving lifecycle. Production artifacts,
 remote delivery,
-broader tokenizers/models, GPU package execution, and multi-OS requirements
-remain open. The combined
+broader tokenizers/models, GPU package execution, and native multi-OS runtime
+requirements remain open. The combined
 49-boundary worker now carries an admitted ordinary-profile bundle, while a
 separate same-host fixture executes the installed CLI from isolated ambient
 state and now retains acknowledged source/first-target command deaths with

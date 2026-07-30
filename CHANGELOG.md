@@ -93,6 +93,23 @@ before the first stable release.
   values, rejects redirects, and validates response correlation. It does not
   add authentication, TLS, streaming, automatic retry, durable idempotency,
   restart, disconnect, production-model, GPU, or performance evidence.
+- R1k-b8 Phase E2a replaces managed response writes with bounded nonblocking
+  send quanta and distinguishes a drain request, an effectively observed
+  cancellation, and a transport failure. Phase E2b adds an optional managed
+  full-request elapsed-time boundary from accept through response retirement.
+  It shares the accept-origin monotonic clock with the earlier receive budget,
+  rechecks the deadline under the lifecycle lock at admission, each bounded
+  work checkpoint, response publication, writer checkpoints, and retirement,
+  and closes an expired connection without attempting a post-deadline HTTP
+  error. Exact evidence separately records the timeout signal, newly cancelled
+  work, a response suppressed before its first byte, requested writer stop,
+  and effective writer cancellation. The serving thread remains the sole
+  response writer and connection closer, and both watchdogs are joined before
+  native-handle reuse. The real-process fixture covers admitted work,
+  response-ready, and response-writing expiry followed by a healthy request in
+  the same child and zero active service or Bank ownership. This boundary is
+  distinct from both the pre-admission receive timeout and the request's
+  logical Scheduler deadline.
 - R1k-b8 Phases A-D plus Phase E1 add an experimental managed lifecycle around
   that serial loopback server. `ManagedLifecycleV1` records one nonzero process
   generation, exact connection outcomes, and the monotone

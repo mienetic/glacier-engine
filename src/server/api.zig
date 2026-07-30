@@ -14,12 +14,17 @@ pub const Error = error{
     InvalidConfiguration,
     NonLoopbackBind,
     ReceiveTimeoutRequiresManagedLifecycle,
+    FullRequestTimeoutRequiresManagedLifecycle,
     PeerResetPollRequiresManagedLifecycle,
     ResponseWriteQuantumRequiresManagedLifecycle,
 };
 
 pub const minimum_receive_timeout_ns: u64 = std.time.ns_per_ms;
 pub const maximum_receive_timeout_ns: u64 = 60 * std.time.ns_per_s;
+pub const minimum_full_request_timeout_ns: u64 =
+    minimum_receive_timeout_ns;
+pub const maximum_full_request_timeout_ns: u64 =
+    maximum_receive_timeout_ns;
 pub const minimum_peer_reset_poll_timeout_ns: u64 =
     std.time.ns_per_ms;
 pub const maximum_peer_reset_poll_timeout_ns: u64 =
@@ -38,6 +43,7 @@ pub const LifecycleError = error{
     ConnectionHandleMismatch,
     ConnectionPhaseMismatch,
     ConnectionInterrupted,
+    ConnectionSignalFailed,
     WorkIdentityMismatch,
     WorkCancellationRecoveryRequired,
     CounterOverflow,
@@ -50,6 +56,9 @@ pub const ServerConfig = struct {
     /// Absolute monotonic elapsed-time bound from accept through the last
     /// required request byte. Zero disables the bounded receive timer.
     receive_timeout_ns: u64 = 0,
+    /// Absolute monotonic elapsed-time bound from accept through managed
+    /// response retirement. Zero disables the full-request watchdog.
+    full_request_timeout_ns: u64 = 0,
     /// Per-checkpoint event-driven wait for an admitted peer reset. Zero keeps
     /// the production path non-blocking; bounded acceptance fixtures may opt
     /// in when they need reset delivery to precede the next work quantum.
@@ -79,10 +88,22 @@ pub const ManagedConnectionPhaseV1 = enum(u8) {
     response_written = 7,
 };
 
-const ResponseWriteStopStateV1 = enum {
+const HardStopCauseV1 = enum {
+    receive_timeout,
+    full_request_timeout,
+    peer_reset,
+    response_transport_failure,
+};
+
+const ResponseStopCauseV1 = enum {
+    drain,
+    full_request_timeout,
+};
+
+const ResponseWriteStopStateV1 = union(enum) {
     none,
-    requested,
-    observed,
+    requested: ResponseStopCauseV1,
+    observed: ResponseStopCauseV1,
 };
 
 pub const ManagedSnapshotV1 = struct {
@@ -94,6 +115,11 @@ pub const ManagedSnapshotV1 = struct {
     active_connections: u8,
     drain_signaled_connections: u64,
     receive_timeout_signaled_connections: u64,
+    full_request_timeout_signaled_connections: u64 = 0,
+    full_request_timeout_cancelled_work_connections: u64 = 0,
+    full_request_timeout_cancelled_response_connections: u64 = 0,
+    full_request_timeout_requested_response_write_connections: u64 = 0,
+    full_request_timeout_cancelled_response_write_connections: u64 = 0,
     drain_cancelled_work_connections: u64 = 0,
     peer_reset_connections: u64 = 0,
     peer_reset_cancelled_work_connections: u64 = 0,
@@ -104,6 +130,11 @@ pub const ManagedSnapshotV1 = struct {
     active_connection_phase: ManagedConnectionPhaseV1,
     last_drain_signaled_phase: ManagedConnectionPhaseV1,
     last_receive_timeout_signaled_phase: ManagedConnectionPhaseV1,
+    last_full_request_timeout_signaled_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_cancelled_response_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_requested_response_write_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
@@ -118,16 +149,23 @@ const ActiveConnectionV1 = struct {
     sequence: u64,
     handle: std.net.Stream.Handle,
     phase: ManagedConnectionPhaseV1 = .receiving_head,
+    hard_stop_cause: ?HardStopCauseV1 = null,
     drain_signaled: bool = false,
     receive_timeout_signaled: bool = false,
     receive_retired: bool = false,
+    receive_timeout_ns: u64 = 0,
+    full_request_timer: ?std.time.Timer = null,
+    full_request_timeout_ns: u64 = 0,
+    full_request_timeout_retired: bool = true,
+    full_request_timeout_signaled: bool = false,
     work_identity: ?prepared_http.WorkIdentityV1 = null,
     work_retired: bool = false,
     drain_work_cancelled: bool = false,
+    full_request_timeout_work_cancelled: bool = false,
     peer_reset_observed: bool = false,
     peer_reset_work_cancelled: bool = false,
     response_retired: bool = false,
-    response_cancelled_before_write: bool = false,
+    response_cancel_before_write_cause: ?ResponseStopCauseV1 = null,
     response_write_stop_state: ResponseWriteStopStateV1 = .none,
     response_write_failure: ?cancellable_writer.FailureKindV1 = null,
     response_write_progress_bytes: u64 = 0,
@@ -145,6 +183,11 @@ pub const ManagedLifecycleV1 = struct {
     active_connections: u8 = 0,
     drain_signaled_connections: u64 = 0,
     receive_timeout_signaled_connections: u64 = 0,
+    full_request_timeout_signaled_connections: u64 = 0,
+    full_request_timeout_cancelled_work_connections: u64 = 0,
+    full_request_timeout_cancelled_response_connections: u64 = 0,
+    full_request_timeout_requested_response_write_connections: u64 = 0,
+    full_request_timeout_cancelled_response_write_connections: u64 = 0,
     drain_cancelled_work_connections: u64 = 0,
     peer_reset_connections: u64 = 0,
     peer_reset_cancelled_work_connections: u64 = 0,
@@ -154,6 +197,11 @@ pub const ManagedLifecycleV1 = struct {
     response_write_transport_failed_connections: u64 = 0,
     last_drain_signaled_phase: ManagedConnectionPhaseV1 = .none,
     last_receive_timeout_signaled_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_signaled_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_cancelled_response_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_requested_response_write_phase: ManagedConnectionPhaseV1 = .none,
+    last_full_request_timeout_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
@@ -185,6 +233,21 @@ pub const ManagedLifecycleV1 = struct {
         self: *ManagedLifecycleV1,
         handle: std.net.Stream.Handle,
     ) LifecycleError!u64 {
+        return self.beginConnectionWithFullRequestTimeoutV1(
+            handle,
+            0,
+            0,
+            null,
+        );
+    }
+
+    fn beginConnectionWithFullRequestTimeoutV1(
+        self: *ManagedLifecycleV1,
+        handle: std.net.Stream.Handle,
+        receive_timeout_ns: u64,
+        full_request_timeout_ns: u64,
+        timer: ?std.time.Timer,
+    ) LifecycleError!u64 {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.state != .ready)
@@ -205,6 +268,10 @@ pub const ManagedLifecycleV1 = struct {
             .process_generation = self.process_generation,
             .sequence = sequence,
             .handle = handle,
+            .receive_timeout_ns = receive_timeout_ns,
+            .full_request_timer = timer,
+            .full_request_timeout_ns = full_request_timeout_ns,
+            .full_request_timeout_retired = full_request_timeout_ns == 0,
         };
         return sequence;
     }
@@ -282,6 +349,7 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
         if (!active.receive_retired or
             active.receive_timeout_signaled or
             active.drain_signaled)
@@ -289,6 +357,11 @@ pub const ManagedLifecycleV1 = struct {
             return LifecycleError.ConnectionInterrupted;
         }
         try self.bindActiveWorkLockedV1(work_identity);
+        if (self.active_connection.?.hard_stop_cause ==
+            .full_request_timeout)
+        {
+            return .full_request_timeout;
+        }
         return switch (self.state) {
             .ready => .proceed,
             .draining => .draining,
@@ -386,9 +459,30 @@ pub const ManagedLifecycleV1 = struct {
         work_identity: prepared_http.WorkIdentityV1,
         receipt: prepared_http.WorkCancellationReceiptV1,
     ) LifecycleError!void {
+        return self.recordWorkCancellationV1(
+            process_generation,
+            connection_sequence,
+            handle,
+            work_identity,
+            receipt,
+        );
+    }
+
+    fn recordWorkCancellationV1(
+        self: *ManagedLifecycleV1,
+        process_generation: u64,
+        connection_sequence: u64,
+        handle: std.net.Stream.Handle,
+        work_identity: prepared_http.WorkIdentityV1,
+        receipt: prepared_http.WorkCancellationReceiptV1,
+    ) LifecycleError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (receipt.requested_cause != .peer_reset) return;
+        if (receipt.requested_cause != .peer_reset and
+            receipt.requested_cause != .full_request_timeout)
+        {
+            return;
+        }
         const active = self.active_connection orelse
             return LifecycleError.NoActiveConnection;
         if (active.process_generation != process_generation or
@@ -407,26 +501,42 @@ pub const ManagedLifecycleV1 = struct {
         if (!std.meta.eql(existing, work_identity))
             return LifecycleError.WorkIdentityMismatch;
 
-        if (!active.peer_reset_observed) {
-            self.peer_reset_connections = std.math.add(
-                u64,
-                self.peer_reset_connections,
-                1,
-            ) catch return LifecycleError.CounterOverflow;
-            self.last_peer_reset_phase = active.phase;
-            self.active_connection.?.peer_reset_observed = true;
-        }
-        if (receipt.cancellation_was_new and
-            receipt.winner == .peer_reset and
-            !active.peer_reset_work_cancelled)
-        {
-            self.peer_reset_cancelled_work_connections = std.math.add(
-                u64,
-                self.peer_reset_cancelled_work_connections,
-                1,
-            ) catch return LifecycleError.CounterOverflow;
-            self.last_peer_reset_cancelled_work_phase = active.phase;
-            self.active_connection.?.peer_reset_work_cancelled = true;
+        switch (receipt.requested_cause) {
+            .peer_reset => {
+                if (receipt.cancellation_was_new and
+                    receipt.winner == .peer_reset and
+                    !active.peer_reset_work_cancelled)
+                {
+                    self.peer_reset_cancelled_work_connections =
+                        std.math.add(
+                            u64,
+                            self.peer_reset_cancelled_work_connections,
+                            1,
+                        ) catch return LifecycleError.CounterOverflow;
+                    self.last_peer_reset_cancelled_work_phase =
+                        active.phase;
+                    self.active_connection.?.peer_reset_work_cancelled =
+                        true;
+                }
+            },
+            .full_request_timeout => {
+                if (receipt.cancellation_was_new and
+                    receipt.winner == .full_request_timeout and
+                    !active.full_request_timeout_work_cancelled)
+                {
+                    self.full_request_timeout_cancelled_work_connections =
+                        std.math.add(
+                            u64,
+                            self.full_request_timeout_cancelled_work_connections,
+                            1,
+                        ) catch return LifecycleError.CounterOverflow;
+                    self.last_full_request_timeout_cancelled_work_phase =
+                        active.phase;
+                    self.active_connection.?.full_request_timeout_work_cancelled =
+                        true;
+                }
+            },
+            else => unreachable,
         }
     }
 
@@ -436,7 +546,7 @@ pub const ManagedLifecycleV1 = struct {
         connection_sequence: u64,
         handle: std.net.Stream.Handle,
         work_identity: prepared_http.WorkIdentityV1,
-    ) LifecycleError!void {
+    ) LifecycleError!prepared_http.WorkCheckpointDispositionV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
         const active = self.active_connection orelse
@@ -456,6 +566,64 @@ pub const ManagedLifecycleV1 = struct {
             return LifecycleError.WorkIdentityMismatch;
         if (!std.meta.eql(existing, work_identity))
             return LifecycleError.WorkIdentityMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const cause =
+            self.active_connection.?.hard_stop_cause orelse
+            return .proceed;
+        return switch (cause) {
+            .full_request_timeout => .full_request_timeout,
+            .peer_reset => .peer_reset,
+            .receive_timeout, .response_transport_failure => .proceed,
+        };
+    }
+
+    fn claimPeerResetV1(
+        self: *ManagedLifecycleV1,
+        process_generation: u64,
+        connection_sequence: u64,
+        handle: std.net.Stream.Handle,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) LifecycleError!prepared_http.WorkCheckpointDispositionV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        if (active.process_generation != process_generation or
+            process_generation != self.process_generation or
+            active.sequence != connection_sequence or
+            connection_sequence != self.accepted_connections)
+        {
+            return LifecycleError.ConnectionSequenceMismatch;
+        }
+        if (active.handle != handle)
+            return LifecycleError.ConnectionHandleMismatch;
+        if (active.phase != .request_admitted)
+            return LifecycleError.ConnectionPhaseMismatch;
+        const existing = active.work_identity orelse
+            return LifecycleError.WorkIdentityMismatch;
+        if (!std.meta.eql(existing, work_identity))
+            return LifecycleError.WorkIdentityMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        if (self.active_connection.?.hard_stop_cause ==
+            .full_request_timeout)
+        {
+            return .full_request_timeout;
+        }
+        if (self.active_connection.?.hard_stop_cause) |cause| {
+            return if (cause == .peer_reset)
+                .peer_reset
+            else
+                .proceed;
+        }
+        self.peer_reset_connections = std.math.add(
+            u64,
+            self.peer_reset_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        self.last_peer_reset_phase = .request_admitted;
+        self.active_connection.?.hard_stop_cause = .peer_reset;
+        self.active_connection.?.peer_reset_observed = true;
+        return .peer_reset;
     }
 
     fn markResponseReadyV1(
@@ -479,6 +647,8 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const current = self.active_connection.?;
         if (!active.receive_retired or
             active.receive_timeout_signaled or
             active.drain_signaled or
@@ -494,6 +664,8 @@ pub const ManagedLifecycleV1 = struct {
             => self.active_connection.?.phase = .response_ready,
             else => return LifecycleError.ConnectionPhaseMismatch,
         }
+        if (current.hard_stop_cause == .full_request_timeout)
+            try self.cancelResponseBeforeWriteForFullRequestTimeoutLockedV1();
     }
 
     fn markResponseWritingV1(
@@ -515,10 +687,14 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
         if (active.phase != .response_ready)
             return LifecycleError.ConnectionPhaseMismatch;
-        if (active.response_cancelled_before_write)
+        if (self.active_connection.?.response_cancel_before_write_cause !=
+            null)
+        {
             return .cancelled;
+        }
         self.active_connection.?.phase = .response_writing;
         return .proceed;
     }
@@ -542,9 +718,10 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
         if (active.phase != .response_ready)
             return LifecycleError.ConnectionPhaseMismatch;
-        return if (active.response_cancelled_before_write)
+        return if (self.active_connection.?.response_cancel_before_write_cause != null)
             .cancelled
         else
             .proceed;
@@ -569,25 +746,39 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
         if (active.phase != .response_writing or
             active.response_retired)
         {
             return LifecycleError.ConnectionPhaseMismatch;
         }
-        return switch (active.response_write_stop_state) {
+        return switch (self.active_connection.?.response_write_stop_state) {
             .none => .proceed,
-            .requested => blk: {
-                const next_cancelled = std.math.add(
-                    u64,
-                    self.drain_cancelled_response_write_connections,
-                    1,
-                ) catch return LifecycleError.CounterOverflow;
-                self.drain_cancelled_response_write_connections =
-                    next_cancelled;
-                self.last_drain_cancelled_response_write_phase =
-                    .response_writing;
+            .requested => |cause| blk: {
+                switch (cause) {
+                    .drain => {
+                        self.drain_cancelled_response_write_connections =
+                            std.math.add(
+                                u64,
+                                self.drain_cancelled_response_write_connections,
+                                1,
+                            ) catch return LifecycleError.CounterOverflow;
+                        self.last_drain_cancelled_response_write_phase =
+                            .response_writing;
+                    },
+                    .full_request_timeout => {
+                        self.full_request_timeout_cancelled_response_write_connections =
+                            std.math.add(
+                                u64,
+                                self.full_request_timeout_cancelled_response_write_connections,
+                                1,
+                            ) catch return LifecycleError.CounterOverflow;
+                        self.last_full_request_timeout_cancelled_response_write_phase =
+                            .response_writing;
+                    },
+                }
                 self.active_connection.?.response_write_stop_state =
-                    .observed;
+                    .{ .observed = cause };
                 break :blk .cancelled;
             },
             .observed => .cancelled,
@@ -614,6 +805,7 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
         if (active.phase != .response_writing or
             active.response_retired or
             bytes_sent == 0)
@@ -648,6 +840,7 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (active.handle != handle)
             return LifecycleError.ConnectionHandleMismatch;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
         if (active.phase != .response_writing or
             active.response_retired)
         {
@@ -660,12 +853,20 @@ pub const ManagedLifecycleV1 = struct {
             return;
         }
         if (failure_kind == .cancelled and
-            active.response_write_stop_state != .observed)
+            std.meta.activeTag(active.response_write_stop_state) !=
+                .observed)
         {
             return LifecycleError.ConnectionInterrupted;
         }
         self.active_connection.?.response_write_failure =
             failure_kind;
+        if ((failure_kind == .connection_closed or
+            failure_kind == .transport) and
+            self.active_connection.?.hard_stop_cause == null)
+        {
+            self.active_connection.?.hard_stop_cause =
+                .response_transport_failure;
+        }
     }
 
     fn retireResponseV1(
@@ -693,6 +894,7 @@ pub const ManagedLifecycleV1 = struct {
             return LifecycleError.ConnectionInterrupted;
         if (active.response_write_failure != writer_failure)
             return LifecycleError.ConnectionInterrupted;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
         var effective_outcome = outcome;
         switch (outcome) {
             .write_completed => {
@@ -709,8 +911,11 @@ pub const ManagedLifecycleV1 = struct {
                     return LifecycleError.ConnectionPhaseMismatch;
                 }
                 if (writer_failure == .cancelled) {
-                    if (active.response_write_stop_state != .observed)
+                    if (std.meta.activeTag(
+                        active.response_write_stop_state,
+                    ) != .observed) {
                         return LifecycleError.ConnectionInterrupted;
+                    }
                     effective_outcome = .cancelled_during_write;
                 } else if (writer_failure == .connection_closed or
                     writer_failure == .transport)
@@ -734,13 +939,16 @@ pub const ManagedLifecycleV1 = struct {
             .cancelled_during_write => {
                 if (active.phase != .response_writing or
                     writer_failure != .cancelled or
-                    active.response_write_stop_state != .observed)
+                    std.meta.activeTag(
+                        active.response_write_stop_state,
+                    ) != .observed)
                 {
                     return LifecycleError.ConnectionPhaseMismatch;
                 }
             },
         }
         self.active_connection.?.response_retired = true;
+        self.active_connection.?.full_request_timeout_retired = true;
         return effective_outcome;
     }
 
@@ -781,6 +989,8 @@ pub const ManagedLifecycleV1 = struct {
             );
             return LifecycleError.ConnectionInterrupted;
         }
+        if (try self.claimFullRequestTimeoutIfExpiredLockedV1())
+            return LifecycleError.ConnectionInterrupted;
         self.active_connection.?.phase = next_phase;
         if (retire_receive)
             self.active_connection.?.receive_retired = true;
@@ -820,6 +1030,8 @@ pub const ManagedLifecycleV1 = struct {
         {
             return LifecycleError.ConnectionInterrupted;
         }
+        if (!active.full_request_timeout_retired)
+            return LifecycleError.ConnectionInterrupted;
         if (succeeded) {
             self.completed_connections = std.math.add(
                 u64,
@@ -871,6 +1083,11 @@ pub const ManagedLifecycleV1 = struct {
             .active_connections = self.active_connections,
             .drain_signaled_connections = self.drain_signaled_connections,
             .receive_timeout_signaled_connections = self.receive_timeout_signaled_connections,
+            .full_request_timeout_signaled_connections = self.full_request_timeout_signaled_connections,
+            .full_request_timeout_cancelled_work_connections = self.full_request_timeout_cancelled_work_connections,
+            .full_request_timeout_cancelled_response_connections = self.full_request_timeout_cancelled_response_connections,
+            .full_request_timeout_requested_response_write_connections = self.full_request_timeout_requested_response_write_connections,
+            .full_request_timeout_cancelled_response_write_connections = self.full_request_timeout_cancelled_response_write_connections,
             .drain_cancelled_work_connections = self.drain_cancelled_work_connections,
             .peer_reset_connections = self.peer_reset_connections,
             .peer_reset_cancelled_work_connections = self.peer_reset_cancelled_work_connections,
@@ -884,6 +1101,11 @@ pub const ManagedLifecycleV1 = struct {
                 .none,
             .last_drain_signaled_phase = self.last_drain_signaled_phase,
             .last_receive_timeout_signaled_phase = self.last_receive_timeout_signaled_phase,
+            .last_full_request_timeout_signaled_phase = self.last_full_request_timeout_signaled_phase,
+            .last_full_request_timeout_cancelled_work_phase = self.last_full_request_timeout_cancelled_work_phase,
+            .last_full_request_timeout_cancelled_response_phase = self.last_full_request_timeout_cancelled_response_phase,
+            .last_full_request_timeout_requested_response_write_phase = self.last_full_request_timeout_requested_response_write_phase,
+            .last_full_request_timeout_cancelled_response_write_phase = self.last_full_request_timeout_cancelled_response_write_phase,
             .last_drain_cancelled_work_phase = self.last_drain_cancelled_work_phase,
             .last_peer_reset_phase = self.last_peer_reset_phase,
             .last_peer_reset_cancelled_work_phase = self.last_peer_reset_cancelled_work_phase,
@@ -905,7 +1127,8 @@ pub const ManagedLifecycleV1 = struct {
             return LifecycleError.ConnectionSequenceMismatch;
         }
         if (active.phase == .response_ready) {
-            if (active.response_cancelled_before_write) return true;
+            if (active.response_cancel_before_write_cause != null)
+                return true;
             const next_cancelled = std.math.add(
                 u64,
                 self.drain_cancelled_response_connections,
@@ -913,12 +1136,15 @@ pub const ManagedLifecycleV1 = struct {
             ) catch return LifecycleError.CounterOverflow;
             self.drain_cancelled_response_connections = next_cancelled;
             self.last_drain_cancelled_response_phase = active.phase;
-            self.active_connection.?.response_cancelled_before_write = true;
+            self.active_connection.?.response_cancel_before_write_cause =
+                .drain;
             return true;
         }
         if (active.phase == .response_writing) {
             if (active.response_write_failure != null or
-                active.response_write_stop_state != .none)
+                std.meta.activeTag(
+                    active.response_write_stop_state,
+                ) != .none)
             {
                 return true;
             }
@@ -932,7 +1158,7 @@ pub const ManagedLifecycleV1 = struct {
             self.last_drain_requested_response_write_phase =
                 .response_writing;
             self.active_connection.?.response_write_stop_state =
-                .requested;
+                .{ .requested = .drain };
             return true;
         }
         if (active.drain_signaled or
@@ -958,6 +1184,215 @@ pub const ManagedLifecycleV1 = struct {
         self.active_connection.?.drain_signaled = true;
         self.active_connection.?.receive_retired = true;
         return true;
+    }
+
+    fn fullRequestDeadlineExpiredLockedV1(
+        self: *ManagedLifecycleV1,
+    ) bool {
+        if (self.active_connection) |*active| {
+            if (active.full_request_timeout_retired or
+                active.full_request_timeout_ns == 0)
+            {
+                return false;
+            }
+            if (active.full_request_timer) |*timer| {
+                return timer.read() >=
+                    active.full_request_timeout_ns;
+            }
+        }
+        return false;
+    }
+
+    fn claimFullRequestTimeoutIfExpiredLockedV1(
+        self: *ManagedLifecycleV1,
+    ) !bool {
+        if (!self.fullRequestDeadlineExpiredLockedV1())
+            return false;
+        const active = self.active_connection orelse return false;
+        return self.claimFullRequestTimeoutLockedV1(
+            active.process_generation,
+            active.sequence,
+            active.handle,
+        );
+    }
+
+    fn claimFullRequestTimeoutV1(
+        self: *ManagedLifecycleV1,
+        process_generation: u64,
+        connection_sequence: u64,
+        handle: std.net.Stream.Handle,
+    ) !bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.claimFullRequestTimeoutLockedV1(
+            process_generation,
+            connection_sequence,
+            handle,
+        );
+    }
+
+    fn claimFullRequestTimeoutLockedV1(
+        self: *ManagedLifecycleV1,
+        process_generation: u64,
+        connection_sequence: u64,
+        handle: std.net.Stream.Handle,
+    ) !bool {
+        if (self.state != .ready) return false;
+        const active = self.active_connection orelse return false;
+        if (active.process_generation != process_generation or
+            process_generation != self.process_generation or
+            active.sequence != connection_sequence or
+            connection_sequence != self.accepted_connections or
+            active.handle != handle or
+            self.active_connections != 1)
+        {
+            return false;
+        }
+        if (active.full_request_timeout_retired or
+            active.full_request_timeout_signaled or
+            active.response_retired or
+            active.phase == .response_written or
+            active.hard_stop_cause != null)
+        {
+            return false;
+        }
+        if (!self.fullRequestDeadlineExpiredLockedV1())
+            return false;
+
+        if (!active.receive_retired and
+            active.receive_timeout_ns != 0)
+        {
+            if (self.active_connection.?.full_request_timer) |*timer| {
+                if (timer.read() >= active.receive_timeout_ns) {
+                    _ = try self
+                        .signalActiveConnectionForReceiveTimeoutLockedV1(
+                        process_generation,
+                        connection_sequence,
+                        handle,
+                    );
+                    return false;
+                }
+            }
+        }
+
+        const next_signaled = std.math.add(
+            u64,
+            self.full_request_timeout_signaled_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        var next_cancelled_response: ?u64 = null;
+        var next_requested_response_write: ?u64 = null;
+        switch (active.phase) {
+            .receiving_head, .request_head_received => {
+                std.posix.shutdown(active.handle, .recv) catch |err| switch (err) {
+                    error.ConnectionAborted,
+                    error.ConnectionResetByPeer,
+                    error.SocketNotConnected,
+                    => {},
+                    else => return LifecycleError.ConnectionSignalFailed,
+                };
+            },
+            .request_received, .request_admitted => {},
+            .response_ready => {
+                if (active.response_cancel_before_write_cause == null) {
+                    next_cancelled_response = std.math.add(
+                        u64,
+                        self.full_request_timeout_cancelled_response_connections,
+                        1,
+                    ) catch return LifecycleError.CounterOverflow;
+                }
+            },
+            .response_writing => {
+                if (active.response_write_failure == null and
+                    std.meta.activeTag(
+                        active.response_write_stop_state,
+                    ) == .none)
+                {
+                    next_requested_response_write = std.math.add(
+                        u64,
+                        self.full_request_timeout_requested_response_write_connections,
+                        1,
+                    ) catch return LifecycleError.CounterOverflow;
+                }
+            },
+            .response_written, .none => return false,
+        }
+
+        self.full_request_timeout_signaled_connections =
+            next_signaled;
+        self.last_full_request_timeout_signaled_phase =
+            active.phase;
+        self.active_connection.?.hard_stop_cause =
+            .full_request_timeout;
+        self.active_connection.?.full_request_timeout_signaled =
+            true;
+        self.active_connection.?.full_request_timeout_retired =
+            true;
+        if (active.phase == .receiving_head or
+            active.phase == .request_head_received)
+        {
+            self.active_connection.?.receive_retired = true;
+        }
+        if (next_cancelled_response) |next| {
+            self.full_request_timeout_cancelled_response_connections =
+                next;
+            self.last_full_request_timeout_cancelled_response_phase =
+                .response_ready;
+            self.active_connection.?.response_cancel_before_write_cause =
+                .full_request_timeout;
+        }
+        if (next_requested_response_write) |next| {
+            self.full_request_timeout_requested_response_write_connections =
+                next;
+            self.last_full_request_timeout_requested_response_write_phase =
+                .response_writing;
+            self.active_connection.?.response_write_stop_state =
+                .{ .requested = .full_request_timeout };
+        }
+        return true;
+    }
+
+    fn cancelResponseBeforeWriteForFullRequestTimeoutLockedV1(
+        self: *ManagedLifecycleV1,
+    ) LifecycleError!void {
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        if (active.response_cancel_before_write_cause != null)
+            return;
+        self.full_request_timeout_cancelled_response_connections =
+            std.math.add(
+                u64,
+                self.full_request_timeout_cancelled_response_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+        self.last_full_request_timeout_cancelled_response_phase =
+            .response_ready;
+        self.active_connection.?.response_cancel_before_write_cause =
+            .full_request_timeout;
+    }
+
+    fn requestResponseWriteStopForFullRequestTimeoutLockedV1(
+        self: *ManagedLifecycleV1,
+    ) LifecycleError!void {
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        if (active.response_write_failure != null or
+            std.meta.activeTag(
+                active.response_write_stop_state,
+            ) != .none)
+        {
+            return;
+        }
+        self.full_request_timeout_requested_response_write_connections =
+            std.math.add(
+                u64,
+                self.full_request_timeout_requested_response_write_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+        self.last_full_request_timeout_requested_response_write_phase =
+            .response_writing;
+        self.active_connection.?.response_write_stop_state =
+            .{ .requested = .full_request_timeout };
     }
 
     fn signalActiveConnectionForReceiveTimeoutV1(
@@ -996,7 +1431,8 @@ pub const ManagedLifecycleV1 = struct {
             active.phase == .request_admitted or
             active.drain_signaled or
             active.receive_timeout_signaled or
-            active.receive_retired)
+            active.receive_retired or
+            active.hard_stop_cause != null)
         {
             return false;
         }
@@ -1007,6 +1443,8 @@ pub const ManagedLifecycleV1 = struct {
         ) catch return LifecycleError.CounterOverflow;
         self.receive_timeout_signaled_connections = next_signaled;
         self.last_receive_timeout_signaled_phase = active.phase;
+        self.active_connection.?.hard_stop_cause =
+            .receive_timeout;
         self.active_connection.?.receive_timeout_signaled = true;
         self.active_connection.?.receive_retired = true;
         return true;
@@ -1047,7 +1485,38 @@ pub const ManagedLifecycleV1 = struct {
             );
             return false;
         }
+        if (try self.claimFullRequestTimeoutIfExpiredLockedV1())
+            return false;
         self.active_connection.?.receive_retired = true;
+        return true;
+    }
+
+    fn retireFullRequestTimeoutV1(
+        self: *ManagedLifecycleV1,
+        process_generation: u64,
+        connection_sequence: u64,
+        handle: std.net.Stream.Handle,
+    ) !bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const active = self.active_connection orelse
+            return LifecycleError.NoActiveConnection;
+        if (active.process_generation != process_generation or
+            process_generation != self.process_generation or
+            active.sequence != connection_sequence or
+            connection_sequence != self.accepted_connections)
+        {
+            return LifecycleError.ConnectionSequenceMismatch;
+        }
+        if (active.handle != handle)
+            return LifecycleError.ConnectionHandleMismatch;
+        if (active.full_request_timeout_signaled)
+            return false;
+        if (active.full_request_timeout_retired)
+            return true;
+        if (try self.claimFullRequestTimeoutIfExpiredLockedV1())
+            return false;
+        self.active_connection.?.full_request_timeout_retired = true;
         return true;
     }
 };
@@ -1056,6 +1525,7 @@ fn receiveDeadlineExpiredV1(
     timer: ?*std.time.Timer,
     timeout_ns: u64,
 ) bool {
+    if (timeout_ns == 0) return false;
     const active_timer = timer orelse return false;
     return active_timer.read() >= timeout_ns;
 }
@@ -1079,6 +1549,8 @@ pub fn serveListenerV1(
     try validateConfig(config);
     if (config.receive_timeout_ns != 0)
         return Error.ReceiveTimeoutRequiresManagedLifecycle;
+    if (config.full_request_timeout_ns != 0)
+        return Error.FullRequestTimeoutRequiresManagedLifecycle;
     if (config.peer_reset_poll_timeout_ns != 0)
         return Error.PeerResetPollRequiresManagedLifecycle;
     if (config.response_write_quantum_bytes !=
@@ -1161,22 +1633,37 @@ pub fn serveManagedListenerWithObserversV1(
             lifecycle.markFailedV1();
             return err;
         };
+        const accept_timer =
+            if (config.receive_timeout_ns == 0 and
+            config.full_request_timeout_ns == 0)
+                null
+            else
+                std.time.Timer.start() catch |err| {
+                    connection.stream.close();
+                    lifecycle.markFailedV1();
+                    return err;
+                };
         const receive_timer = if (config.receive_timeout_ns == 0)
             null
         else
-            std.time.Timer.start() catch |err| {
+            accept_timer;
+        const full_request_timer =
+            if (config.full_request_timeout_ns == 0)
+                null
+            else
+                accept_timer;
+        const sequence =
+            lifecycle.beginConnectionWithFullRequestTimeoutV1(
+                connection.stream.handle,
+                config.receive_timeout_ns,
+                config.full_request_timeout_ns,
+                full_request_timer,
+            ) catch |err| {
                 connection.stream.close();
+                if (err == LifecycleError.InvalidTransition) break;
                 lifecycle.markFailedV1();
                 return err;
             };
-        const sequence = lifecycle.beginConnectionV1(
-            connection.stream.handle,
-        ) catch |err| {
-            connection.stream.close();
-            if (err == LifecycleError.InvalidTransition) break;
-            lifecycle.markFailedV1();
-            return err;
-        };
 
         _ = serveManagedConnectionV1(
             connection,
@@ -1184,9 +1671,11 @@ pub fn serveManagedListenerWithObserversV1(
             lifecycle,
             sequence,
             config.receive_timeout_ns,
+            config.full_request_timeout_ns,
             config.peer_reset_poll_timeout_ns,
             config.response_write_quantum_bytes,
             receive_timer,
+            full_request_timer,
             work_observer,
             response_observer,
         ) catch |err| {
@@ -1236,6 +1725,7 @@ fn beginManagedDrainV1(
 ) !bool {
     lifecycle.mutex.lock();
     defer lifecycle.mutex.unlock();
+    _ = try lifecycle.claimFullRequestTimeoutIfExpiredLockedV1();
     return switch (lifecycle.state) {
         .ready => blk: {
             const drain_receipt =
@@ -1316,6 +1806,7 @@ const ManagedReceiveTimeoutV1 = struct {
     connection_sequence: u64,
     handle: std.net.Stream.Handle,
     timeout_ns: u64,
+    full_request_timeout_ns: u64,
     decision_timer: ?std.time.Timer,
     wait_timer: ?std.time.Timer,
     receive_stopped: std.Thread.ResetEvent = .{},
@@ -1391,6 +1882,58 @@ const ManagedReceiveTimeoutV1 = struct {
         if (self.decision_timer) |*timer| return timer;
         return null;
     }
+
+    fn deadlineNs(self: *ManagedReceiveTimeoutV1) u64 {
+        if (self.timeout_ns != 0) return self.timeout_ns;
+        return self.full_request_timeout_ns;
+    }
+};
+
+const ManagedFullRequestTimeoutV1 = struct {
+    lifecycle: *ManagedLifecycleV1,
+    process_generation: u64,
+    connection_sequence: u64,
+    handle: std.net.Stream.Handle,
+    timeout_ns: u64,
+    wait_timer: ?std.time.Timer,
+    request_stopped: std.Thread.ResetEvent = .{},
+    signaled: bool = false,
+    signal_error: ?anyerror = null,
+
+    fn run(self: *ManagedFullRequestTimeoutV1) void {
+        var timer = self.wait_timer orelse unreachable;
+        const elapsed_ns = timer.read();
+        if (elapsed_ns >= self.timeout_ns) {
+            self.signal();
+            return;
+        }
+        self.request_stopped.timedWait(
+            self.timeout_ns - elapsed_ns,
+        ) catch |err| switch (err) {
+            error.Timeout => self.signal(),
+        };
+    }
+
+    fn signal(self: *ManagedFullRequestTimeoutV1) void {
+        self.signaled =
+            self.lifecycle.claimFullRequestTimeoutV1(
+                self.process_generation,
+                self.connection_sequence,
+                self.handle,
+            ) catch |signal_error| {
+                self.signal_error = signal_error;
+                return;
+            };
+    }
+
+    fn stop(self: *ManagedFullRequestTimeoutV1) !bool {
+        defer self.request_stopped.set();
+        return self.lifecycle.retireFullRequestTimeoutV1(
+            self.process_generation,
+            self.connection_sequence,
+            self.handle,
+        );
+    }
 };
 
 /// Managed requests read only after waiting for socket readiness within the
@@ -1446,10 +1989,11 @@ const ManagedDeadlineReaderV1 = struct {
             self.receive_timeout.timerPointer() orelse unreachable;
         while (true) {
             const elapsed_ns = timer.read();
-            if (elapsed_ns >= self.receive_timeout.timeout_ns)
+            const deadline_ns = self.receive_timeout.deadlineNs();
+            if (elapsed_ns >= deadline_ns)
                 return error.ReceiveDeadlineExceeded;
             const remaining_ns =
-                self.receive_timeout.timeout_ns - elapsed_ns;
+                deadline_ns - elapsed_ns;
             const remaining_ms: i32 = @intCast(
                 std.math.divCeil(
                     u64,
@@ -1522,13 +2066,18 @@ const ManagedRequestWorkControlV1 = struct {
             );
         if (lifecycle_disposition == .draining)
             return .draining;
+        if (lifecycle_disposition == .full_request_timeout)
+            return .full_request_timeout;
         if (self.observer) |observer| {
             const observer_disposition = try observer.admitted_fn(
                 observer.context,
                 work_identity,
             );
             self.observer_admitted = true;
-            return observer_disposition;
+            return switch (observer_disposition) {
+                .proceed => .proceed,
+                .draining, .full_request_timeout => LifecycleError.InvalidTransition,
+            };
         }
         return .proceed;
     }
@@ -1539,28 +2088,50 @@ const ManagedRequestWorkControlV1 = struct {
     ) anyerror!prepared_http.WorkCheckpointDispositionV1 {
         const self: *ManagedRequestWorkControlV1 =
             @ptrCast(@alignCast(context));
-        try self.lifecycle.validateWorkCheckpointV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
-            work_identity,
-        );
-        if (try peerResetDetectedV1(
-            self.handle,
-            self.peer_reset_poll_timeout_ms,
-        )) {
+        const lifecycle_disposition =
             try self.lifecycle.validateWorkCheckpointV1(
                 self.process_generation,
                 self.connection_sequence,
                 self.handle,
                 work_identity,
             );
-            return .peer_reset;
+        if (lifecycle_disposition != .proceed)
+            return lifecycle_disposition;
+        if (try peerResetDetectedV1(
+            self.handle,
+            self.peer_reset_poll_timeout_ms,
+        )) {
+            return self.lifecycle.claimPeerResetV1(
+                self.process_generation,
+                self.connection_sequence,
+                self.handle,
+                work_identity,
+            );
         }
         if (self.observer) |observer| {
             const callback = observer.checkpoint_fn orelse
                 return .proceed;
-            return callback(observer.context, work_identity);
+            const observed =
+                try callback(observer.context, work_identity);
+            const post_observer =
+                try self.lifecycle.validateWorkCheckpointV1(
+                    self.process_generation,
+                    self.connection_sequence,
+                    self.handle,
+                    work_identity,
+                );
+            if (post_observer != .proceed)
+                return post_observer;
+            return switch (observed) {
+                .proceed => .proceed,
+                .peer_reset => self.lifecycle.claimPeerResetV1(
+                    self.process_generation,
+                    self.connection_sequence,
+                    self.handle,
+                    work_identity,
+                ),
+                .full_request_timeout => LifecycleError.InvalidTransition,
+            };
         }
         return .proceed;
     }
@@ -1572,7 +2143,7 @@ const ManagedRequestWorkControlV1 = struct {
     ) void {
         const self: *ManagedRequestWorkControlV1 =
             @ptrCast(@alignCast(context));
-        self.lifecycle.recordPeerResetCancellationV1(
+        self.lifecycle.recordWorkCancellationV1(
             self.process_generation,
             self.connection_sequence,
             self.handle,
@@ -1654,6 +2225,7 @@ const ManagedRequestResponseControlV1 = struct {
     process_generation: u64,
     connection_sequence: u64,
     handle: std.net.Stream.Handle,
+    full_request_timeout: *ManagedFullRequestTimeoutV1,
     observer: ?prepared_http.RequestResponseControlV1,
     max_send_bytes: u16,
     observer_ready: bool = false,
@@ -1791,6 +2363,7 @@ const ManagedRequestResponseControlV1 = struct {
                     self.retire_error = err;
                 return;
             };
+        self.full_request_timeout.request_stopped.set();
         if (self.observer) |observer| {
             if (!self.observer_ready) return;
             observer.retired_fn(
@@ -1828,9 +2401,11 @@ fn serveManagedConnectionV1(
     lifecycle: *ManagedLifecycleV1,
     sequence: u64,
     receive_timeout_ns: u64,
+    full_request_timeout_ns: u64,
     peer_reset_poll_timeout_ns: u64,
     response_write_quantum_bytes: u16,
     receive_timer: ?std.time.Timer,
+    full_request_timer: ?std.time.Timer,
     work_observer: ?prepared_http.RequestWorkControlV1,
     response_observer: ?prepared_http.RequestResponseControlV1,
 ) !bool {
@@ -1842,8 +2417,17 @@ fn serveManagedConnectionV1(
         .connection_sequence = sequence,
         .handle = owned_connection.stream.handle,
         .timeout_ns = receive_timeout_ns,
-        .decision_timer = receive_timer,
+        .full_request_timeout_ns = full_request_timeout_ns,
+        .decision_timer = receive_timer orelse full_request_timer,
         .wait_timer = receive_timer,
+    };
+    var full_request_timeout: ManagedFullRequestTimeoutV1 = .{
+        .lifecycle = lifecycle,
+        .process_generation = lifecycle.process_generation,
+        .connection_sequence = sequence,
+        .handle = owned_connection.stream.handle,
+        .timeout_ns = full_request_timeout_ns,
+        .wait_timer = full_request_timer,
     };
     var work_control: ManagedRequestWorkControlV1 = .{
         .lifecycle = lifecycle,
@@ -1860,10 +2444,11 @@ fn serveManagedConnectionV1(
         .process_generation = lifecycle.process_generation,
         .connection_sequence = sequence,
         .handle = owned_connection.stream.handle,
+        .full_request_timeout = &full_request_timeout,
         .observer = response_observer,
         .max_send_bytes = response_write_quantum_bytes,
     };
-    const timeout_thread = if (receive_timer == null)
+    const receive_timeout_thread = if (receive_timer == null)
         null
     else
         std.Thread.spawn(
@@ -1871,6 +2456,8 @@ fn serveManagedConnectionV1(
             ManagedReceiveTimeoutV1.run,
             .{&receive_timeout},
         ) catch |err| {
+            _ = receive_timeout.stop() catch {};
+            _ = full_request_timeout.stop() catch {};
             try lifecycle.finishConnectionV1(
                 sequence,
                 owned_connection.stream.handle,
@@ -1878,6 +2465,26 @@ fn serveManagedConnectionV1(
             );
             return err;
         };
+    const full_request_timeout_thread =
+        if (full_request_timer == null)
+            null
+        else
+            std.Thread.spawn(
+                .{},
+                ManagedFullRequestTimeoutV1.run,
+                .{&full_request_timeout},
+            ) catch |err| {
+                receive_timeout.receive_stopped.set();
+                if (receive_timeout_thread) |thread| thread.join();
+                _ = receive_timeout.stop() catch {};
+                _ = full_request_timeout.stop() catch {};
+                try lifecycle.finishConnectionV1(
+                    sequence,
+                    owned_connection.stream.handle,
+                    false,
+                );
+                return err;
+            };
     const succeeded = blk: {
         serveOpenConnectionV1(
             &owned_connection.stream,
@@ -1894,12 +2501,21 @@ fn serveManagedConnectionV1(
         receive_timeout.receive_stopped.set();
         break :blk false;
     };
-    if (timeout_thread) |thread| thread.join();
+    const full_request_retired =
+        full_request_timeout.stop() catch |err| blk: {
+            if (stop_error == null) stop_error = err;
+            full_request_timeout.request_stopped.set();
+            break :blk false;
+        };
+    if (receive_timeout_thread) |thread| thread.join();
+    if (full_request_timeout_thread) |thread| thread.join();
     const connection_succeeded =
         succeeded and
         receive_retired and
+        full_request_retired and
         !receive_timeout.signaled and
         receive_timeout.signal_error == null and
+        full_request_timeout.signal_error == null and
         stop_error == null and
         work_control.retire_error == null and
         response_control.retire_error == null;
@@ -1909,6 +2525,7 @@ fn serveManagedConnectionV1(
         connection_succeeded,
     );
     if (receive_timeout.signal_error) |err| return err;
+    if (full_request_timeout.signal_error) |err| return err;
     if (stop_error) |err| return err;
     if (work_control.retire_error) |err| return err;
     if (response_control.retire_error) |err| return err;
@@ -2003,6 +2620,21 @@ fn validateConfig(config: ServerConfig) Error!void {
     {
         return Error.InvalidConfiguration;
     }
+    if (config.full_request_timeout_ns != 0 and
+        (config.full_request_timeout_ns <
+            minimum_full_request_timeout_ns or
+            config.full_request_timeout_ns >
+                maximum_full_request_timeout_ns))
+    {
+        return Error.InvalidConfiguration;
+    }
+    if (config.receive_timeout_ns != 0 and
+        config.full_request_timeout_ns != 0 and
+        config.receive_timeout_ns >=
+            config.full_request_timeout_ns)
+    {
+        return Error.InvalidConfiguration;
+    }
     if (config.peer_reset_poll_timeout_ns != 0 and
         (config.peer_reset_poll_timeout_ns <
             minimum_peer_reset_poll_timeout_ns or
@@ -2094,6 +2726,14 @@ fn prepareResponseWritingLifecycleForTestV1(
     return sequence;
 }
 
+fn waitForElapsedTimerForTestV1(
+    timer: *std.time.Timer,
+    deadline_ns: u64,
+) void {
+    while (timer.read() < deadline_ns)
+        std.atomic.spinLoopHint();
+}
+
 test "server config rejects non-loopback authority" {
     try std.testing.expectError(
         Error.NonLoopbackBind,
@@ -2106,6 +2746,16 @@ test "server config rejects non-loopback authority" {
     });
     try validateConfig(.{
         .receive_timeout_ns = maximum_receive_timeout_ns,
+    });
+    try validateConfig(.{
+        .full_request_timeout_ns = minimum_full_request_timeout_ns,
+    });
+    try validateConfig(.{
+        .full_request_timeout_ns = maximum_full_request_timeout_ns,
+    });
+    try validateConfig(.{
+        .receive_timeout_ns = minimum_receive_timeout_ns,
+        .full_request_timeout_ns = minimum_receive_timeout_ns + std.time.ns_per_ms,
     });
     try validateConfig(.{
         .peer_reset_poll_timeout_ns = minimum_peer_reset_poll_timeout_ns,
@@ -2124,6 +2774,23 @@ test "server config rejects non-loopback authority" {
         Error.InvalidConfiguration,
         validateConfig(.{
             .receive_timeout_ns = maximum_receive_timeout_ns + 1,
+        }),
+    );
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        validateConfig(.{ .full_request_timeout_ns = 1 }),
+    );
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        validateConfig(.{
+            .full_request_timeout_ns = maximum_full_request_timeout_ns + 1,
+        }),
+    );
+    try std.testing.expectError(
+        Error.InvalidConfiguration,
+        validateConfig(.{
+            .receive_timeout_ns = minimum_receive_timeout_ns,
+            .full_request_timeout_ns = minimum_receive_timeout_ns,
         }),
     );
     try std.testing.expectError(
@@ -2188,6 +2855,16 @@ test "server config rejects non-loopback authority" {
         ),
     );
     try std.testing.expectError(
+        Error.FullRequestTimeoutRequiresManagedLifecycle,
+        serveListenerV1(
+            &listener,
+            .{
+                .full_request_timeout_ns = minimum_full_request_timeout_ns,
+            },
+            &runtime,
+        ),
+    );
+    try std.testing.expectError(
         Error.ResponseWriteQuantumRequiresManagedLifecycle,
         serveListenerV1(
             &listener,
@@ -2196,6 +2873,259 @@ test "server config rejects non-loopback authority" {
             },
             &runtime,
         ),
+    );
+}
+
+test "managed full request timeout preserves phase-specific evidence" {
+    const timeout_ns = minimum_full_request_timeout_ns;
+    const admitted_handle: std.net.Stream.Handle = @intCast(151);
+    const admitted_identity: prepared_http.WorkIdentityV1 = .{
+        .sequence = 1,
+        .handle_sha256 = [_]u8{0xa1} ** 32,
+    };
+
+    var admitted = try ManagedLifecycleV1.initV1(51);
+    try admitted.markReadyV1();
+    var admitted_timer = try std.time.Timer.start();
+    const admitted_sequence =
+        try admitted.beginConnectionWithFullRequestTimeoutV1(
+            admitted_handle,
+            0,
+            timeout_ns,
+            admitted_timer,
+        );
+    admitted.active_connection.?.phase = .request_received;
+    admitted.active_connection.?.receive_retired = true;
+    waitForElapsedTimerForTestV1(
+        &admitted_timer,
+        timeout_ns,
+    );
+    try std.testing.expectEqual(
+        prepared_http.WorkDispositionV1.full_request_timeout,
+        try admitted.markRequestAdmittedV1(
+            51,
+            admitted_sequence,
+            admitted_handle,
+            admitted_identity,
+        ),
+    );
+    try admitted.recordWorkCancellationV1(
+        51,
+        admitted_sequence,
+        admitted_handle,
+        admitted_identity,
+        .{
+            .requested_cause = .full_request_timeout,
+            .winner = .full_request_timeout,
+            .outcome = .cancelled,
+            .cancellation_was_new = true,
+        },
+    );
+    try admitted.retireActiveConnectionWorkV1(
+        51,
+        admitted_sequence,
+        admitted_handle,
+        admitted_identity,
+    );
+    try std.testing.expect(
+        !try admitted.retireFullRequestTimeoutV1(
+            51,
+            admitted_sequence,
+            admitted_handle,
+        ),
+    );
+    try admitted.finishConnectionV1(
+        admitted_sequence,
+        admitted_handle,
+        false,
+    );
+    const admitted_snapshot = admitted.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        admitted_snapshot.full_request_timeout_signaled_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        admitted_snapshot.full_request_timeout_cancelled_work_connections,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_received,
+        admitted_snapshot.last_full_request_timeout_signaled_phase,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_admitted,
+        admitted_snapshot.last_full_request_timeout_cancelled_work_phase,
+    );
+
+    const ready_handle: std.net.Stream.Handle = @intCast(152);
+    var ready = try ManagedLifecycleV1.initV1(52);
+    try ready.markReadyV1();
+    var ready_timer = try std.time.Timer.start();
+    const ready_sequence =
+        try ready.beginConnectionWithFullRequestTimeoutV1(
+            ready_handle,
+            0,
+            timeout_ns,
+            ready_timer,
+        );
+    ready.active_connection.?.phase = .request_received;
+    ready.active_connection.?.receive_retired = true;
+    waitForElapsedTimerForTestV1(&ready_timer, timeout_ns);
+    try ready.markResponseReadyV1(
+        52,
+        ready_sequence,
+        ready_handle,
+    );
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteDispositionV1.cancelled,
+        try ready.checkResponseWriteV1(
+            52,
+            ready_sequence,
+            ready_handle,
+        ),
+    );
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteOutcomeV1.cancelled_before_write,
+        try ready.retireResponseV1(
+            52,
+            ready_sequence,
+            ready_handle,
+            .cancelled_before_write,
+            null,
+        ),
+    );
+    try ready.finishConnectionV1(
+        ready_sequence,
+        ready_handle,
+        false,
+    );
+    const ready_snapshot = ready.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        ready_snapshot.full_request_timeout_cancelled_response_connections,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.response_ready,
+        ready_snapshot.last_full_request_timeout_cancelled_response_phase,
+    );
+
+    const writing_handle: std.net.Stream.Handle = @intCast(153);
+    var writing = try ManagedLifecycleV1.initV1(53);
+    try writing.markReadyV1();
+    var writing_timer = try std.time.Timer.start();
+    const writing_timeout_ns =
+        100 * std.time.ns_per_ms;
+    const writing_sequence =
+        try writing.beginConnectionWithFullRequestTimeoutV1(
+            writing_handle,
+            0,
+            writing_timeout_ns,
+            writing_timer,
+        );
+    writing.active_connection.?.phase = .response_ready;
+    writing.active_connection.?.receive_retired = true;
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteDispositionV1.proceed,
+        try writing.markResponseWritingV1(
+            53,
+            writing_sequence,
+            writing_handle,
+        ),
+    );
+    waitForElapsedTimerForTestV1(
+        &writing_timer,
+        writing_timeout_ns,
+    );
+    try std.testing.expectEqual(
+        cancellable_writer.DispositionV1.cancelled,
+        try writing.observeResponseWriteStopV1(
+            53,
+            writing_sequence,
+            writing_handle,
+        ),
+    );
+    try writing.recordResponseWriteFailureV1(
+        53,
+        writing_sequence,
+        writing_handle,
+        .{ .cancelled = .{ .before_send = .{} } },
+    );
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteOutcomeV1.cancelled_during_write,
+        try writing.retireResponseV1(
+            53,
+            writing_sequence,
+            writing_handle,
+            .write_failed,
+            .cancelled,
+        ),
+    );
+    try writing.finishConnectionV1(
+        writing_sequence,
+        writing_handle,
+        false,
+    );
+    const writing_snapshot = writing.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        writing_snapshot.full_request_timeout_requested_response_write_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        writing_snapshot.full_request_timeout_cancelled_response_write_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        writing_snapshot.drain_cancelled_response_write_connections,
+    );
+
+    const completed_handle: std.net.Stream.Handle = @intCast(154);
+    var completed = try ManagedLifecycleV1.initV1(54);
+    try completed.markReadyV1();
+    const completed_timer = try std.time.Timer.start();
+    const completed_sequence =
+        try completed.beginConnectionWithFullRequestTimeoutV1(
+            completed_handle,
+            0,
+            maximum_full_request_timeout_ns,
+            completed_timer,
+        );
+    completed.active_connection.?.phase = .response_ready;
+    completed.active_connection.?.receive_retired = true;
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteDispositionV1.proceed,
+        try completed.markResponseWritingV1(
+            54,
+            completed_sequence,
+            completed_handle,
+        ),
+    );
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteOutcomeV1.write_completed,
+        try completed.retireResponseV1(
+            54,
+            completed_sequence,
+            completed_handle,
+            .write_completed,
+            null,
+        ),
+    );
+    try std.testing.expect(
+        try completed.retireFullRequestTimeoutV1(
+            54,
+            completed_sequence,
+            completed_handle,
+        ),
+    );
+    try completed.finishConnectionV1(
+        completed_sequence,
+        completed_handle,
+        true,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        completed.snapshotV1()
+            .full_request_timeout_signaled_connections,
     );
 }
 

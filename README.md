@@ -349,10 +349,11 @@ formats, and independent verifiers.
   child-process lifecycle now supports exact receive-side and admitted-work
   drain cancellation, an optional 1-millisecond-to-60-second monotonic receive
   deadline for partial headers and bodies, reset-detected cancellation between
-  drive quanta, and response-ready drain cancellation before the first write,
-  with separate outcome evidence. Non-loopback serving, authentication, TLS,
-  streaming, full-request timeout, orderly-FIN abandonment, slow or already
-  blocked response-write cancellation, peer delivery acknowledgement, durable
+  drive quanta, response-ready drain cancellation before the first write,
+  bounded interruptible response sends, and an optional full-request timeout
+  from accept through response retirement with phase-specific outcome evidence.
+  Non-loopback serving, authentication, TLS, streaming, orderly-FIN
+  abandonment, model-kernel preemption, peer delivery acknowledgement, durable
   restart, and performance evidence remain open.
 - **Tenant-scoped object resolution.** A least-authority grant admits only exact
   capsule objects under bounded scan, object, total-byte, and resolution limits.
