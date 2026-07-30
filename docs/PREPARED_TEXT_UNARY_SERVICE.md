@@ -656,16 +656,20 @@ performance. Retained-target compilation is not native Windows or FreeBSD
 serving proof, and native reset, response-write, deadline, queue, watchdog, and
 drain behavior on those systems remains unproven. The next serving slices are:
 
-1. run a separate native-load campaign reporting
+1. add exact cause-specific post-parse application-rejection observability for
+   service-capacity and Scheduler rejection through the existing unary HTTP
+   and managed-process roots, without a new artifact or compile root;
+2. later run a separate native-load campaign reporting
    accept/admission and queue delay, HTTP first-byte latency for this
    non-streaming unary profile, terminal-response latency, throughput, outcome
    mix, and cleanup under a declared machine/OS/backend/power/thermal
    envelope; do not label HTTP first byte as first-token latency or infer
    fairness, GPU performance, or native foreign-OS behavior;
-2. extend abandonment detection to orderly FIN with exact connection outcome
-   accounting;
-3. add forced process-death evidence independently of checkpoint-aware drain
+3. define body-complete half-close, cancellation, response, and outcome
+   ownership policy before extending orderly-FIN abandonment detection with
+   exact connection accounting;
+4. add forced process-death evidence independently of checkpoint-aware drain
    and durable restart;
-4. add committed-token streaming without exposing an unpublished token; and
-5. add authenticated authority, quota, and transport-security adapters around
+5. add committed-token streaming without exposing an unpublished token; and
+6. add authenticated authority, quota, and transport-security adapters around
    the unchanged execution state machine.

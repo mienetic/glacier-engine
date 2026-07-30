@@ -662,6 +662,7 @@ class VerificationPolicyTests(unittest.TestCase):
             "src/runtime.zig",
             "include/glacier.h",
             "build.zig",
+            "build.zig.zon",
             "cargo.lock",
             "cmakelists.txt",
         ):
@@ -669,8 +670,9 @@ class VerificationPolicyTests(unittest.TestCase):
                 plan = self.assert_targets([changed_path], policy.RETAINED_TARGETS)
                 self.assertTrue(plan.requires("native-full"))
                 self.assertTrue(plan.requires("python-full"))
-                if changed_path == "build.zig":
+                if changed_path in policy.ZIG_BUILD_GRAPH_CONTROL_PATHS:
                     self.assertTrue(plan.requires("metal-native"))
+                    self.assertTrue(plan.requires("build-graph-focused"))
                     self.assertFalse(plan.requires("workload-store-fault-posix"))
                 self.assertEqual(
                     tuple(
@@ -682,10 +684,12 @@ class VerificationPolicyTests(unittest.TestCase):
                     ),
                     plan.target_plans,
                 )
-                self.assertEqual(
-                    policy.HOST_QUICK_ROOTS,
-                    plan.decisions[0].host_roots,
+                expected_host_roots = (
+                    ()
+                    if changed_path in policy.ZIG_BUILD_GRAPH_CONTROL_PATHS
+                    else policy.HOST_QUICK_ROOTS
                 )
+                self.assertEqual(expected_host_roots, plan.decisions[0].host_roots)
 
     def test_audited_paths_select_focused_target_profiles(self):
         self.assertEqual(
@@ -2108,6 +2112,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 policy.RETAINED_TARGETS,
                 frozenset(
                     {
+                        "build-graph-focused",
                         "metal-native",
                         "native-full",
                         "python-full",
@@ -3197,6 +3202,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             '&& [ "${2:-}" = "host-runtime-compile" ]; then\n'
             "    exit 29\n"
             "fi\n"
+            'if [ -n "${VERIFY_INTEGRATION_FAIL_BUILD_GRAPH:-}" ] '
+            '&& [ "${1:-}" = "build" ] '
+            '&& [ "${2:-}" = "--help" ]; then\n'
+            "    exit 41\n"
+            "fi\n"
             'if [ -n "${VERIFY_INTEGRATION_FAIL_METAL_COMPILE:-}" ] '
             '&& [ "${1:-}" = "build" ] '
             '&& [ "${2:-}" = "native-metal-suite-compile" ]; then\n'
@@ -3560,7 +3570,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 calls,
             )
 
-    def test_affected_fast_defers_native_metal_for_build_control(self):
+    def test_affected_fast_evaluates_build_graph_without_runtime_compile(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             repository, merge_base, environment = self.make_repository(root)
@@ -3592,6 +3602,102 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
                 .read_text(encoding="ascii")
                 .splitlines()
+            )
+            self.assertFalse(
+                any("native-metal-suite" in line for line in calls),
+                calls,
+            )
+            graph_calls = [
+                line for line in calls if line.startswith("build --help ")
+            ]
+            self.assertEqual(1, len(graph_calls), calls)
+            self.assertIn("-Dmetal=false ", graph_calls[0])
+            self.assertIn("-Doptimize=Debug ", graph_calls[0])
+            self.assertFalse(
+                any(
+                    line.startswith(
+                        "build contract-interop-test package-module-test "
+                    )
+                    for line in calls
+                ),
+                calls,
+            )
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
+            )
+
+    def test_affected_fast_build_graph_failure_is_final(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            (repository / "build.zig").write_text(
+                "// invalid changed build graph\n",
+                encoding="ascii",
+            )
+            environment["VERIFY_INTEGRATION_FAIL_BUILD_GRAPH"] = "1"
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn(
+                "FAIL  build/graph-evaluation: exit 41",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertEqual(
+                1,
+                sum(line.startswith("build --help ") for line in calls),
+                calls,
+            )
+
+    def test_affected_build_graph_failure_stops_before_promotion_compile(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            (repository / "build.zig").write_text(
+                "// invalid changed build graph\n",
+                encoding="ascii",
+            )
+            environment["VERIFY_INTEGRATION_FAIL_BUILD_GRAPH"] = "1"
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn(
+                "FAIL  build/graph-evaluation: exit 41",
+                result.stdout,
+            )
+            self.assertIn(
+                "stopping before promotion work: "
+                "Zig build graph evaluation failed",
+                result.stdout,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            build_calls = [
+                line for line in calls if line.startswith("build ")
+            ]
+            self.assertEqual(1, len(build_calls), calls)
+            self.assertTrue(build_calls[0].startswith("build --help "), calls)
+            self.assertFalse(
+                any(" -Dtarget=" in line for line in calls),
+                calls,
             )
             self.assertFalse(
                 any("native-metal-suite" in line for line in calls),

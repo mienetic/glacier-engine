@@ -2338,11 +2338,14 @@ coverage, and fail-closed ownership cleanup. They add no concurrent model
 execution, load, latency, or throughput result. Retained-target compile closure
 is not native serving proof on Windows or FreeBSD; native reset,
 response-write, deadline, queue, watchdog, and drain behavior on those systems
-remains unproven. The next serving order is separate native-load evidence using
-HTTP first-byte and
-terminal-response latency for this non-streaming unary profile.
-Orderly-FIN abandonment remains a separate open boundary. The current evidence
-does not meet the full serving promotion gate.
+remains unproven. The next serving slice adds exact cause-specific post-parse
+observability for service-capacity and Scheduler rejection through the existing
+unary roots. Separate native-load evidence using HTTP first-byte and
+terminal-response latency for this non-streaming unary profile follows later.
+Orderly-FIN abandonment remains a separate open boundary and requires explicit
+body-complete half-close, cancellation, response, and outcome-ownership policy
+before implementation. The current evidence does not meet the full serving
+promotion gate.
 
 #### Public durable-runtime composition foundation
 

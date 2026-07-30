@@ -244,6 +244,12 @@ before the first stable release.
 
 ### Changed
 
+- An isolated `build.zig` or `build.zig.zon` change now makes
+  `affected-fast` evaluate the graph with `zig build --help` without compiling
+  runtime artifacts. Mixed changes retain the focused roots required by their
+  other paths. Complete manual and tagged promotion coverage remains selected,
+  and a failed graph evaluation now stops before host, Metal, workload, or
+  retained-target compilation begins.
 - Hosted affected and exhaustive verification now recovers at most once per
   run from an incomplete restored Zig archive cache. Only the exact adjacent
   `failed to parse archive: FileNotFound` diagnostic for

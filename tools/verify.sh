@@ -439,6 +439,16 @@ run_zig_build() {
         --prefix "$verification_prefix"
 }
 
+run_zig_build_graph() {
+    run_cached_zig_build --help \
+        -Doptimize="$zig_optimize" \
+        -Dmetal=false \
+        -j2 \
+        --cache-dir "$ZIG_LOCAL_CACHE_DIR" \
+        --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
+        --prefix "$verification_prefix"
+}
+
 # Keep the canonical generic roots first, then append each selected focused
 # root once so one Zig invocation owns the complete affected host DAG.
 run_selected_host_build() {
@@ -1385,6 +1395,23 @@ if [ "$affected_profile" -eq 1 ] &&
             --paths0 "$affected_paths_file"
     else
         record_skip "shell/changed-syntax" "requires a working python3 executable"
+    fi
+fi
+
+if [ "$affected_profile" -eq 1 ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "build-graph-focused"; then
+    if [ "$has_zig" -eq 1 ]; then
+        run_gate "build/graph-evaluation" run_zig_build_graph
+        if [ "$last_gate_status" -ne 0 ]; then
+            echo "stopping before promotion work: Zig build graph evaluation failed"
+            printf 'Summary: %s PASS, %s SKIP, %s FAIL\n' \
+                "$pass_count" "$skip_count" "$fail_count"
+            exit 1
+        fi
+    else
+        record_skip "build/graph-evaluation" \
+            "requires a working zig executable"
     fi
 fi
 

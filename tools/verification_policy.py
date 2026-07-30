@@ -143,6 +143,11 @@ BUILD_CONTROL_PATHS = {
     "makefile",
 }
 
+ZIG_BUILD_GRAPH_CONTROL_PATHS = {
+    "build.zig",
+    "build.zig.zon",
+}
+
 INTEROP_RUNTIME_FIXTURE_PATHS = {
     "examples/interop/fixtures/artifact_manifest_v1.hex",
     "examples/interop/fixtures/execution_plan_v1.hex",
@@ -1407,14 +1412,21 @@ def _decision_for_path(path: str) -> PathDecision:
 
     if lower in BUILD_CONTROL_PATHS:
         build_flags = {"native-full", "python-full"}
-        if lower in {"build.zig", "build.zig.zon"}:
-            build_flags.add("metal-native")
+        build_host_roots = HOST_QUICK_ROOTS
+        reason = "build or package control changed; validate every retained target"
+        if lower in ZIG_BUILD_GRAPH_CONTROL_PATHS:
+            build_flags.update({"build-graph-focused", "metal-native"})
+            build_host_roots = ()
+            reason = (
+                "Zig build graph changed; evaluate it without compiling "
+                "runtime artifacts before explicit promotion gates"
+            )
         return PathDecision(
             path,
-            "build or package control changed; validate every retained target",
+            reason,
             frozenset(build_flags),
             RETAINED_TARGETS,
-            host_roots=HOST_QUICK_ROOTS,
+            host_roots=build_host_roots,
         )
 
     if suffix in SHARED_CODE_SUFFIXES:
@@ -1622,6 +1634,7 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "runtime-support-inspector-python-test-focused",
             "python/runtime-support-inspector",
         ),
+        ("build-graph-focused", "build/graph-evaluation"),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),
         ("workload-store-fault-posix", "native/workload-store-fault"),
@@ -1719,6 +1732,7 @@ def print_report(plan: VerificationPlan) -> None:
             "runtime-support-inspector-python-test-focused",
             "python/runtime-support-inspector",
         ),
+        ("build-graph-focused", "build/graph-evaluation"),
         ("verification-policy-focused", "python/verification-policy"),
         ("workload-report-portable", "portable/workload-report"),
         ("workload-store-fault-posix", "native/workload-store-fault"),

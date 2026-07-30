@@ -24,6 +24,13 @@ when the complete path-aware matrix is needed, run
 `tools/verify.sh affected --base origin/main`; use `tools/verify.sh full` for
 the broad local ReleaseSafe and Python suites.
 
+For an isolated `build.zig` or `build.zig.zon` change, `affected-fast`
+evaluates the Zig build graph with `zig build --help` only; it does not compile
+a runtime artifact. A mixed change still runs any focused runtime roots
+selected by its other paths. Broad ReleaseSafe, Python, Metal, and
+retained-target gates remain explicit manual `affected`, `full`, `matrix`, or
+tagged-promotion work.
+
 The quick profile remains dependency-free. Use CPython 3.10–3.12 and install
 `bench/requirements-test.txt` in a clean environment before running `full`,
 `matrix`, or full unittest discovery.
@@ -93,7 +100,8 @@ label assumptions and questions clearly.
 ## Verification matrix
 
 The quick and full profiles remain stable contributor entry points. Quick and
-`affected-fast` use Debug compilation for the short feedback loop.
+the focused roots selected by `affected-fast` use Debug compilation for the
+short feedback loop.
 `affected-fast` is the iterative path-aware tier: it keeps focused high-risk
 gates but deliberately defers broad ReleaseSafe/Python suites and the retained
 cross-target plan. The `affected` profile switches to ReleaseSafe and adds
@@ -139,7 +147,7 @@ hides the checks required by another changed path.
 | Provider evidence inspector, independent oracle, or focused test | `affected-fast` runs the existing `provider-evidence-inspector-test` root once for Zig CLI or oracle changes. Complete affected verification cross-compiles only `provider-evidence-inspector-compile` for a Zig CLI change. A focused-test-only change runs that exact Python unittest module without a generic Zig build or full discovery |
 | CLI or retained read-only inspector | Native ReleaseSafe, Python discovery, and the host-tool profile on every retained target |
 | Shared root, unclassified Zig/C/C++/header, or other build input | Native ReleaseSafe, Python discovery, and the full production-install, benchmark-install, and test-compile roots on every retained target |
-| Zig build graph (`build.zig` or `build.zig.zon`) | Native ReleaseSafe, Python discovery, the hard native POSIX store-fault gate, the serialized native Darwin Metal suite, and the full production-install, benchmark-install, and test-compile roots on every retained target |
+| Zig build graph (`build.zig` or `build.zig.zon`) | For an isolated graph change, `affected-fast` evaluates it with `zig build --help` and compiles no runtime artifact; mixed paths retain their independently selected focused roots. Manual `affected`, `full`, `matrix`, and tagged promotion retain broad ReleaseSafe, Python, Metal, and complete retained-target coverage |
 | AArch64 NEON/CRC C kernel | Native ReleaseSafe with explicit Apple Silicon (`arm64`/`aarch64`) Darwin evidence, Python discovery, and the CPU plus downstream host-tool profiles on the retained AArch64 Linux target; Intel macOS and Rosetta report unavailable instead of reusing an unrelated x86_64 pass |
 | Linux-specific runtime | Native ReleaseSafe plus both retained Linux targets |
 | Windows-specific runtime | Native ReleaseSafe plus the retained Windows target |
@@ -239,6 +247,10 @@ newlines in a valid Git path do not change the selection. Both commands print
 every deduplicated path and its selection reason. `affected-fast` visibly marks
 the broad native suite, full Python discovery, and selected portability plan as
 `SKIP`; it does not convert those deferred gates into passing evidence.
+For an isolated `build.zig` or `build.zig.zon` change, its fast-tier Zig check
+is `zig build --help`; a mixed plan still compiles roots independently required
+by its other paths. Broad runtime artifacts remain reserved for the complete
+manual tiers and tagged promotion.
 `affected` executes the complete selected plan. A missing base, Git, Python, or
 required Zig toolchain is a failure rather than a silent pass.
 
@@ -267,8 +279,9 @@ Python work therefore do not start the generic contract/package Zig DAG.
 An audited interop fixture or C contract change selects only
 `contract-interop-test`; a package-module acceptance change selects only
 `package-module-test`. If both are selected, their canonical union still runs
-in one Zig invocation. Build controls and unclassified inputs retain both roots
-until a narrower mapping is audited.
+in one Zig invocation. Zig build-graph controls use the evaluation-only gate;
+other build controls and unclassified inputs retain both roots until a narrower
+mapping is audited.
 When one change set selects both a generic compiled path and a focused
 prepared-text path, the verifier places all required host roots in one
 `zig build` invocation so compile reduction cannot hide either side.
