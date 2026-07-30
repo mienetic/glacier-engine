@@ -406,7 +406,8 @@ const WorkAdmissionBarrierV1 = struct {
     retire_identity_mismatch: bool = false,
     cancellation: ?http_server.WorkCancellationReceiptV1 = null,
     cancellation_identity_mismatch: bool = false,
-    cancellation_reached: std.Thread.ResetEvent = .{},
+    checkpoint_failed: bool = false,
+    checkpoint_result_reached: std.Thread.ResetEvent = .{},
     retired_reached: std.Thread.ResetEvent = .{},
 
     fn admittedOpaque(
@@ -450,18 +451,18 @@ const WorkAdmissionBarrierV1 = struct {
             @ptrCast(@alignCast(context));
         const admitted_identity = self.identity orelse {
             self.cancellation_identity_mismatch = true;
-            self.cancellation_reached.set();
+            self.checkpoint_result_reached.set();
             return;
         };
         if (!std.meta.eql(admitted_identity, identity) or
             self.cancellation != null)
         {
             self.cancellation_identity_mismatch = true;
-            self.cancellation_reached.set();
+            self.checkpoint_result_reached.set();
             return;
         }
         self.cancellation = receipt;
-        self.cancellation_reached.set();
+        self.checkpoint_result_reached.set();
     }
 
     fn unobservedPeerResetOpaque(
@@ -474,6 +475,8 @@ const WorkAdmissionBarrierV1 = struct {
             return error.MissingWorkAdmission;
         if (!std.meta.eql(admitted_identity, identity))
             return error.WorkIdentityMismatch;
+        self.checkpoint_failed = true;
+        self.checkpoint_result_reached.set();
         return error.PeerResetPollTimedOut;
     }
 
@@ -710,7 +713,9 @@ fn runWorker(
         try emitCheckpoint("WORK_ADMITTED", generation);
         try expectControlLine(stdin, peer_reset_release_command);
         work_barrier.release.set();
-        work_barrier.cancellation_reached.wait();
+        work_barrier.checkpoint_result_reached.wait();
+        if (work_barrier.checkpoint_failed)
+            return error.PeerResetPollTimedOut;
         const cancellation = work_barrier.cancellation orelse
             return error.MissingPeerResetCancellation;
         if (work_barrier.cancellation_identity_mismatch or
@@ -2763,10 +2768,6 @@ fn exercisePhaseE(
                 "WORK_ADMITTED",
                 generation,
             );
-            // Keep one byte unread before the abortive close. Reset detection
-            // must inspect poll/SO_ERROR state instead of repeatedly peeking
-            // and being masked by this byte.
-            try peer.?.writeAll("x");
             try setAbortiveReset(peer.?);
             peer.?.close();
             peer = null;

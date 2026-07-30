@@ -1185,11 +1185,6 @@ const ManagedReceiveTimeoutV1 = struct {
 /// a trickling peer from turning the absolute deadline into an inactivity
 /// timeout. The serving thread remains the only socket reader and closer.
 const ManagedDeadlineReaderV1 = struct {
-    const PollObservationV1 = struct {
-        ready: bool,
-        socket_error: bool,
-    };
-
     interface: std.Io.Reader,
     stream: std.net.Stream,
     receive_timeout: *ManagedReceiveTimeoutV1,
@@ -1261,28 +1256,13 @@ const ManagedDeadlineReaderV1 = struct {
         handle: std.net.Stream.Handle,
         timeout_ms: i32,
     ) !bool {
-        return (try pollOnceV1(handle, timeout_ms)).ready;
-    }
-
-    fn pollOnceV1(
-        handle: std.net.Stream.Handle,
-        timeout_ms: i32,
-    ) !PollObservationV1 {
         if (builtin.os.tag == .windows) {
             var descriptors = [_]std.posix.pollfd{.{
                 .fd = handle,
                 .events = std.posix.POLL.IN,
                 .revents = 0,
             }};
-            const result = try std.posix.poll(
-                &descriptors,
-                timeout_ms,
-            );
-            return .{
-                .ready = result != 0,
-                .socket_error = (descriptors[0].revents &
-                    std.posix.POLL.ERR) != 0,
-            };
+            return try std.posix.poll(&descriptors, timeout_ms) != 0;
         }
 
         var descriptors = [_]std.c.pollfd{.{
@@ -1296,15 +1276,8 @@ const ManagedDeadlineReaderV1 = struct {
             timeout_ms,
         );
         return switch (std.posix.errno(result)) {
-            .SUCCESS => .{
-                .ready = result != 0,
-                .socket_error = (descriptors[0].revents &
-                    std.c.POLL.ERR) != 0,
-            },
-            .INTR => .{
-                .ready = false,
-                .socket_error = false,
-            },
+            .SUCCESS => result != 0,
+            .INTR => false,
             .NOMEM => error.SystemResources,
             else => error.PollFailed,
         };
@@ -1440,24 +1413,10 @@ fn peerResetDetectedV1(
     handle: std.net.Stream.Handle,
     timeout_ms: i32,
 ) !bool {
-    const observation =
-        try ManagedDeadlineReaderV1.pollOnceV1(
-            handle,
-            timeout_ms,
-        );
-    if (!observation.ready) return false;
-    // Error readiness and SO_ERROR are independent of queued readable bytes.
-    // Inspect them before PEEK so an unread pipelined byte cannot mask a
-    // later abortive peer close.
-    if (observation.socket_error) return true;
-    var socket_error: i32 = 0;
-    try std.posix.getsockopt(
+    if (!try ManagedDeadlineReaderV1.pollReadableOnceV1(
         handle,
-        std.posix.SOL.SOCKET,
-        std.posix.SO.ERROR,
-        std.mem.asBytes(&socket_error),
-    );
-    if (socket_error != 0) return true;
+        timeout_ms,
+    )) return false;
 
     var probe: [1]u8 = undefined;
     const count = std.posix.recv(
