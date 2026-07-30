@@ -252,9 +252,14 @@ EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = frozenset(
         "src/prepared_text_variable_terminal.zig",
         "bench/prepared_text_package.py",
         "bench/prepared_text_raw_input.py",
+        "bench/text_runtime_golden_path.py",
+    }
+)
+
+EXPECTED_PREPARED_TEXT_PACKAGE_PYTHON_FOCUSED_PATHS = frozenset(
+    {
         "bench/tests/test_prepared_text_package.py",
         "bench/tests/test_prepared_text_raw_input.py",
-        "bench/text_runtime_golden_path.py",
     }
 )
 
@@ -717,6 +722,10 @@ class VerificationPolicyTests(unittest.TestCase):
             policy.PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS,
         )
         self.assertEqual(
+            EXPECTED_PREPARED_TEXT_PACKAGE_PYTHON_FOCUSED_PATHS,
+            policy.PREPARED_TEXT_PACKAGE_PYTHON_FOCUSED_PATHS,
+        )
+        self.assertEqual(
             EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS,
             policy.PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS,
         )
@@ -859,7 +868,10 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
                 self.assertFalse(plan.requires("prepared-text-recovery-focused"))
         for changed_path in sorted(EXPECTED_PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS):
-            if changed_path in EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS:
+            if changed_path in (
+                EXPECTED_PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS
+                | EXPECTED_PREPARED_TEXT_PACKAGE_PYTHON_FOCUSED_PATHS
+            ):
                 continue
             with self.subTest(changed_path=changed_path):
                 expected_targets = (
@@ -901,11 +913,11 @@ class VerificationPolicyTests(unittest.TestCase):
                     expected_steps = (
                         "profile-cpu-compile",
                         "profile-durable-compile",
-                        "profile-host-tool-compile",
+                        "text-runtime-golden-path-compile",
                     )
                 else:
                     expected_steps = (
-                        ("profile-host-tool-compile",)
+                        ("text-runtime-golden-path-compile",)
                         if changed_path.endswith(".zig")
                         else policy.FULL_TARGET_STEPS
                     )
@@ -941,6 +953,33 @@ class VerificationPolicyTests(unittest.TestCase):
                         "native/prepared-text-unary-service",
                         policy._gate_names(plan.decisions[0]),
                     )
+        for changed_path in sorted(
+            EXPECTED_PREPARED_TEXT_PACKAGE_PYTHON_FOCUSED_PATHS
+        ):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_target_steps([changed_path], ())
+                self.assertEqual(
+                    frozenset(
+                        {
+                            "prepared-text-package-python-test-focused",
+                            "python-changed",
+                        }
+                    ),
+                    plan.flags,
+                )
+                self.assertEqual((), plan.decisions[0].host_roots)
+                self.assertFalse(
+                    plan.requires("prepared-text-package-text-run-focused")
+                )
+                self.assertFalse(plan.requires("python-full"))
+                self.assertIn(
+                    "python/prepared-text-package",
+                    policy._gate_names(plan.decisions[0]),
+                )
+                self.assertNotIn(
+                    "native/prepared-text-package-text-run",
+                    policy._gate_names(plan.decisions[0]),
+                )
         for changed_path in sorted(
             EXPECTED_PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS
         ):
@@ -1148,10 +1187,10 @@ class VerificationPolicyTests(unittest.TestCase):
             "src/prepared_text_session.zig": (
                 "profile-cpu-compile",
                 "profile-durable-compile",
-                "profile-host-tool-compile",
+                "text-runtime-golden-path-compile",
             ),
             "src/prepared_text_variable_terminal.zig": (
-                "profile-host-tool-compile",
+                "text-runtime-golden-path-compile",
             ),
         }
         for changed_path, expected_steps in cases.items():
@@ -2744,6 +2783,7 @@ class VerificationPolicyTests(unittest.TestCase):
                     (
                         "profile-core-compile",
                         "profile-cpu-compile",
+                        "text-runtime-golden-path-compile",
                     ),
                 ),
             )
@@ -2752,6 +2792,8 @@ class VerificationPolicyTests(unittest.TestCase):
                 [
                     policy.RETAINED_TARGETS[0] + " profile-core-compile",
                     policy.RETAINED_TARGETS[0] + " profile-cpu-compile",
+                    policy.RETAINED_TARGETS[0]
+                    + " text-runtime-golden-path-compile",
                 ],
                 target_steps.read_text(encoding="ascii").splitlines(),
             )
@@ -4943,9 +4985,6 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "",
                 encoding="ascii",
             )
-            (
-                repository / "bench" / "tests" / "test_prepared_text_raw_input.py"
-            ).write_text("", encoding="ascii")
             (repository / "bench" / "text_runtime_golden_path.py").write_text(
                 "",
                 encoding="ascii",
@@ -5002,6 +5041,129 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 ),
                 calls,
             )
+
+    def test_affected_fast_package_python_tests_run_without_zig_build(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            raw_marker = root / "raw-input.marker"
+            package_marker = root / "package.marker"
+            environment["VERIFY_RAW_INPUT_MARKER"] = str(raw_marker)
+            environment["VERIFY_PACKAGE_MARKER"] = str(package_marker)
+
+            (
+                repository / "bench" / "tests" / "test_prepared_text_raw_input.py"
+            ).write_text(
+                "import os\n"
+                "from pathlib import Path\n"
+                "import unittest\n"
+                "class RawInputTests(unittest.TestCase):\n"
+                "    def test_exact_module(self):\n"
+                "        Path(os.environ['VERIFY_RAW_INPUT_MARKER']).write_text(\n"
+                "            'raw-input', encoding='ascii')\n",
+                encoding="ascii",
+            )
+            (
+                repository / "bench" / "tests" / "test_prepared_text_package.py"
+            ).write_text(
+                "import os\n"
+                "from pathlib import Path\n"
+                "import unittest\n"
+                "class PackageTests(unittest.TestCase):\n"
+                "    def test_exact_module(self):\n"
+                "        Path(os.environ['VERIFY_PACKAGE_MARKER']).write_text(\n"
+                "            'package', encoding='ascii')\n",
+                encoding="ascii",
+            )
+            (repository / "bench" / "tests" / "test_unrelated.py").write_text(
+                "import unittest\n"
+                "class UnrelatedTests(unittest.TestCase):\n"
+                "    def test_not_discovered(self):\n"
+                "        self.fail('full discovery must remain deferred')\n",
+                encoding="ascii",
+            )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn(
+                "PASS  python/prepared-text-package:",
+                result.stdout,
+            )
+            self.assertNotIn(
+                "native/prepared-text-package-text-run",
+                result.stdout,
+            )
+            self.assertEqual(
+                "raw-input",
+                raw_marker.read_text(encoding="ascii"),
+            )
+            self.assertEqual(
+                "package",
+                package_marker.read_text(encoding="ascii"),
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertFalse(
+                any(line.startswith("build ") for line in calls),
+                calls,
+            )
+
+    def test_affected_package_text_cross_compiles_only_cli_root(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            cli = repository / "src" / "cli"
+            cli.mkdir()
+            (cli / "text_run.zig").write_text("", encoding="ascii")
+
+            result = self.run_verify(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            target_calls = [
+                line for line in calls if " -Dtarget=" in line
+            ]
+            self.assertEqual(
+                len(policy.RETAINED_TARGETS),
+                len(target_calls),
+                target_calls,
+            )
+            for call in target_calls:
+                self.assertTrue(
+                    call.startswith(
+                        "build text-runtime-golden-path-compile "
+                    ),
+                    target_calls,
+                )
+                self.assertNotIn("profile-host-tool-compile", call)
+                self.assertNotIn("profile-cpu-compile", call)
+                self.assertNotIn("profile-durable-compile", call)
 
     def test_affected_fast_mixed_host_roots_share_one_zig_invocation(self):
         with tempfile.TemporaryDirectory() as temporary_directory:

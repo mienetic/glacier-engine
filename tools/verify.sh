@@ -577,7 +577,7 @@ run_target_plan() {
                 ;;
         esac
         case "$selected_step" in
-            install | install-benchmarks | test-compile | unary-text-service-compile | unary-http-compile | unary-server-process-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | profile-host-tool-compile | dense-tensor-family-compile | runtime-support-inspector-compile | provider-evidence-inspector-compile | profile-complete-compile) ;;
+            install | install-benchmarks | test-compile | unary-text-service-compile | unary-http-compile | unary-server-process-compile | profile-core-compile | profile-cpu-compile | profile-durable-compile | profile-device-compile | text-runtime-golden-path-compile | profile-host-tool-compile | dense-tensor-family-compile | runtime-support-inspector-compile | provider-evidence-inspector-compile | profile-complete-compile) ;;
             *)
                 record_fail "verifier/target-steps" \
                     "policy emitted an unknown target step: $selected_step"
@@ -621,10 +621,11 @@ run_target_plan() {
                 profile-cpu-compile) profile_rank=5 ;;
                 profile-durable-compile) profile_rank=6 ;;
                 profile-device-compile) profile_rank=7 ;;
-                profile-host-tool-compile) profile_rank=8 ;;
-                dense-tensor-family-compile) profile_rank=9 ;;
-                runtime-support-inspector-compile) profile_rank=10 ;;
-                provider-evidence-inspector-compile) profile_rank=11 ;;
+                text-runtime-golden-path-compile) profile_rank=8 ;;
+                profile-host-tool-compile) profile_rank=9 ;;
+                dense-tensor-family-compile) profile_rank=10 ;;
+                runtime-support-inspector-compile) profile_rank=11 ;;
+                provider-evidence-inspector-compile) profile_rank=12 ;;
                 install | install-benchmarks | test-compile | profile-complete-compile) profile_rank=0 ;;
                 *) selected_steps_valid=0 ;;
             esac
@@ -759,6 +760,7 @@ prepared_text_delivery_requested=0
 prepared_text_direct_terminal_smoke_requested=0
 prepared_text_inspector_requested=0
 prepared_text_package_text_run_requested=0
+prepared_text_package_python_test_requested=0
 prepared_text_recovery_requested=0
 provider_evidence_inspector_requested=0
 provider_evidence_inspector_python_test_requested=0
@@ -787,6 +789,10 @@ if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-package-text-run-focused"; then
     prepared_text_package_text_run_requested=1
     prepared_text_focused_requested=1
+fi
+if [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "prepared-text-package-python-test-focused"; then
+    prepared_text_package_python_test_requested=1
 fi
 if [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "prepared-text-delivery-focused"; then
@@ -1502,6 +1508,25 @@ elif [ "$profile" = "affected-fast" ]; then
         "affected-fast defers full discovery; run affected with the same base"
 else
     record_skip "python/full-suite" "not selected by the affected policy"
+fi
+
+if [ "$affected_plan_ready" -eq 1 ] &&
+    [ "$prepared_text_package_python_test_requested" -eq 1 ]; then
+    if [ "$python_full_status" = "0" ]; then
+        record_pass "python/prepared-text-package" \
+            "covered by full Python discovery"
+    elif [ "$run_python_full" -eq 0 ] && [ "$has_python" -eq 1 ]; then
+        run_gate "python/prepared-text-package" \
+            python3 -m unittest \
+            bench.tests.test_prepared_text_raw_input \
+            bench.tests.test_prepared_text_package
+    elif [ "$run_python_full" -eq 0 ]; then
+        record_skip "python/prepared-text-package" \
+            "requires a working python3 executable"
+    else
+        record_skip "python/prepared-text-package" \
+            "covering full Python discovery did not pass"
+    fi
 fi
 
 if [ "$affected_plan_ready" -eq 1 ] &&

@@ -457,6 +457,13 @@ retained tests and independent review.
   one invocation. The native Metal compile frontier now follows only its
   explicit suite-consumer inventory, leaving eleven unrelated artifacts to
   their deliberate profile gates.
+- [x] Narrow ordinary package/text verification to the dependency it actually
+  owns. Zig changes reuse the installed golden-path DAG on the host and
+  cross-compile only its existing CLI artifact. Independent package/raw-input
+  oracle changes retain the CLI-backed comparison; test-only changes run their
+  two exact unittest modules without starting a Zig build.
+  Prepared-session changes retain their CPU and durable consumers while
+  replacing the broad host-tool leg with that CLI-only compile root.
 - [x] Read-only provider evidence outer-envelope inspector with deterministic
   JSON, independent oracle coverage, explicit self-asserted nested fields, and
   no payload, credential, composition, or authority claim.

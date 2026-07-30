@@ -130,8 +130,10 @@ hides the checks required by another changed path.
 | Bounded unary prepared-text service kernel or its focused acceptance root | A focused acceptance-only change runs `unary-text-service-test` alone. A kernel implementation change selects the service, HTTP, and managed-process roots in one host Zig invocation. Complete affected verification selects the corresponding compile-only companions on each retained target without pulling the broad model-forward suite |
 | Bounded unary HTTP contract, client, or focused acceptance root | `affected-fast` runs `unary-http-test` once; complete affected verification selects only `unary-http-compile` on retained targets |
 | Managed unary server adapter/API or process acceptance root | A shared server implementation change selects `unary-http-test` and `unary-server-process-test` without the service-only root; a process-fixture-only change selects `unary-server-process-test` alone. Complete affected verification selects only the corresponding compile companions; foreign compilation is not native serving evidence |
-| Ordinary model package producer, strict tensor-profile admission module, package-aware `text-run`, its explicit POSIX supervisor protocol/death controller, process-local variable-terminal module, bounded-input helper, or focused package/raw-input oracle | `affected-fast` reuses the existing installed-CLI `text-runtime-golden-path-test` host DAG once; supervisor/death cases add no executable or compile root, and the complete affected tier adds the selected retained host-tool compile profiles |
-| Prepared-text session lifecycle | `affected-fast` runs the unary acceptance root and text-runtime golden path in one Zig invocation; the complete affected tier adds only the CPU, durable, and host-tool compile profiles instead of the complete consumer closure |
+| Ordinary model package producer, strict tensor-profile admission module, package-aware `text-run`, its explicit POSIX supervisor protocol/death controller, process-local variable-terminal module, or bounded-input helper | `affected-fast` reuses the existing installed-CLI `text-runtime-golden-path-test` host DAG once; supervisor/death cases add no executable or compile root, and the complete affected tier cross-compiles only the existing CLI artifact through `text-runtime-golden-path-compile` |
+| Package/raw-input Python oracle implementation | Changed-file syntax plus the CLI-backed `text-runtime-golden-path-test`, which checks the independent oracle against executable output in one host DAG; no foreign target |
+| Package/raw-input Python test only | Changed-file syntax plus exactly `bench.tests.test_prepared_text_raw_input` and `bench.tests.test_prepared_text_package`; no Zig build, generic host DAG, full Python discovery, or foreign target |
+| Prepared-text session lifecycle | `affected-fast` runs the unary acceptance root and text-runtime golden path in one Zig invocation; the complete affected tier adds only the CPU, durable, and CLI-only text-runtime compile profiles instead of the complete consumer closure |
 | Prepared-text committed-output inspector or oracle | `affected-fast` runs the inspector and package-module roots in one host DAG; the complete affected tier adds broad host and selected portability coverage |
 | Prepared-text durable writer, runtime, or process-death campaign | `affected-fast` runs the recovery and package-module roots in one host DAG; when inspector paths change in the same worktree, all selected roots share that invocation |
 | Provider evidence inspector, independent oracle, or focused test | `affected-fast` runs the existing `provider-evidence-inspector-test` root once for Zig CLI or oracle changes. Complete affected verification cross-compiles only `provider-evidence-inspector-compile` for a Zig CLI change. A focused-test-only change runs that exact Python unittest module without a generic Zig build or full discovery |
@@ -298,7 +300,12 @@ executes `bin/glacier` from the selected prefix. Its compile-only companion
 still depends directly on the CLI artifact, so retained cross-target compile
 profiles do not stage another binary. The installed-shape run uses an empty
 working directory and isolated ambient state without introducing another Zig
-compile root.
+compile root. Ordinary package/raw-input Zig changes select that CLI-only
+compile companion instead of the broader host-tool profile. Changes to either
+independent package/raw-input Python oracle retain the CLI-backed golden path
+because it verifies their relationship with executable output. Changes limited
+to either exact Python test run the two matching unittest modules without
+starting a Zig build.
 
 Provider evidence inspector routing is similarly bounded. Inspector and
 independent-oracle changes select the existing

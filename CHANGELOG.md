@@ -167,6 +167,16 @@ before the first stable release.
 
 ### Changed
 
+- Ordinary package/text verification now compiles only the dependency it owns.
+  Host execution still reuses `text-runtime-golden-path-test`, while complete
+  affected verification selects its existing CLI-only
+  `text-runtime-golden-path-compile` frontier instead of the CLI plus five
+  unrelated inspector roots. Prepared-session changes retain the CPU and
+  durable frontiers. Package/raw-input Python oracle changes retain their
+  executable comparison; changes limited to either exact test run only the two
+  matching unittest modules and start no Zig build. Pull requests and `main`
+  remain on the bounded `affected-fast` tier; broad ReleaseSafe, foreign-target,
+  and native accelerator work remains an explicit promotion action.
 - Dense-tensor focused verification now uses one Zig test artifact behind
   `dense-tensor-family-test`, one production-only
   `dense-tensor-family-compile` frontier, and one shared demo artifact.

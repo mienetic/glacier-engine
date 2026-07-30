@@ -47,6 +47,7 @@ FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
     "profile-cpu-compile",
     "profile-durable-compile",
     "profile-device-compile",
+    "text-runtime-golden-path-compile",
     "profile-host-tool-compile",
     "dense-tensor-family-compile",
     "runtime-support-inspector-compile",
@@ -344,9 +345,12 @@ PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS = {
     "src/prepared_text_variable_terminal.zig",
     "bench/prepared_text_package.py",
     "bench/prepared_text_raw_input.py",
+    "bench/text_runtime_golden_path.py",
+}
+
+PREPARED_TEXT_PACKAGE_PYTHON_FOCUSED_PATHS = {
     "bench/tests/test_prepared_text_package.py",
     "bench/tests/test_prepared_text_raw_input.py",
-    "bench/text_runtime_golden_path.py",
 }
 
 PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS = {
@@ -1128,11 +1132,11 @@ def _decision_for_path(path: str) -> PathDecision:
             package_text_steps = (
                 "profile-cpu-compile",
                 "profile-durable-compile",
-                "profile-host-tool-compile",
+                "text-runtime-golden-path-compile",
             )
         else:
             package_text_steps = (
-                ("profile-host-tool-compile",)
+                ("text-runtime-golden-path-compile",)
                 if suffix == ".zig"
                 else FULL_TARGET_STEPS
             )
@@ -1142,6 +1146,19 @@ def _decision_for_path(path: str) -> PathDecision:
             frozenset(package_text_flags),
             package_text_targets,
             package_text_steps,
+        )
+
+    if lower in PREPARED_TEXT_PACKAGE_PYTHON_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "prepared-text package or raw-input exact Python test changed",
+            frozenset(
+                {
+                    "prepared-text-package-python-test-focused",
+                    "python-changed",
+                }
+            ),
+            (),
         )
 
     if lower in PREPARED_TEXT_UNARY_SERVICE_FOCUSED_PATHS:
@@ -1566,6 +1583,10 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "prepared-text-package-text-run-focused",
             "native/prepared-text-package-text-run",
         ),
+        (
+            "prepared-text-package-python-test-focused",
+            "python/prepared-text-package",
+        ),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         (
             "provider-evidence-inspector-focused",
@@ -1658,6 +1679,10 @@ def print_report(plan: VerificationPlan) -> None:
         (
             "prepared-text-package-text-run-focused",
             "native/prepared-text-package-text-run",
+        ),
+        (
+            "prepared-text-package-python-test-focused",
+            "python/prepared-text-package",
         ),
         ("prepared-text-recovery-focused", "native/prepared-text-recovery"),
         (

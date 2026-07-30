@@ -1170,8 +1170,12 @@ just their matching host root; mixed changes still share one invocation.
 Focused prepared-text gates remain selected when relevant, and broad host,
 Python, and foreign-target work is reported as explicitly deferred. Package
 producer, package-aware `text-run`, bounded-input, and
-package/raw-input-oracle changes reuse the existing
-`text-runtime-golden-path-test` DAG. Bounded unary-service
+variable-terminal Zig changes reuse the existing
+`text-runtime-golden-path-test` DAG. Package/raw-input Python oracle changes
+retain that CLI-backed comparison. Changes limited to either exact Python test
+run only the two matching unittest modules and start no Zig build.
+Complete affected verification cross-compiles those Zig paths through the
+existing CLI-only `text-runtime-golden-path-compile` root. Bounded unary-service
 changes run only `unary-text-service-test`; retained-target verification uses
 its compile-only companion instead of the broad model-forward suite. Unary HTTP
 contract, client, and focused acceptance changes run `unary-http-test` once;
@@ -1211,9 +1215,9 @@ main-runtime change. Device diagnostics already owned by `test-compile`
 remain in the main closure.
 Variable-terminal changes use the text-runtime host DAG, and prepared-session
 lifecycle changes run the unary acceptance root in that same invocation, then
-select only the CPU, durable, and host-tool portability profiles when the
-complete affected tier is requested. In a clean environment, install the
-hash-locked binary dependency before selecting the full profile:
+select only the CPU, durable, and CLI-only text-runtime portability profiles
+when the complete affected tier is requested. In a clean environment, install
+the hash-locked binary dependency before selecting the full profile:
 
 ```sh
 python3 -m pip install --only-binary=:all: --require-hashes \
