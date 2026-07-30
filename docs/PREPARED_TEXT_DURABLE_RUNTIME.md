@@ -193,6 +193,16 @@ execution, and requires an `already_terminal` retry to leave the directory
 byte-identical. Counts `2`, `4`, and `64` cover capacities `1`, `3`, and `63`
 without adding another executable compile root.
 
+For a trusted local POSIX parent, the acknowledged route also accepts paired
+experimental progress/control descriptors. It publishes fixed 64-byte
+challenge-bound frames only from an already bootstrapped source-live
+selection: ready before mutation, source-advanced after verified retirement,
+and one target-advanced frame after every verified target retirement. The
+matching control frame is the only continue grant; there is no internal crash
+action. The direct, process-local, and bootstrap-only routes reject this
+surface. See
+[Experimental Durable CLI Supervisor Protocol](EXPERIMENTAL_DURABLE_SUPERVISOR.md).
+
 `checked_committed_output=true` means the selected wire, predecessor, contract,
 archive, and receipt lineage reconciled. It is not an independent model-quality
 or general numerical oracle. Without `--reveal-output`, the token payload is
@@ -237,6 +247,16 @@ state, selector, set, and read-only view roots. Every case finishes with a
 fresh zero-step audit and an exact checkpoint-only namespace check. The
 selector-rename case is host-process-death evidence, not power-loss evidence.
 
+The installed package-aware golden path separately retains an acknowledged
+`N=4` campaign through the staged `bin/glacier`. One supervised all-grants run
+must match the uninterrupted terminal oracle. Two further children receive
+real PID-only `SIGKILL` after the verified source transition and after target
+ordinal one. The controller requires exact signal exit, progress EOF, no
+terminal JSON, fresh unsupervised convergence to the independently decoded
+namespace and output lineage, no duplicate acknowledgement or suffix, and an
+immutable terminal retry. These cases reuse `text-runtime-golden-path-test` and
+add no executable or compile root.
+
 Run the deterministic delivery gate with:
 
 ```sh
@@ -256,8 +276,8 @@ compilation.
 
 This foundation does not yet provide:
 
-- an installed clean-host or package-aware production-command process-death
-  campaign;
+- a truly clean-host or native multi-OS campaign beyond the isolated same-host
+  installed-command fixture;
 - an exhaustive direct-terminal I/O-fault, storage-fault, or power-loss matrix;
 - unary or streaming serving integration over the durable command;
 - a stable public ABI or cross-language session binding;
@@ -277,5 +297,6 @@ evidence, not a model-quality, platform-support, or performance claim.
 - [Acknowledged Prepared-Text Delivery](PREPARED_TEXT_ACKNOWLEDGED_DELIVERY.md)
 - [Durable Prepared-Text Handoff](PREPARED_TEXT_DURABLE_HANDOFF.md)
 - [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md)
+- [Experimental Durable CLI Supervisor Protocol](EXPERIMENTAL_DURABLE_SUPERVISOR.md)
 - [Verified Raw-Text Runtime Path](PREPARED_TEXT_RAW_INPUT.md)
 - [AI Runtime Roadmap](AI_RUNTIME_ROADMAP.md)

@@ -8,6 +8,17 @@ before the first stable release.
 
 ### Added
 
+- The installed package-aware acknowledged durable `text-run` route now has an
+  explicit experimental POSIX supervisor protocol. A trusted parent passes
+  paired progress/control descriptors, grants each fixed 64-byte
+  challenge-bound checkpoint, or sends real `SIGKILL` to the exact child.
+  The existing compile-once golden root retains an all-grants `N=4` control,
+  source-advanced and first-target-advanced deaths, fresh exact continuation,
+  independent lineage/output verification, and immutable terminal retry. The
+  direct and bootstrap-only routes reject the descriptors. This is same-host
+  synthetic CPU recovery evidence, not remote orchestration, authentication,
+  hostile-writer, physical power-loss, Windows, GPU, quality, or performance
+  evidence.
 - An experimental bounded, transport-neutral prepared-text unary service now
   composes one package-bound model with a dedicated Scheduler/Bank pair,
   caller-sized active and retained-record storage, exact idempotency,
@@ -131,10 +142,12 @@ before the first stable release.
   Ordinary package-producer, package-aware `text-run`, bounded-input, and
   package/raw-input-oracle changes reuse the existing focused
   `text-runtime-golden-path-test` DAG.
+  CLI-only `text-run` changes no longer add the unrelated unary-service
+  acceptance root; shared prepared-text session changes still select both.
   Bounded unary-service changes use a dedicated tiny-package acceptance root
   and compile-only retained-target companion instead of the broad
-  model-forward suite. Package-aware CLI and prepared-session changes run that
-  root together with the text-runtime golden path in one host Zig invocation.
+  model-forward suite. Shared prepared-session changes run that root together
+  with the text-runtime golden path in one host Zig invocation.
   Unary HTTP contract, client, and focused acceptance changes run
   `unary-http-test` once under `affected-fast`; complete affected verification
   selects `unary-http-compile` on retained targets. Unary-kernel implementation

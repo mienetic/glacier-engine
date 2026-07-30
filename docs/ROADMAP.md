@@ -159,6 +159,13 @@ Next slices:
 - [ ] Retain a clean-host fixture campaign covering success, malformed input,
   unsupported model/tokenizer, capacity rejection, cancellation, source death,
   target death, and exact resume.
+  - [x] Retain the installed same-host acknowledged `N=4` source/target-death
+    slice. An explicit paired POSIX supervisor protocol grants fixed
+    challenge-bound checkpoints or lets the parent send real `SIGKILL` after
+    verified source advance and target ordinal one. Fresh unsupervised
+    processes must reach the uninterrupted namespace/output oracle without a
+    duplicate acknowledgement or suffix, and terminal retry must not mutate
+    state. This reuses `text-runtime-golden-path-test` and adds no compile root.
 
 The existing 49-boundary development campaign now retains and independently
 revalidates one supported ordinary-profile V2 bundle through recovery. The
@@ -167,10 +174,10 @@ against the loaded prepared image before execution. This strengthens the
 fixture semantics but does not complete the clean-host item. A separate
 same-host golden path now covers the installed command plus producer
 preflight, ordinary execution, durable continuation/retry, and its retained
-malformed/unsupported-input cases. The combined evidence still uses synthetic
+malformed/unsupported-input cases, plus acknowledged source/first-target
+command death and exact resume. The combined evidence still uses synthetic
 weights and does not cover service capacity rejection, external cancellation,
-installed-command source/target death, native multi-OS execution, or physical
-power loss.
+a truly clean host, native multi-OS execution, or physical power loss.
 
 Development verification for the producer, package-aware command,
 variable-terminal lifecycle, bounded input helper, and independent package

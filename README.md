@@ -298,6 +298,14 @@ formats, and independent verifiers.
   process-death boundaries. Its sink-free direct-terminal entry points also
   drive a separate four-boundary real-process-death smoke with fresh recovery
   and a zero-step audit.
+- **Installed durable supervisor checkpoints.** The package-aware acknowledged
+  command accepts explicit paired POSIX progress/control descriptors from a
+  trusted local parent. Fixed challenge-bound frames expose ready,
+  source-advanced, and per-target-advanced boundaries without an internal crash
+  action. The installed `N=4` golden path grants a clean control, sends real
+  `SIGKILL` after source advance and first target advance, then requires exact
+  fresh-process resume and immutable terminal retry. See
+  [Experimental Durable CLI Supervisor Protocol](docs/EXPERIMENTAL_DURABLE_SUPERVISOR.md).
 - **Read-only committed-output inspection.** The experimental R1k-b3 inspector
   and public filesystem API join one selected prepared-text checkpoint to its
   selected durable sink without taking either writer lease. They accept only
@@ -1510,12 +1518,17 @@ The same focused `text-runtime-golden-path-test` compile root also checks the
 direct count-one route plus acknowledged counts `2`, `4`, and `64`: capacities
 `1`, `3`, and `63`, a count-four fresh-process continuation, independent full
 checkpoint/sink lineage decoding, equality with ordinary output, and an
-immutable terminal retry. The gate executes the production CLI staged under
+immutable terminal retry. The same staged `N=4` command is also supervised
+through explicit paired POSIX descriptors: an all-grants control reaches the
+uninterrupted oracle, while real child-only `SIGKILL` after source advance and
+first target advance requires exact fresh-process convergence with no duplicate
+acknowledgement or suffix. The gate executes the production CLI staged under
 the selected install prefix, not the compiler-cache executable. Its children
 run from an empty directory with isolated home/config/cache locations and a
 minimal environment; the installed binary and its `bin/` namespace must remain
-byte-identical. This is an installed-shape, same-host synthetic fixture, not
-native multi-OS or production-model evidence.
+byte-identical. This is installed-shape, same-host synthetic evidence, not
+native multi-OS, physical power-loss, GPU, performance, or production-model
+evidence.
 The public experimental package producer now covers one Safetensors/INT4/
 `utf8-byte-v1`/CPU profile. The checked package CLI covers fixed durable counts
 `1..64` and an additive process-local bounded early-EOS profile. Durable early
@@ -1607,6 +1620,7 @@ valuable as new features.
 - [Durable runtime-image publication](docs/RUNTIME_IMAGE_DURABLE_PUBLICATION.md)
 - [Verified raw-text runtime path](docs/PREPARED_TEXT_RAW_INPUT.md)
 - [Prepared text session](docs/PREPARED_TEXT_SESSION.md)
+- [Experimental durable CLI supervisor protocol](docs/EXPERIMENTAL_DURABLE_SUPERVISOR.md)
 - [Bounded prepared-text unary service](docs/PREPARED_TEXT_UNARY_SERVICE.md)
 - [Prepared text checkpoint](docs/PREPARED_TEXT_CHECKPOINT.md)
 - [Prepared text successor evidence](docs/PREPARED_TEXT_SUCCESSOR.md)

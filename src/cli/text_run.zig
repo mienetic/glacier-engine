@@ -8,6 +8,7 @@
 //! zero.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const engine = @import("engine");
 const bounded_input = engine.bounded_file_input;
 const variable_terminal = engine.prepared_text_variable_terminal;
@@ -37,6 +38,17 @@ const durable_target_primary_keys_domain =
     "glacier-prepared-text-durable-cli-target-primary-keys-v1\x00";
 const durable_target_secondary_keys_domain =
     "glacier-prepared-text-durable-cli-target-secondary-keys-v1\x00";
+const durable_supervisor_progress_magic = "GLDSPV1\x00";
+const durable_supervisor_control_magic = "GLDSCV1\x00";
+const durable_supervisor_progress_abi: u64 =
+    0x474c_4453_0000_0001;
+const durable_supervisor_control_abi: u64 =
+    0x474c_4453_4300_0001;
+const durable_supervisor_frame_bytes: usize = 64;
+const durable_supervisor_available_v1 = switch (builtin.os.tag) {
+    .linux, .macos, .freebsd => true,
+    else => false,
+};
 const request_epoch: u64 = 0x5231_4b42_0000_0001;
 const bank_epoch: u64 = 0x5231_4b42_0000_0002;
 const scheduler_epoch: u64 = 0x5231_4b42_0000_0003;
@@ -64,6 +76,167 @@ const DurableSelectionV1 = enum {
 const DurableSelectionFactsV1 = struct {
     kind: DurableSelectionV1,
     selector: ?engine.core.continuation_checkpoint_file.DecodedSelectorV1,
+};
+
+const DurableSupervisorDescriptorsV1 = struct {
+    progress_fd: u32,
+    control_fd: u32,
+};
+
+const DurableSupervisorPhaseV1 = enum(u8) {
+    ready = 1,
+    source_advanced = 2,
+    target_advanced = 3,
+};
+
+const DurableSupervisorV1 = struct {
+    progress: std.fs.File,
+    control: std.fs.File,
+    process_id: u32,
+
+    fn init(
+        descriptors: DurableSupervisorDescriptorsV1,
+    ) !DurableSupervisorV1 {
+        if (comptime durable_supervisor_available_v1) {
+            const progress_handle: std.posix.fd_t =
+                @intCast(descriptors.progress_fd);
+            const control_handle: std.posix.fd_t =
+                @intCast(descriptors.control_fd);
+            errdefer closeDurableSupervisorDescriptorV1(
+                progress_handle,
+            );
+            errdefer closeDurableSupervisorDescriptorV1(
+                control_handle,
+            );
+            try setDurableSupervisorCloseOnExecV1(progress_handle);
+            try setDurableSupervisorCloseOnExecV1(control_handle);
+            const progress_stat =
+                try validateDurableSupervisorEndpointV1(
+                    progress_handle,
+                    .WRONLY,
+                );
+            const control_stat =
+                try validateDurableSupervisorEndpointV1(
+                    control_handle,
+                    .RDONLY,
+                );
+            if (progress_stat.dev == control_stat.dev and
+                progress_stat.ino == control_stat.ino)
+                return error.InvalidDurableSupervisorDescriptor;
+            const raw_process_id = std.c.getpid();
+            if (raw_process_id <= 0)
+                return error.InvalidDurableSupervisorProcess;
+            return .{
+                .progress = .{
+                    .handle = progress_handle,
+                },
+                .control = .{
+                    .handle = control_handle,
+                },
+                .process_id = @intCast(raw_process_id),
+            };
+        } else {
+            return error.UnsupportedPlatform;
+        }
+    }
+
+    fn deinit(self: *DurableSupervisorV1) void {
+        self.progress.close();
+        self.control.close();
+        self.* = undefined;
+    }
+
+    fn checkpoint(
+        self: *DurableSupervisorV1,
+        phase: DurableSupervisorPhaseV1,
+        selection: DurableSelectionV1,
+        ordinal: usize,
+        target_ordinal_limit: usize,
+        identity: DurableIdentityV1,
+    ) !void {
+        try validateDurableSupervisorCheckpointV1(
+            phase,
+            selection,
+            ordinal,
+            target_ordinal_limit,
+            self.process_id,
+            identity,
+        );
+        try self.requireControlEmpty();
+        var progress_frame =
+            [_]u8{0} ** durable_supervisor_frame_bytes;
+        encodeDurableSupervisorFrameV1(
+            &progress_frame,
+            durable_supervisor_progress_magic,
+            durable_supervisor_progress_abi,
+            phase,
+            selection,
+            @intCast(ordinal),
+            self.process_id,
+            identity,
+        );
+        if (try self.progress.write(&progress_frame) !=
+            progress_frame.len)
+        {
+            return error.DurableSupervisorProgressShortWrite;
+        }
+
+        var expected_control =
+            [_]u8{0} ** durable_supervisor_frame_bytes;
+        encodeDurableSupervisorFrameV1(
+            &expected_control,
+            durable_supervisor_control_magic,
+            durable_supervisor_control_abi,
+            phase,
+            selection,
+            @intCast(ordinal),
+            self.process_id,
+            identity,
+        );
+        var received_control: [durable_supervisor_frame_bytes]u8 = undefined;
+        if (try self.control.readAll(&received_control) !=
+            received_control.len)
+        {
+            return error.DurableSupervisorControlClosed;
+        }
+        if (!std.mem.eql(
+            u8,
+            &received_control,
+            &expected_control,
+        ))
+            return error.InvalidDurableSupervisorControl;
+    }
+
+    fn requireControlEmpty(
+        self: *DurableSupervisorV1,
+    ) !void {
+        if (comptime durable_supervisor_available_v1) {
+            var descriptors = [_]std.c.pollfd{.{
+                .fd = self.control.handle,
+                .events = std.c.POLL.IN,
+                .revents = 0,
+            }};
+            while (true) {
+                const result = std.c.poll(
+                    &descriptors,
+                    @intCast(descriptors.len),
+                    0,
+                );
+                switch (std.posix.errno(result)) {
+                    .SUCCESS => {
+                        if (result != 0)
+                            return error.DurableSupervisorControlPreloaded;
+                        return;
+                    },
+                    .INTR => continue,
+                    .NOMEM => return error.SystemResources,
+                    else => return error.DurableSupervisorControlPollFailed,
+                }
+            }
+        } else {
+            return error.UnsupportedPlatform;
+        }
+    }
 };
 
 const DurableIdentityV1 = struct {
@@ -273,6 +446,8 @@ pub fn run(
     var package_path: ?[]const u8 = null;
     var durable_directory: ?[]const u8 = null;
     var durable_request_id: ?[]const u8 = null;
+    var durable_supervisor_progress_fd: ?u32 = null;
+    var durable_supervisor_control_fd: ?u32 = null;
     var durable_bootstrap_only = false;
     var reveal_output = false;
     var durable_max_set_bytes = default_durable_max_set_bytes;
@@ -336,6 +511,28 @@ pub fn run(
             index += 1;
             if (index >= args.len) return error.InvalidUsage;
             durable_request_id = args[index];
+        } else if (std.mem.eql(
+            u8,
+            argument,
+            "--experimental-supervisor-progress-fd",
+        )) {
+            if (durable_supervisor_progress_fd != null)
+                return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len) return error.InvalidUsage;
+            durable_supervisor_progress_fd =
+                try parseDurableSupervisorDescriptorV1(args[index]);
+        } else if (std.mem.eql(
+            u8,
+            argument,
+            "--experimental-supervisor-control-fd",
+        )) {
+            if (durable_supervisor_control_fd != null)
+                return error.InvalidUsage;
+            index += 1;
+            if (index >= args.len) return error.InvalidUsage;
+            durable_supervisor_control_fd =
+                try parseDurableSupervisorDescriptorV1(args[index]);
         } else if (std.mem.eql(u8, argument, "--bootstrap-only")) {
             if (durable_bootstrap_only)
                 return error.InvalidUsage;
@@ -360,6 +557,19 @@ pub fn run(
         }
     }
     const durable_requested = durable_directory != null;
+    const durable_supervisor_requested =
+        durable_supervisor_progress_fd != null or
+        durable_supervisor_control_fd != null;
+    if ((durable_supervisor_progress_fd == null) !=
+        (durable_supervisor_control_fd == null))
+        return error.InvalidUsage;
+    if (durable_supervisor_requested and
+        durable_supervisor_progress_fd.? ==
+            durable_supervisor_control_fd.?)
+        return error.InvalidUsage;
+    if (durable_supervisor_requested and
+        !durable_supervisor_available_v1)
+        return error.UnsupportedPlatform;
     if (durable_requested) {
         if (eos_token != null)
             return error.DurableEosUnsupported;
@@ -372,11 +582,30 @@ pub fn run(
             durable_max_set_bytes >
                 maximum_durable_max_set_bytes)
             return error.InvalidUsage;
+        if (durable_supervisor_requested and
+            durable_bootstrap_only)
+            return error.InvalidUsage;
     } else if (durable_request_id != null or
+        durable_supervisor_requested or
         durable_bootstrap_only or
         reveal_output or
         durable_max_set_bytes_supplied)
         return error.InvalidUsage;
+    if (new_tokens == 0 or new_tokens > maximum_new_tokens)
+        return error.InvalidUsage;
+    var durable_supervisor: ?DurableSupervisorV1 =
+        if (durable_supervisor_requested) blk: {
+            const fixed_output_plan =
+                try engine.prepared_text_durable_runtime
+                    .fixedOutputPlanV1(new_tokens);
+            if (fixed_output_plan.route != .acknowledged)
+                return error.InvalidUsage;
+            break :blk try DurableSupervisorV1.init(.{
+                .progress_fd = durable_supervisor_progress_fd.?,
+                .control_fd = durable_supervisor_control_fd.?,
+            });
+        } else null;
+    defer if (durable_supervisor) |*owned| owned.deinit();
     var owned_text: ?[]u8 = null;
     defer if (owned_text) |bytes| allocator.free(bytes);
     const text = raw_text orelse blk: {
@@ -396,8 +625,6 @@ pub fn run(
         try usage(writer);
         return error.InvalidUsage;
     };
-    if (new_tokens == 0 or new_tokens > maximum_new_tokens)
-        return error.InvalidUsage;
     if (text.len == 0) return error.EmptyInput;
     if (text.len > tokenizer_input_limit)
         return error.InputTooLarge;
@@ -563,6 +790,10 @@ pub fn run(
                 durable_max_set_bytes,
                 durable_bootstrap_only,
                 reveal_output,
+                if (durable_supervisor) |*owned|
+                    owned
+                else
+                    null,
             ),
         };
     }
@@ -1662,6 +1893,7 @@ fn runDurableAcknowledgedV1(
     max_set_bytes: usize,
     bootstrap_only: bool,
     reveal_output: bool,
+    supervisor: ?*DurableSupervisorV1,
 ) !void {
     if (comptime !engine.prepared_text_durable_runtime
         .bootstrap_file_available_v1)
@@ -1708,6 +1940,15 @@ fn runDurableAcknowledgedV1(
         (selection_before.kind == .target_ready or
             selection_before.kind == .terminal))
         return error.DurableRequestAlreadyAdvanced;
+    if (supervisor) |owned| {
+        try owned.checkpoint(
+            .ready,
+            selection_before.kind,
+            0,
+            sink_capacity,
+            identity,
+        );
+    }
 
     const options: engine.prepared_text_session.OptionsV1 = .{
         .max_new_tokens = output_count,
@@ -1839,6 +2080,22 @@ fn runDurableAcknowledgedV1(
         runtime_closed = true;
         try verifyDurableAcknowledgedSourceV1(advanced);
         source_receipt = advanced;
+        if (supervisor) |owned| {
+            const selected =
+                try classifyDurableSelectionV1(
+                    directory,
+                    output_count,
+                );
+            if (selected.kind != .target_ready)
+                return error.InvalidDurableSourceTransition;
+            try owned.checkpoint(
+                .source_advanced,
+                selected.kind,
+                0,
+                sink_capacity,
+                identity,
+            );
+        }
     } else if (bootstrap_only) {
         return error.DurableRequestAlreadyAdvanced;
     }
@@ -1901,8 +2158,37 @@ fn runDurableAcknowledgedV1(
             output_count,
         );
         target_call_count += 1;
-        if (advanced.disposition == .advanced)
+        if (advanced.disposition == .advanced) {
             advanced_target_count += 1;
+            if (supervisor) |owned| {
+                const selected =
+                    try classifyDurableSelectionV1(
+                        directory,
+                        output_count,
+                    );
+                const expected_selection: DurableSelectionV1 =
+                    if (advanced.terminal)
+                        .terminal
+                    else
+                        .target_ready;
+                if (selected.kind != expected_selection)
+                    return error.InvalidDurableTargetTransition;
+                const ordinal_u64 =
+                    advanced.output_sequence - 1;
+                const ordinal = std.math.cast(
+                    usize,
+                    ordinal_u64,
+                ) orelse
+                    return error.InvalidDurableSupervisorOrdinal;
+                try owned.checkpoint(
+                    .target_advanced,
+                    selected.kind,
+                    ordinal,
+                    sink_capacity,
+                    identity,
+                );
+            }
+        }
         final_target_receipt = advanced;
         if (advanced.terminal) break;
     }
@@ -1949,6 +2235,197 @@ fn runDurableAcknowledgedV1(
         max_set_bytes,
         reveal_output,
     );
+}
+
+fn closeDurableSupervisorDescriptorV1(
+    descriptor: std.posix.fd_t,
+) void {
+    _ = std.c.close(descriptor);
+}
+
+fn durableSupervisorFcntlV1(
+    descriptor: std.posix.fd_t,
+    command: c_int,
+    argument: c_int,
+) !c_int {
+    while (true) {
+        const result = std.c.fcntl(
+            descriptor,
+            command,
+            argument,
+        );
+        switch (std.posix.errno(result)) {
+            .SUCCESS => return result,
+            .INTR => continue,
+            .BADF, .INVAL => return error.InvalidDurableSupervisorDescriptor,
+            .NOMEM => return error.SystemResources,
+            else => return error.DurableSupervisorDescriptorControlFailed,
+        }
+    }
+}
+
+fn setDurableSupervisorCloseOnExecV1(
+    descriptor: std.posix.fd_t,
+) !void {
+    const current = try durableSupervisorFcntlV1(
+        descriptor,
+        std.posix.F.GETFD,
+        0,
+    );
+    const close_on_exec: c_int =
+        @intCast(std.posix.FD_CLOEXEC);
+    _ = try durableSupervisorFcntlV1(
+        descriptor,
+        std.posix.F.SETFD,
+        current | close_on_exec,
+    );
+    const confirmed = try durableSupervisorFcntlV1(
+        descriptor,
+        std.posix.F.GETFD,
+        0,
+    );
+    if ((confirmed & close_on_exec) == 0)
+        return error.InvalidDurableSupervisorDescriptor;
+}
+
+fn durableSupervisorFstatV1(
+    descriptor: std.posix.fd_t,
+) !std.posix.Stat {
+    var file_stat = std.mem.zeroes(std.posix.Stat);
+    while (true) {
+        const result = std.c.fstat(descriptor, &file_stat);
+        switch (std.posix.errno(result)) {
+            .SUCCESS => return file_stat,
+            .INTR => continue,
+            .BADF, .INVAL => return error.InvalidDurableSupervisorDescriptor,
+            .NOMEM => return error.SystemResources,
+            else => return error.DurableSupervisorDescriptorInspectionFailed,
+        }
+    }
+}
+
+fn validateDurableSupervisorEndpointV1(
+    descriptor: std.posix.fd_t,
+    expected_access: std.posix.ACCMODE,
+) !std.posix.Stat {
+    const raw_status = try durableSupervisorFcntlV1(
+        descriptor,
+        std.posix.F.GETFL,
+        0,
+    );
+    const StatusBits = std.meta.Int(
+        .unsigned,
+        @bitSizeOf(std.posix.O),
+    );
+    const status: std.posix.O = @bitCast(
+        @as(StatusBits, @intCast(raw_status)),
+    );
+    const file_stat = try durableSupervisorFstatV1(descriptor);
+    if (status.ACCMODE != expected_access or
+        status.NONBLOCK or
+        (file_stat.mode & std.posix.S.IFMT) !=
+            std.posix.S.IFIFO)
+        return error.InvalidDurableSupervisorDescriptor;
+    return file_stat;
+}
+
+fn validateDurableSupervisorCheckpointV1(
+    phase: DurableSupervisorPhaseV1,
+    selection: DurableSelectionV1,
+    ordinal: usize,
+    target_ordinal_limit: usize,
+    process_id: u32,
+    identity: DurableIdentityV1,
+) !void {
+    if (target_ordinal_limit == 0 or
+        target_ordinal_limit >= maximum_new_tokens or
+        process_id == 0 or
+        identity.request_epoch == 0 or
+        std.mem.allEqual(u8, &identity.challenge_sha256, 0))
+        return error.InvalidDurableSupervisorIdentity;
+    switch (phase) {
+        .ready => {
+            if (ordinal != 0 or selection != .source_live)
+                return error.InvalidDurableSupervisorCheckpoint;
+        },
+        .source_advanced => {
+            if (ordinal != 0 or selection != .target_ready)
+                return error.InvalidDurableSupervisorCheckpoint;
+        },
+        .target_advanced => {
+            if (ordinal == 0 or
+                ordinal > target_ordinal_limit)
+                return error.InvalidDurableSupervisorCheckpoint;
+            const expected_selection: DurableSelectionV1 =
+                if (ordinal == target_ordinal_limit)
+                    .terminal
+                else
+                    .target_ready;
+            if (selection != expected_selection)
+                return error.InvalidDurableSupervisorCheckpoint;
+        },
+    }
+}
+
+fn encodeDurableSupervisorFrameV1(
+    frame: *[durable_supervisor_frame_bytes]u8,
+    magic: []const u8,
+    abi: u64,
+    phase: DurableSupervisorPhaseV1,
+    selection: DurableSelectionV1,
+    ordinal: u8,
+    process_id: u32,
+    identity: DurableIdentityV1,
+) void {
+    std.debug.assert(frame.len == 64);
+    std.debug.assert(magic.len == 8);
+    @memset(frame, 0);
+    @memcpy(frame[0..8], magic);
+    std.mem.writeInt(u64, frame[8..16], abi, .little);
+    frame[16] = @intFromEnum(phase);
+    frame[17] = durableSupervisorSelectionWireV1(selection);
+    frame[18] = ordinal;
+    frame[19] = 0;
+    std.mem.writeInt(u32, frame[20..24], process_id, .little);
+    std.mem.writeInt(
+        u64,
+        frame[24..32],
+        identity.request_epoch,
+        .little,
+    );
+    @memcpy(frame[32..64], &identity.challenge_sha256);
+}
+
+fn durableSupervisorSelectionWireV1(
+    selection: DurableSelectionV1,
+) u8 {
+    return switch (selection) {
+        .absent => 1,
+        .source_live => 2,
+        .target_ready => 3,
+        .terminal => 4,
+    };
+}
+
+fn parseDurableSupervisorDescriptorV1(
+    encoded: []const u8,
+) !u32 {
+    if (encoded.len == 0 or
+        (encoded.len > 1 and encoded[0] == '0'))
+        return error.InvalidUsage;
+    for (encoded) |character| {
+        if (!std.ascii.isDigit(character))
+            return error.InvalidUsage;
+    }
+    const descriptor = std.fmt.parseInt(
+        u32,
+        encoded,
+        10,
+    ) catch return error.InvalidUsage;
+    if (descriptor < 3 or
+        descriptor > std.math.maxInt(i32))
+        return error.InvalidUsage;
+    return descriptor;
 }
 
 fn deriveDurableIdentityV1(
@@ -3190,6 +3667,8 @@ fn usage(writer: *std.Io.Writer) !void {
             "[--durable-dir <absolute-existing-directory> " ++
             "--request-id <64-lowercase-hex> --n 1..64 " ++
             "[--bootstrap-only] [--reveal-output] " ++
-            "[--max-set-bytes 1..67108864]]\n",
+            "[--max-set-bytes 1..67108864] " ++
+            "[--experimental-supervisor-progress-fd <fd> " ++
+            "--experimental-supervisor-control-fd <fd>]]\n",
     );
 }

@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import fcntl
 import hashlib
 import json
 import os
 import re
+import selectors
+import signal
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
+import time
 import zlib
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -131,6 +136,27 @@ VARIABLE_TERMINAL_REPORT_KEYS = frozenset(
     }
 )
 TIMEOUT_SECONDS = 30
+SUPERVISOR_PROGRESS_FLAG = "--experimental-supervisor-progress-fd"
+SUPERVISOR_CONTROL_FLAG = "--experimental-supervisor-control-fd"
+SUPERVISOR_PROGRESS_MAGIC = b"GLDSPV1\x00"
+SUPERVISOR_PROGRESS_ABI = 0x474C_4453_0000_0001
+SUPERVISOR_PROGRESS_STRUCT = struct.Struct("<8sQBBBBIQ32s")
+SUPERVISOR_CONTROL_MAGIC = b"GLDSCV1\x00"
+SUPERVISOR_CONTROL_ABI = 0x474C_4453_4300_0001
+SUPERVISOR_PHASE_READY = 1
+SUPERVISOR_PHASE_SOURCE_ADVANCED = 2
+SUPERVISOR_PHASE_TARGET_ADVANCED = 3
+SUPERVISOR_SELECTION_SOURCE_LIVE = 2
+SUPERVISOR_SELECTION_TARGET_READY = 3
+SUPERVISOR_SELECTION_TERMINAL = 4
+SUPERVISOR_MAX_DIAGNOSTIC_BYTES = 16 * 1024
+SUPERVISOR_EXEC_GATE = (
+    "import os,sys\n"
+    "gate_fd=int(sys.argv[1])\n"
+    "if os.read(gate_fd,1) != b'\\x01': raise SystemExit(125)\n"
+    "os.close(gate_fd)\n"
+    "os.execve(sys.argv[2],sys.argv[2:],os.environ)\n"
+)
 COMMAND_CWD: ContextVar[Path | None] = ContextVar(
     "glacier_golden_command_cwd",
     default=None,
@@ -143,6 +169,30 @@ COMMAND_ENV: ContextVar[Mapping[str, str] | None] = ContextVar(
 
 class GoldenPathError(RuntimeError):
     """A command or independent identity check failed."""
+
+
+@dataclass(frozen=True)
+class _SupervisorProgress:
+    phase: int
+    selection: int
+    ordinal: int
+    child_pid: int
+    request_epoch: int
+    challenge: bytes
+
+
+@dataclass(frozen=True)
+class _SupervisorRun:
+    progress_frames: int
+    control_grants: int
+    control_bytes: int
+    manifests: tuple[
+        tuple[tuple[str, int, int, str], ...],
+        ...,
+    ]
+    return_code: int
+    stdout: bytes
+    report: dict[str, object] | None
 
 
 def _redacted_command(command: Sequence[str]) -> tuple[str, ...]:
@@ -608,7 +658,7 @@ def _run_text(
     return report
 
 
-def _run_durable_text(
+def _durable_text_command(
     executable: Path,
     image: Path,
     package_path: Path,
@@ -621,9 +671,7 @@ def _run_durable_text(
     max_set_bytes: int = DURABLE_MAX_SET_BYTES,
     bootstrap_only: bool = False,
     reveal_output: bool = False,
-    expect_success: bool = True,
-    expected_error: str | None = None,
-) -> dict[str, object] | None:
+) -> list[str]:
     command = [
         str(executable),
         "text-run",
@@ -647,6 +695,38 @@ def _run_durable_text(
         command.append("--bootstrap-only")
     if reveal_output:
         command.append("--reveal-output")
+    return command
+
+
+def _run_durable_text(
+    executable: Path,
+    image: Path,
+    package_path: Path,
+    license_path: Path,
+    prompt_path: Path,
+    durable_directory: Path,
+    *,
+    request_id: str = DURABLE_REQUEST_ID,
+    new_tokens: int = 1,
+    max_set_bytes: int = DURABLE_MAX_SET_BYTES,
+    bootstrap_only: bool = False,
+    reveal_output: bool = False,
+    expect_success: bool = True,
+    expected_error: str | None = None,
+) -> dict[str, object] | None:
+    command = _durable_text_command(
+        executable,
+        image,
+        package_path,
+        license_path,
+        prompt_path,
+        durable_directory,
+        request_id=request_id,
+        new_tokens=new_tokens,
+        max_set_bytes=max_set_bytes,
+        bootstrap_only=bootstrap_only,
+        reveal_output=reveal_output,
+    )
     result = _run(command, expect_success=expect_success)
     if not expect_success:
         if expected_error is not None and expected_error not in result.stderr:
@@ -1345,6 +1425,1354 @@ def _verify_acknowledged_terminal_report(
             "acknowledged terminal report mismatch: "
             + ", ".join(differing)
         )
+
+
+def _decode_supervisor_progress(
+    encoded: bytes,
+    *,
+    expected_pid: int,
+) -> _SupervisorProgress:
+    if len(encoded) != SUPERVISOR_PROGRESS_STRUCT.size:
+        raise GoldenPathError("supervisor progress frame size mismatch")
+    (
+        magic,
+        abi,
+        phase,
+        selection,
+        ordinal,
+        reserved,
+        child_pid,
+        request_epoch,
+        challenge,
+    ) = SUPERVISOR_PROGRESS_STRUCT.unpack(encoded)
+    if (
+        magic != SUPERVISOR_PROGRESS_MAGIC
+        or abi != SUPERVISOR_PROGRESS_ABI
+        or phase
+        not in {
+            SUPERVISOR_PHASE_READY,
+            SUPERVISOR_PHASE_SOURCE_ADVANCED,
+            SUPERVISOR_PHASE_TARGET_ADVANCED,
+        }
+        or selection
+        not in {
+            SUPERVISOR_SELECTION_SOURCE_LIVE,
+            SUPERVISOR_SELECTION_TARGET_READY,
+            SUPERVISOR_SELECTION_TERMINAL,
+        }
+        or reserved != 0
+        or (phase == SUPERVISOR_PHASE_TARGET_ADVANCED) != (ordinal > 0)
+        or ordinal > 64
+        or child_pid != expected_pid
+        or request_epoch == 0
+        or challenge == bytes(32)
+    ):
+        raise GoldenPathError("supervisor progress frame is invalid")
+    return _SupervisorProgress(
+        phase=phase,
+        selection=selection,
+        ordinal=ordinal,
+        child_pid=child_pid,
+        request_epoch=request_epoch,
+        challenge=challenge,
+    )
+
+
+def _encode_supervisor_grant(frame: _SupervisorProgress) -> bytes:
+    return SUPERVISOR_PROGRESS_STRUCT.pack(
+        SUPERVISOR_CONTROL_MAGIC,
+        SUPERVISOR_CONTROL_ABI,
+        frame.phase,
+        frame.selection,
+        frame.ordinal,
+        0,
+        frame.child_pid,
+        frame.request_epoch,
+        frame.challenge,
+    )
+
+
+def _supervisor_diagnostics(
+    buffers: Mapping[str, bytearray],
+) -> str:
+    return ", ".join(
+        f"{name}={bytes(buffers[name]).decode('utf-8', 'replace')!r}"
+        for name in ("stdout", "stderr")
+        if buffers[name]
+    )
+
+
+def _pump_supervisor_streams(
+    selector: selectors.BaseSelector,
+    buffers: dict[str, bytearray],
+    closed: set[str],
+    *,
+    deadline: float,
+    until_progress_frame: bool,
+) -> None:
+    while (
+        len(buffers["progress"]) < SUPERVISOR_PROGRESS_STRUCT.size
+        if until_progress_frame
+        else selector.get_map()
+    ):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise GoldenPathError(
+                "supervisor protocol timed out"
+                + (
+                    ": " + _supervisor_diagnostics(buffers)
+                    if _supervisor_diagnostics(buffers)
+                    else ""
+                )
+            )
+        events = selector.select(remaining)
+        if not events:
+            raise GoldenPathError(
+                "supervisor protocol timed out"
+                + (
+                    ": " + _supervisor_diagnostics(buffers)
+                    if _supervisor_diagnostics(buffers)
+                    else ""
+                )
+            )
+        for key, _ in events:
+            name = str(key.data)
+            try:
+                chunk = os.read(key.fd, 4096)
+            except BlockingIOError:
+                continue
+            if not chunk:
+                selector.unregister(key.fd)
+                closed.add(name)
+                continue
+            buffers[name].extend(chunk)
+            maximum = (
+                SUPERVISOR_PROGRESS_STRUCT.size
+                if until_progress_frame and name == "progress"
+                else SUPERVISOR_MAX_DIAGNOSTIC_BYTES
+            )
+            if len(buffers[name]) > maximum:
+                raise GoldenPathError(
+                    f"supervisor {name} stream exceeds its bound"
+                )
+        if (
+            until_progress_frame
+            and "progress" in closed
+            and len(buffers["progress"])
+            < SUPERVISOR_PROGRESS_STRUCT.size
+        ):
+            raise GoldenPathError(
+                "supervisor progress reached EOF before one frame"
+                + (
+                    ": " + _supervisor_diagnostics(buffers)
+                    if _supervisor_diagnostics(buffers)
+                    else ""
+                )
+            )
+
+
+def _read_supervisor_progress(
+    selector: selectors.BaseSelector,
+    buffers: dict[str, bytearray],
+    closed: set[str],
+    *,
+    deadline: float,
+    expected_pid: int,
+) -> _SupervisorProgress:
+    _pump_supervisor_streams(
+        selector,
+        buffers,
+        closed,
+        deadline=deadline,
+        until_progress_frame=True,
+    )
+    if "progress" in closed:
+        raise GoldenPathError(
+            "supervisor progress closed before the kill boundary"
+        )
+    if buffers["stdout"] or buffers["stderr"]:
+        raise GoldenPathError(
+            "supervised process emitted output before its kill boundary: "
+            + _supervisor_diagnostics(buffers)
+        )
+    encoded = bytes(buffers["progress"])
+    buffers["progress"].clear()
+    return _decode_supervisor_progress(
+        encoded,
+        expected_pid=expected_pid,
+    )
+
+
+def _verify_supervised_namespace(
+    manifest: Sequence[tuple[str, int, int, str]],
+    *,
+    checkpoint: direct_oracle.recovery.CheckpointWireFacts,
+    sink: direct_oracle.recovery.SinkWireFacts | None,
+) -> None:
+    names = {entry[0] for entry in manifest}
+    checkpoint_sets = {
+        name
+        for name in names
+        if re.fullmatch(r"checkpoint-[0-9a-f]{64}\.set", name)
+        is not None
+    }
+    expected_names = {
+        direct_oracle.CHECKPOINT_LOCK_NAME,
+        direct_oracle.recovery.CHECKPOINT_ACTIVE_SELECTOR_NAME,
+        *checkpoint_sets,
+    }
+    if (
+        len(checkpoint_sets) != checkpoint.generation
+        or "checkpoint-" + checkpoint.checkpoint_sha256 + ".set"
+        not in checkpoint_sets
+    ):
+        raise GoldenPathError(
+            "supervised checkpoint namespace is incomplete"
+        )
+    if sink is not None:
+        sink_ledgers = {
+            name
+            for name in names
+            if re.fullmatch(
+                r"prepared-text-result-ledger-[0-9a-f]{64}\.bin",
+                name,
+            )
+            is not None
+        }
+        expected_names.update(
+            {
+                ".glacier-prepared-text-result-sink-lock-v1",
+                direct_oracle.recovery.SINK_ACTIVE_SELECTOR_NAME,
+                *sink_ledgers,
+            }
+        )
+        if (
+            len(sink_ledgers) != sink.generation
+            or "prepared-text-result-ledger-"
+            + sink.ledger_sha256
+            + ".bin"
+            not in sink_ledgers
+        ):
+            raise GoldenPathError(
+                "supervised sink namespace is incomplete"
+            )
+    if names != expected_names:
+        raise GoldenPathError(
+            "supervised durable state contains an unexpected namespace"
+        )
+
+
+def _verify_supervised_acknowledged_state(
+    directory: Path,
+    frame: _SupervisorProgress,
+    *,
+    expected_phase: int,
+    expected_selection: int,
+    expected_ordinal: int,
+    expected_generation: int,
+    expected_next_sequence: int,
+    expected_sink_count: int | None,
+    expected_manifest_entries: int,
+    expected_terminal: bool,
+    request_epoch: int,
+    challenge: bytes,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    license_sha256: bytes,
+    raw_text: bytes,
+    output_count: int,
+    expected_tokens: Sequence[int],
+) -> tuple[tuple[str, int, int, str], ...]:
+    if (
+        frame.phase != expected_phase
+        or frame.selection != expected_selection
+        or frame.ordinal != expected_ordinal
+        or frame.request_epoch != request_epoch
+        or frame.challenge != challenge
+    ):
+        raise GoldenPathError(
+            "supervisor progress differs from the expected boundary"
+        )
+    checkpoint = _active_checkpoint(directory)
+    contract, durable_input = (
+        direct_oracle.recovery._decode_checkpoint_input_lineage(
+            directory,
+            checkpoint,
+        )
+    )
+    sink = direct_oracle.recovery._decode_sink_wire(directory)
+    if (
+        checkpoint.generation != expected_generation
+        or checkpoint.next_sequence != expected_next_sequence
+        or checkpoint.request_epoch != request_epoch
+        or checkpoint.challenge_sha256 != challenge.hex()
+        or checkpoint.terminal_tokens
+        != (tuple(expected_tokens) if expected_terminal else None)
+        or contract.options[0] != output_count
+        or contract.sink_capacity != output_count - 1
+        or contract.sink_initial_sequence != 1
+        or contract.request_epoch != request_epoch
+        or contract.challenge_sha256 != challenge
+        or contract.bound_artifact_license_sha256 != license_sha256
+        or durable_input.package_sha256 != package_sha256
+        or durable_input.representation_sha256
+        != representation_sha256
+        or durable_input.raw_text != raw_text
+        or durable_input.raw_text_sha256
+        != raw_input.raw_text_sha256(raw_text)
+    ):
+        raise GoldenPathError(
+            "supervised durable checkpoint lineage mismatch"
+        )
+    if expected_sink_count is None:
+        if sink is not None:
+            raise GoldenPathError(
+                "supervised ready boundary unexpectedly selected a sink"
+            )
+    elif (
+        sink is None
+        or sink.generation != expected_sink_count + 1
+        or sink.count != expected_sink_count
+        or sink.initial_sequence != 1
+        or sink.next_sequence != expected_sink_count + 1
+        or sink.request_epoch != request_epoch
+        or sink.request_sha256 != contract.plan_sha256.hex()
+        or sink.sink_implementation_sha256
+        != contract.sink_implementation_sha256.hex()
+        or sink.sink_instance_sha256
+        != contract.sink_instance_sha256.hex()
+        or sink.acknowledgement_tokens
+        != tuple(expected_tokens[1 : expected_sink_count + 1])
+    ):
+        raise GoldenPathError(
+            "supervised durable sink lineage mismatch"
+        )
+    manifest = _durable_directory_manifest(directory)
+    if len(manifest) != expected_manifest_entries:
+        raise GoldenPathError(
+            "supervised durable namespace size mismatch"
+        )
+    _verify_supervised_namespace(
+        manifest,
+        checkpoint=checkpoint,
+        sink=sink,
+    )
+    return manifest
+
+
+def _run_supervised_acknowledged(
+    executable: Path,
+    image: Path,
+    package_path: Path,
+    license_path: Path,
+    prompt_path: Path,
+    durable_directory: Path,
+    *,
+    kill_after_phase: int | None,
+    request_epoch: int,
+    challenge: bytes,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    license_sha256: bytes,
+    raw_text: bytes,
+    expected_tokens: Sequence[int],
+) -> _SupervisorRun:
+    stages = [
+        (
+            SUPERVISOR_PHASE_READY,
+            SUPERVISOR_SELECTION_SOURCE_LIVE,
+            0,
+            1,
+            1,
+            None,
+            3,
+            False,
+        ),
+        (
+            SUPERVISOR_PHASE_SOURCE_ADVANCED,
+            SUPERVISOR_SELECTION_TARGET_READY,
+            0,
+            2,
+            1,
+            0,
+            7,
+            False,
+        ),
+        (
+            SUPERVISOR_PHASE_TARGET_ADVANCED,
+            SUPERVISOR_SELECTION_TARGET_READY,
+            1,
+            3,
+            2,
+            1,
+            9,
+            False,
+        ),
+        (
+            SUPERVISOR_PHASE_TARGET_ADVANCED,
+            SUPERVISOR_SELECTION_TARGET_READY,
+            2,
+            4,
+            3,
+            2,
+            11,
+            False,
+        ),
+        (
+            SUPERVISOR_PHASE_TARGET_ADVANCED,
+            SUPERVISOR_SELECTION_TERMINAL,
+            3,
+            5,
+            4,
+            3,
+            13,
+            True,
+        ),
+    ]
+    if kill_after_phase == SUPERVISOR_PHASE_SOURCE_ADVANCED:
+        stages = stages[:2]
+    elif kill_after_phase == SUPERVISOR_PHASE_TARGET_ADVANCED:
+        stages = stages[:3]
+    elif kill_after_phase is not None:
+        raise GoldenPathError("invalid supervised SIGKILL phase")
+    progress_read, progress_write = os.pipe()
+    control_read, control_write = os.pipe()
+    process: subprocess.Popen[bytes] | None = None
+    selector: selectors.BaseSelector | None = None
+    progress_frames = 0
+    control_grants = 0
+    control_bytes = 0
+    manifests: list[tuple[tuple[str, int, int, str], ...]] = []
+    deadline = time.monotonic() + TIMEOUT_SECONDS
+    try:
+        command = _durable_text_command(
+            executable,
+            image,
+            package_path,
+            license_path,
+            prompt_path,
+            durable_directory,
+            new_tokens=len(expected_tokens),
+        )
+        command.extend(
+            (
+                SUPERVISOR_PROGRESS_FLAG,
+                str(progress_write),
+                SUPERVISOR_CONTROL_FLAG,
+                str(control_read),
+            )
+        )
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            cwd=COMMAND_CWD.get(),
+            env=COMMAND_ENV.get(),
+            pass_fds=(progress_write, control_read),
+            close_fds=True,
+        )
+        os.close(progress_write)
+        progress_write = -1
+        os.close(control_read)
+        control_read = -1
+        if process.stdout is None or process.stderr is None:
+            raise GoldenPathError(
+                "supervised process pipes are unavailable"
+            )
+        selector = selectors.DefaultSelector()
+        selector.register(progress_read, selectors.EVENT_READ, "progress")
+        selector.register(
+            process.stdout.fileno(),
+            selectors.EVENT_READ,
+            "stdout",
+        )
+        selector.register(
+            process.stderr.fileno(),
+            selectors.EVENT_READ,
+            "stderr",
+        )
+        buffers = {
+            "progress": bytearray(),
+            "stdout": bytearray(),
+            "stderr": bytearray(),
+        }
+        closed: set[str] = set()
+        for stage_index, (
+            phase,
+            selection,
+            ordinal,
+            generation,
+            next_sequence,
+            sink_count,
+            manifest_entries,
+            expected_terminal,
+        ) in enumerate(stages):
+            frame = _read_supervisor_progress(
+                selector,
+                buffers,
+                closed,
+                deadline=deadline,
+                expected_pid=process.pid,
+            )
+            progress_frames += 1
+            manifests.append(
+                _verify_supervised_acknowledged_state(
+                    durable_directory,
+                    frame,
+                    expected_phase=phase,
+                    expected_selection=selection,
+                    expected_ordinal=ordinal,
+                    expected_generation=generation,
+                    expected_next_sequence=next_sequence,
+                    expected_sink_count=sink_count,
+                    expected_manifest_entries=manifest_entries,
+                    expected_terminal=expected_terminal,
+                    request_epoch=request_epoch,
+                    challenge=challenge,
+                    package_sha256=package_sha256,
+                    representation_sha256=representation_sha256,
+                    license_sha256=license_sha256,
+                    raw_text=raw_text,
+                    output_count=len(expected_tokens),
+                    expected_tokens=expected_tokens,
+                )
+            )
+            if (
+                kill_after_phase is not None
+                and stage_index + 1 == len(stages)
+            ):
+                if process.poll() is not None:
+                    raise GoldenPathError(
+                        "supervised process exited before SIGKILL"
+                    )
+                os.kill(process.pid, signal.SIGKILL)
+            else:
+                grant = _encode_supervisor_grant(frame)
+                try:
+                    written = os.write(
+                        control_write,
+                        grant,
+                    )
+                except BrokenPipeError as error:
+                    raise GoldenPathError(
+                        "supervisor control pipe closed early"
+                    ) from error
+                if written != len(grant):
+                    raise GoldenPathError(
+                        "supervisor control grant was incomplete"
+                    )
+                control_grants += 1
+                control_bytes += written
+        if kill_after_phase is None:
+            _pump_supervisor_streams(
+                selector,
+                buffers,
+                closed,
+                deadline=deadline,
+                until_progress_frame=False,
+            )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise GoldenPathError(
+                "supervised process did not exit within its bound"
+            )
+        return_code = process.wait(timeout=remaining)
+        if kill_after_phase is not None:
+            _pump_supervisor_streams(
+                selector,
+                buffers,
+                closed,
+                deadline=deadline,
+                until_progress_frame=False,
+            )
+        stdout = bytes(buffers["stdout"])
+        if (
+            "progress" not in closed
+            or buffers["progress"]
+            or buffers["stderr"]
+        ):
+            raise GoldenPathError(
+                "supervised process stream termination mismatch"
+                + (
+                    ": " + _supervisor_diagnostics(buffers)
+                    if _supervisor_diagnostics(buffers)
+                    else ""
+                )
+            )
+        report: dict[str, object] | None = None
+        if kill_after_phase is not None:
+            if return_code != -signal.SIGKILL or stdout:
+                raise GoldenPathError(
+                    "supervised SIGKILL termination mismatch"
+                    + (
+                        ": " + _supervisor_diagnostics(buffers)
+                        if _supervisor_diagnostics(buffers)
+                        else ""
+                    )
+                )
+        else:
+            if return_code != 0:
+                raise GoldenPathError(
+                    "clean supervised process did not exit zero"
+                )
+            try:
+                decoded = json.loads(stdout.decode("utf-8", "strict"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise GoldenPathError(
+                    "clean supervised process emitted invalid JSON"
+                ) from error
+            if not isinstance(decoded, dict):
+                raise GoldenPathError(
+                    "clean supervised report is not an object"
+                )
+            report = decoded
+            canonical = (
+                json.dumps(
+                    report,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            ).encode("utf-8")
+            if stdout != canonical:
+                raise GoldenPathError(
+                    "clean supervised report is not canonical JSON"
+                )
+        return _SupervisorRun(
+            progress_frames=progress_frames,
+            control_grants=control_grants,
+            control_bytes=control_bytes,
+            manifests=tuple(manifests),
+            return_code=return_code,
+            stdout=stdout,
+            report=report,
+        )
+    finally:
+        if process is not None and process.poll() is None:
+            try:
+                os.kill(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+        if selector is not None:
+            selector.close()
+        if process is not None:
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+        for descriptor in (
+            progress_read,
+            progress_write,
+            control_read,
+            control_write,
+        ):
+            if descriptor >= 0:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+
+def _run_supervisor_protocol_rejection(
+    executable: Path,
+    image: Path,
+    package_path: Path,
+    license_path: Path,
+    prompt_path: Path,
+    durable_directory: Path,
+    *,
+    rejection: str,
+    generation_one_manifest: tuple[
+        tuple[str, int, int, str],
+        ...,
+    ],
+    request_epoch: int,
+    challenge: bytes,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    license_sha256: bytes,
+    raw_text: bytes,
+    expected_tokens: Sequence[int],
+) -> tuple[int, int]:
+    expected_errors = {
+        "preloaded": "DurableSupervisorControlPreloaded",
+        "wrong-bound-field": "InvalidDurableSupervisorControl",
+        "short-control": "DurableSupervisorControlClosed",
+    }
+    expected_error = expected_errors.get(rejection)
+    if expected_error is None:
+        raise GoldenPathError(
+            "unknown supervisor protocol rejection case"
+        )
+    progress_read, progress_write = os.pipe()
+    control_read, control_write = os.pipe()
+    gate_read = -1
+    gate_write = -1
+    process: subprocess.Popen[bytes] | None = None
+    selector: selectors.BaseSelector | None = None
+    progress_frames = 0
+    control_bytes = 0
+    deadline = time.monotonic() + TIMEOUT_SECONDS
+    try:
+        command = _durable_text_command(
+            executable,
+            image,
+            package_path,
+            license_path,
+            prompt_path,
+            durable_directory,
+            new_tokens=len(expected_tokens),
+        )
+        command.extend(
+            (
+                SUPERVISOR_PROGRESS_FLAG,
+                str(progress_write),
+                SUPERVISOR_CONTROL_FLAG,
+                str(control_read),
+            )
+        )
+        child_command = command
+        inherited_descriptors = [progress_write, control_read]
+        if rejection == "preloaded":
+            gate_read, gate_write = os.pipe()
+            child_command = [
+                sys.executable,
+                "-B",
+                "-S",
+                "-c",
+                SUPERVISOR_EXEC_GATE,
+                str(gate_read),
+                *command,
+            ]
+            inherited_descriptors.append(gate_read)
+        process = subprocess.Popen(
+            child_command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
+            cwd=COMMAND_CWD.get(),
+            env=COMMAND_ENV.get(),
+            pass_fds=tuple(inherited_descriptors),
+            close_fds=True,
+        )
+        os.close(progress_write)
+        progress_write = -1
+        os.close(control_read)
+        control_read = -1
+        if gate_read >= 0:
+            os.close(gate_read)
+            gate_read = -1
+        if process.stdout is None or process.stderr is None:
+            raise GoldenPathError(
+                "protocol rejection process pipes are unavailable"
+            )
+        selector = selectors.DefaultSelector()
+        selector.register(progress_read, selectors.EVENT_READ, "progress")
+        selector.register(
+            process.stdout.fileno(),
+            selectors.EVENT_READ,
+            "stdout",
+        )
+        selector.register(
+            process.stderr.fileno(),
+            selectors.EVENT_READ,
+            "stderr",
+        )
+        buffers = {
+            "progress": bytearray(),
+            "stdout": bytearray(),
+            "stderr": bytearray(),
+        }
+        closed: set[str] = set()
+        if rejection == "preloaded":
+            preloaded = _encode_supervisor_grant(
+                _SupervisorProgress(
+                    phase=SUPERVISOR_PHASE_READY,
+                    selection=SUPERVISOR_SELECTION_SOURCE_LIVE,
+                    ordinal=0,
+                    child_pid=process.pid,
+                    request_epoch=request_epoch,
+                    challenge=challenge,
+                )
+            )
+            written = os.write(control_write, preloaded)
+            if written != len(preloaded):
+                raise GoldenPathError(
+                    "preloaded supervisor grant was incomplete"
+                )
+            control_bytes += written
+            if os.write(gate_write, b"\x01") != 1:
+                raise GoldenPathError(
+                    "supervisor exec gate release was incomplete"
+                )
+            os.close(gate_write)
+            gate_write = -1
+        else:
+            frame = _read_supervisor_progress(
+                selector,
+                buffers,
+                closed,
+                deadline=deadline,
+                expected_pid=process.pid,
+            )
+            progress_frames += 1
+            ready_manifest = _verify_supervised_acknowledged_state(
+                durable_directory,
+                frame,
+                expected_phase=SUPERVISOR_PHASE_READY,
+                expected_selection=SUPERVISOR_SELECTION_SOURCE_LIVE,
+                expected_ordinal=0,
+                expected_generation=1,
+                expected_next_sequence=1,
+                expected_sink_count=None,
+                expected_manifest_entries=3,
+                expected_terminal=False,
+                request_epoch=request_epoch,
+                challenge=challenge,
+                package_sha256=package_sha256,
+                representation_sha256=representation_sha256,
+                license_sha256=license_sha256,
+                raw_text=raw_text,
+                output_count=len(expected_tokens),
+                expected_tokens=expected_tokens,
+            )
+            if ready_manifest != generation_one_manifest:
+                raise GoldenPathError(
+                    "protocol rejection ready state changed"
+                )
+            grant = bytearray(_encode_supervisor_grant(frame))
+            if rejection == "wrong-bound-field":
+                grant[18] = 1
+                payload = bytes(grant)
+            else:
+                payload = bytes(
+                    grant[: SUPERVISOR_PROGRESS_STRUCT.size // 2]
+                )
+            written = os.write(control_write, payload)
+            if written != len(payload):
+                raise GoldenPathError(
+                    "rejected supervisor control write was incomplete"
+                )
+            control_bytes += written
+            if rejection == "short-control":
+                os.close(control_write)
+                control_write = -1
+        _pump_supervisor_streams(
+            selector,
+            buffers,
+            closed,
+            deadline=deadline,
+            until_progress_frame=False,
+        )
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise GoldenPathError(
+                "protocol rejection process did not exit within its bound"
+            )
+        return_code = process.wait(timeout=remaining)
+        stderr = bytes(buffers["stderr"]).decode(
+            "utf-8",
+            "replace",
+        )
+        if (
+            return_code == 0
+            or "progress" not in closed
+            or buffers["progress"]
+            or buffers["stdout"]
+            or expected_error not in stderr
+            or _durable_directory_manifest(durable_directory)
+            != generation_one_manifest
+        ):
+            raise GoldenPathError(
+                f"supervisor {rejection} did not fail closed: "
+                f"return_code={return_code}, stderr={stderr!r}"
+            )
+        return progress_frames, control_bytes
+    finally:
+        if process is not None and process.poll() is None:
+            try:
+                os.kill(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+        if selector is not None:
+            selector.close()
+        if process is not None:
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+        for descriptor in (
+            progress_read,
+            progress_write,
+            control_read,
+            control_write,
+            gate_read,
+            gate_write,
+        ):
+            if descriptor >= 0:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+
+def _exercise_acknowledged_process_death(
+    executable: Path,
+    image: Path,
+    package_path: Path,
+    license_path: Path,
+    prompt_path: Path,
+    root: Path,
+    *,
+    package_sha256: bytes,
+    representation_sha256: bytes,
+    license_sha256: bytes,
+    raw_text: bytes,
+    expected_tokens: Sequence[int],
+    uninterrupted_report: Mapping[str, object],
+    uninterrupted_wire: direct_oracle.recovery.WireFacts,
+    uninterrupted_roots: Mapping[str, str],
+    uninterrupted_manifest: tuple[tuple[str, int, int, str], ...],
+) -> dict[str, object]:
+    output_count = len(expected_tokens)
+    if output_count != 4:
+        raise GoldenPathError(
+            "process-death proof is fixed to four output tokens"
+        )
+    challenge = _durable_acknowledged_challenge(
+        request_id=DURABLE_REQUEST_ID,
+        package_sha256=package_sha256,
+        representation_sha256=representation_sha256,
+        license_sha256=license_sha256,
+        raw_text_sha256=raw_input.raw_text_sha256(raw_text),
+        output_count=output_count,
+    )
+    request_epoch = _durable_u64(
+        _durable_derived_root(
+            DURABLE_RUNTIME_IDENTITY_DOMAIN,
+            challenge,
+        ),
+        0,
+    )
+    total_progress_frames = 0
+    total_control_grants = 0
+    total_control_bytes = 0
+    resume_target_calls: list[int] = []
+    for label, kill_after_phase, target_calls in (
+        ("source", SUPERVISOR_PHASE_SOURCE_ADVANCED, 3),
+        ("target", SUPERVISOR_PHASE_TARGET_ADVANCED, 2),
+    ):
+        directory = root / (
+            "durable-acknowledged-4-" + label + "-death"
+        )
+        directory.mkdir(mode=0o700)
+        bootstrap_report = _run_durable_text(
+            executable,
+            image,
+            package_path,
+            license_path,
+            prompt_path,
+            directory,
+            new_tokens=output_count,
+            bootstrap_only=True,
+        )
+        if bootstrap_report is None:
+            raise GoldenPathError(
+                "process-death bootstrap report is absent"
+            )
+        checkpoint, contract, durable_input = (
+            _acknowledged_bootstrap_facts(directory)
+        )
+        _verify_acknowledged_bootstrap_report(
+            bootstrap_report,
+            checkpoint=checkpoint,
+            contract=contract,
+            durable_input=durable_input,
+            package_sha256=package_sha256,
+            representation_sha256=representation_sha256,
+            license_sha256=license_sha256,
+            raw_text=raw_text,
+            output_count=output_count,
+            selection_before="absent",
+            bootstrap_disposition="created",
+        )
+        bootstrap_manifest = _durable_directory_manifest(directory)
+        if len(bootstrap_manifest) != 3:
+            raise GoldenPathError(
+                "process-death bootstrap namespace size mismatch"
+            )
+        supervised = _run_supervised_acknowledged(
+            executable,
+            image,
+            package_path,
+            license_path,
+            prompt_path,
+            directory,
+            kill_after_phase=kill_after_phase,
+            request_epoch=request_epoch,
+            challenge=challenge,
+            package_sha256=package_sha256,
+            representation_sha256=representation_sha256,
+            license_sha256=license_sha256,
+            raw_text=raw_text,
+            expected_tokens=expected_tokens,
+        )
+        total_progress_frames += supervised.progress_frames
+        total_control_grants += supervised.control_grants
+        total_control_bytes += supervised.control_bytes
+        if (
+            not supervised.manifests
+            or supervised.manifests[0] != bootstrap_manifest
+            or _durable_directory_manifest(directory)
+            != supervised.manifests[-1]
+        ):
+            raise GoldenPathError(
+                "SIGKILL changed its challenge-bound boundary state"
+            )
+        resume_report = _run_durable_text(
+            executable,
+            image,
+            package_path,
+            license_path,
+            prompt_path,
+            directory,
+            new_tokens=output_count,
+            reveal_output=True,
+        )
+        if resume_report is None:
+            raise GoldenPathError(
+                "process-death continuation report is absent"
+            )
+        resume_wire, resume_roots = _acknowledged_terminal_facts(
+            directory,
+            output_count=output_count,
+            package_sha256=package_sha256,
+            representation_sha256=representation_sha256,
+            license_sha256=license_sha256,
+            raw_text=raw_text,
+            expected_tokens=expected_tokens,
+        )
+        _verify_acknowledged_terminal_report(
+            resume_report,
+            wire=resume_wire,
+            roots=resume_roots,
+            output_count=output_count,
+            selection_before="target-ready",
+            disposition="advanced",
+            bootstrap_disposition=None,
+            source_disposition=None,
+            target_call_count=target_calls,
+            advanced_target_count=target_calls,
+            output_disclosed=True,
+        )
+        resume_target_calls.append(target_calls)
+        if (
+            resume_wire != uninterrupted_wire
+            or resume_roots != dict(uninterrupted_roots)
+            or _durable_directory_manifest(directory)
+            != uninterrupted_manifest
+        ):
+            raise GoldenPathError(
+                "process-death continuation differs from uninterrupted run"
+            )
+        retry_report = _run_durable_text(
+            executable,
+            image,
+            package_path,
+            license_path,
+            prompt_path,
+            directory,
+            new_tokens=output_count,
+            reveal_output=True,
+        )
+        if retry_report is None:
+            raise GoldenPathError(
+                "process-death terminal retry report is absent"
+            )
+        retry_wire, retry_roots = _acknowledged_terminal_facts(
+            directory,
+            output_count=output_count,
+            package_sha256=package_sha256,
+            representation_sha256=representation_sha256,
+            license_sha256=license_sha256,
+            raw_text=raw_text,
+            expected_tokens=expected_tokens,
+        )
+        _verify_acknowledged_terminal_report(
+            retry_report,
+            wire=retry_wire,
+            roots=retry_roots,
+            output_count=output_count,
+            selection_before="terminal",
+            disposition="already_terminal",
+            bootstrap_disposition=None,
+            source_disposition=None,
+            target_call_count=1,
+            advanced_target_count=0,
+            output_disclosed=True,
+        )
+        if (
+            retry_wire != uninterrupted_wire
+            or retry_roots != dict(uninterrupted_roots)
+            or _durable_directory_manifest(directory)
+            != uninterrupted_manifest
+        ):
+            raise GoldenPathError(
+                "process-death terminal retry changed durable state"
+            )
+
+    clean_directory = root / "durable-acknowledged-4-supervised-clean"
+    clean_directory.mkdir(mode=0o700)
+    clean_bootstrap_report = _run_durable_text(
+        executable,
+        image,
+        package_path,
+        license_path,
+        prompt_path,
+        clean_directory,
+        new_tokens=output_count,
+        bootstrap_only=True,
+    )
+    if clean_bootstrap_report is None:
+        raise GoldenPathError(
+            "clean supervised bootstrap report is absent"
+        )
+    clean_checkpoint, clean_contract, clean_input = (
+        _acknowledged_bootstrap_facts(clean_directory)
+    )
+    _verify_acknowledged_bootstrap_report(
+        clean_bootstrap_report,
+        checkpoint=clean_checkpoint,
+        contract=clean_contract,
+        durable_input=clean_input,
+        package_sha256=package_sha256,
+        representation_sha256=representation_sha256,
+        license_sha256=license_sha256,
+        raw_text=raw_text,
+        output_count=output_count,
+        selection_before="absent",
+        bootstrap_disposition="created",
+    )
+    clean_bootstrap_manifest = _durable_directory_manifest(
+        clean_directory
+    )
+    if len(clean_bootstrap_manifest) != 3:
+        raise GoldenPathError(
+            "clean supervised bootstrap namespace size mismatch"
+        )
+    clean_supervised = _run_supervised_acknowledged(
+        executable,
+        image,
+        package_path,
+        license_path,
+        prompt_path,
+        clean_directory,
+        kill_after_phase=None,
+        request_epoch=request_epoch,
+        challenge=challenge,
+        package_sha256=package_sha256,
+        representation_sha256=representation_sha256,
+        license_sha256=license_sha256,
+        raw_text=raw_text,
+        expected_tokens=expected_tokens,
+    )
+    total_progress_frames += clean_supervised.progress_frames
+    total_control_grants += clean_supervised.control_grants
+    total_control_bytes += clean_supervised.control_bytes
+    expected_uninterrupted_stdout = (
+        json.dumps(
+            dict(uninterrupted_report),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    if (
+        clean_supervised.return_code != 0
+        or clean_supervised.report != dict(uninterrupted_report)
+        or clean_supervised.stdout != expected_uninterrupted_stdout
+        or len(clean_supervised.manifests) != 5
+        or clean_supervised.manifests[0]
+        != clean_bootstrap_manifest
+        or clean_supervised.manifests[-1]
+        != uninterrupted_manifest
+    ):
+        raise GoldenPathError(
+            "clean supervised execution differs from uninterrupted run"
+        )
+    clean_wire, clean_roots = _acknowledged_terminal_facts(
+        clean_directory,
+        output_count=output_count,
+        package_sha256=package_sha256,
+        representation_sha256=representation_sha256,
+        license_sha256=license_sha256,
+        raw_text=raw_text,
+        expected_tokens=expected_tokens,
+    )
+    if clean_supervised.report is None:
+        raise GoldenPathError(
+            "clean supervised terminal report is absent"
+        )
+    _verify_acknowledged_terminal_report(
+        clean_supervised.report,
+        wire=clean_wire,
+        roots=clean_roots,
+        output_count=output_count,
+        selection_before="source-live",
+        disposition="advanced",
+        bootstrap_disposition="already_selected",
+        source_disposition="advanced",
+        target_call_count=3,
+        advanced_target_count=3,
+        output_disclosed=False,
+    )
+    if (
+        clean_wire != uninterrupted_wire
+        or clean_roots != dict(uninterrupted_roots)
+        or _durable_directory_manifest(clean_directory)
+        != uninterrupted_manifest
+    ):
+        raise GoldenPathError(
+            "clean supervised terminal state differs from uninterrupted run"
+        )
+
+    rejected_progress_frames = 0
+    rejected_control_bytes = 0
+    for rejection, label in (
+        ("preloaded", "preloaded-control"),
+        ("wrong-bound-field", "wrong-bound-control"),
+        ("short-control", "short-control"),
+    ):
+        rejection_directory = root / (
+            "durable-acknowledged-4-" + label
+        )
+        rejection_directory.mkdir(mode=0o700)
+        rejection_bootstrap_report = _run_durable_text(
+            executable,
+            image,
+            package_path,
+            license_path,
+            prompt_path,
+            rejection_directory,
+            new_tokens=output_count,
+            bootstrap_only=True,
+        )
+        if rejection_bootstrap_report is None:
+            raise GoldenPathError(
+                f"{rejection} bootstrap report is absent"
+            )
+        (
+            rejection_checkpoint,
+            rejection_contract,
+            rejection_input,
+        ) = _acknowledged_bootstrap_facts(
+            rejection_directory
+        )
+        _verify_acknowledged_bootstrap_report(
+            rejection_bootstrap_report,
+            checkpoint=rejection_checkpoint,
+            contract=rejection_contract,
+            durable_input=rejection_input,
+            package_sha256=package_sha256,
+            representation_sha256=representation_sha256,
+            license_sha256=license_sha256,
+            raw_text=raw_text,
+            output_count=output_count,
+            selection_before="absent",
+            bootstrap_disposition="created",
+        )
+        rejection_manifest = _durable_directory_manifest(
+            rejection_directory
+        )
+        if len(rejection_manifest) != 3:
+            raise GoldenPathError(
+                f"{rejection} bootstrap namespace size mismatch"
+            )
+        progress_frames, control_bytes = (
+            _run_supervisor_protocol_rejection(
+                executable,
+                image,
+                package_path,
+                license_path,
+                prompt_path,
+                rejection_directory,
+                rejection=rejection,
+                generation_one_manifest=rejection_manifest,
+                request_epoch=request_epoch,
+                challenge=challenge,
+                package_sha256=package_sha256,
+                representation_sha256=representation_sha256,
+                license_sha256=license_sha256,
+                raw_text=raw_text,
+                expected_tokens=expected_tokens,
+            )
+        )
+        rejected_progress_frames += progress_frames
+        rejected_control_bytes += control_bytes
+    total_progress_frames += rejected_progress_frames
+    if (
+        total_progress_frames != 12
+        or total_control_grants != 8
+        or total_control_bytes
+        != 8 * SUPERVISOR_PROGRESS_STRUCT.size
+        or rejected_progress_frames != 2
+        or rejected_control_bytes
+        != 2 * SUPERVISOR_PROGRESS_STRUCT.size
+        + SUPERVISOR_PROGRESS_STRUCT.size // 2
+        or resume_target_calls != [3, 2]
+    ):
+        raise GoldenPathError(
+            "process-death campaign accounting mismatch"
+        )
+    return {
+        "durable_acknowledged_process_death_verified": True,
+        "durable_acknowledged_sigkill_count": 2,
+        "durable_acknowledged_supervisor_progress_frames": (
+            total_progress_frames
+        ),
+        "durable_acknowledged_supervisor_control_grants": (
+            total_control_grants
+        ),
+        "durable_acknowledged_supervisor_control_bytes": (
+            total_control_bytes
+        ),
+        "durable_acknowledged_supervisor_protocol_rejections": 3,
+        "durable_acknowledged_supervisor_rejected_progress_frames": (
+            rejected_progress_frames
+        ),
+        "durable_acknowledged_supervisor_rejected_control_bytes": (
+            rejected_control_bytes
+        ),
+        "durable_acknowledged_supervisor_rejection_cases": [
+            "preloaded",
+            "wrong-bound-field",
+            "short-control",
+        ],
+        "durable_acknowledged_supervised_clean_exit_count": 1,
+        "durable_acknowledged_supervised_nonzero_exit_count": 3,
+        "durable_acknowledged_supervised_target_ordinals": [1, 2, 3],
+        "durable_acknowledged_supervisor_instrumented_processes": 6,
+        "durable_acknowledged_supervisor_cli_processes": 16,
+        "durable_acknowledged_supervisor_successful_reports": 11,
+        "durable_acknowledged_process_death_cli_processes": 8,
+        "durable_acknowledged_process_death_successful_reports": 6,
+        "durable_acknowledged_resume_target_call_counts": (
+            resume_target_calls
+        ),
+        "durable_acknowledged_terminal_retry_count": 2,
+        "durable_acknowledged_terminal_namespace_entries": 13,
+    }
 
 
 def _report_digest(report: Mapping[str, object], name: str) -> bytes:
@@ -3159,6 +4587,7 @@ def run_golden_path(
         # proves a fresh-process source continuation, while N=2 and N=64
         # cover the minimum and maximum runtime-selected sink capacities.
         acknowledged_tokens: dict[int, tuple[int, ...]] = {}
+        acknowledged_process_death: dict[str, object] | None = None
         for acknowledged_output_count in (4, 2, 64):
             acknowledged_ordinary = _run_text(
                 executable,
@@ -3446,7 +4875,38 @@ def run_golden_path(
                     raise GoldenPathError(
                         "acknowledged terminal retry changed state"
                     )
+                acknowledged_process_death = (
+                    _exercise_acknowledged_process_death(
+                        executable,
+                        foreign_image,
+                        foreign_package,
+                        license_path,
+                        prompt_path,
+                        root,
+                        package_sha256=package_facts[
+                            "package_sha256"
+                        ],
+                        representation_sha256=bytes.fromhex(
+                            representation_sha256
+                        ),
+                        license_sha256=hashlib.sha256(
+                            license_bytes
+                        ).digest(),
+                        raw_text=PROMPT.encode("utf-8"),
+                        expected_tokens=ordinary_tokens,
+                        uninterrupted_report=acknowledged_report,
+                        uninterrupted_wire=acknowledged_wire,
+                        uninterrupted_roots=acknowledged_roots,
+                        uninterrupted_manifest=(
+                            acknowledged_terminal_manifest
+                        ),
+                    )
+                )
 
+        if acknowledged_process_death is None:
+            raise GoldenPathError(
+                "acknowledged process-death campaign was not exercised"
+            )
         equivalent_config_bytes = (
             b'{"dim":32,"hidden_dim":64,"num_layers":1,'
             b'"vocab_size":256,"num_heads":4,"head_dim":8,'
@@ -4178,6 +5638,7 @@ def run_golden_path(
             "durable_acknowledged_count_bound_identity": True,
             "durable_acknowledged_independent_lineage_decode": True,
             "durable_acknowledged_output_matches_ordinary": True,
+            **acknowledged_process_death,
             "fresh_process_continuation": True,
             "checked_committed_output": True,
             "durable_output_matches_ordinary": True,

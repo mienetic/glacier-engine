@@ -2136,6 +2136,15 @@ storage-fault and power-loss matrices, serving integration, non-POSIX native
 evidence,
 broader tokenizer/model/GPU package coverage, and stable language bindings
 remain open.
+The installed acknowledged `N=4` path now also exposes explicit paired POSIX
+progress/control descriptors to a trusted local supervisor. Fixed 64-byte
+challenge-bound checkpoints fence ready, verified source retirement, and every
+verified target retirement. The retained same-host golden root includes one
+all-grants control plus real child-only `SIGKILL` after source advance and
+target ordinal one, followed by independently verified fresh-process exact
+resume and immutable terminal retry. The direct, bootstrap-only, and non-POSIX
+routes remain outside this experimental protocol. See
+[Experimental Durable CLI Supervisor Protocol](EXPERIMENTAL_DURABLE_SUPERVISOR.md).
 See
 [Public Prepared-Text Durable Runtime](PREPARED_TEXT_DURABLE_RUNTIME.md).
 
@@ -2163,8 +2172,8 @@ broader tokenizers/models, GPU package execution, and multi-OS requirements
 remain open. The combined
 49-boundary worker now carries an admitted ordinary-profile bundle, while a
 separate same-host fixture executes the installed CLI from isolated ambient
-state. A truly clean-host/native multi-OS run and an installed package-aware
-command process-death campaign remain open.
+state and now retains acknowledged source/first-target command deaths with
+exact resume. A truly clean-host/native multi-OS run remains open.
 
 ### R2 — Stateless tensor families
 
