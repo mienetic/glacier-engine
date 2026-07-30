@@ -36,6 +36,7 @@ FULL_TARGET_STEPS: Tuple[str, ...] = (
 FOCUSED_TARGET_STEPS: Tuple[str, ...] = (
     "unary-text-service-compile",
     "unary-http-compile",
+    "unary-server-process-compile",
     "profile-core-compile",
     "profile-cpu-compile",
     "profile-durable-compile",
@@ -297,6 +298,10 @@ PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS = {
     "src/client/prepared_text_unary_http.zig",
     "src/server/api.zig",
     "tests/prepared_text_unary_http.zig",
+}
+
+PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS = {
+    "tests/prepared_text_unary_server_process.zig",
 }
 
 WORKLOAD_REPORT_PORTABLE_PATHS = {
@@ -864,7 +869,13 @@ def _decision_for_path(path: str) -> PathDecision:
             unary_service_flags.add(
                 "prepared-text-unary-http-focused"
             )
+            unary_service_flags.add(
+                "prepared-text-unary-server-process-focused"
+            )
             unary_service_steps.append("unary-http-compile")
+            unary_service_steps.append(
+                "unary-server-process-compile"
+            )
         return PathDecision(
             path,
             "bounded unary service lifecycle or focused acceptance root changed",
@@ -874,12 +885,37 @@ def _decision_for_path(path: str) -> PathDecision:
         )
 
     if lower in PREPARED_TEXT_UNARY_HTTP_FOCUSED_PATHS:
+        unary_http_flags = {
+            "prepared-text-unary-http-focused",
+        }
+        unary_http_steps = ["unary-http-compile"]
+        if lower in {
+            "src/server/api.zig",
+            "src/server/prepared_text_unary_http.zig",
+        }:
+            unary_http_flags.add(
+                "prepared-text-unary-server-process-focused"
+            )
+            unary_http_steps.append(
+                "unary-server-process-compile"
+            )
         return PathDecision(
             path,
             "bounded unary HTTP transport, client, or focused acceptance root changed",
-            frozenset({"prepared-text-unary-http-focused"}),
+            frozenset(unary_http_flags),
             RETAINED_TARGETS,
-            ("unary-http-compile",),
+            tuple(unary_http_steps),
+        )
+
+    if lower in PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "bounded managed unary server process lifecycle changed",
+            frozenset(
+                {"prepared-text-unary-server-process-focused"}
+            ),
+            RETAINED_TARGETS,
+            ("unary-server-process-compile",),
         )
 
     if path in PREPARED_TEXT_RECOVERY_CAMPAIGN_PATHS:
@@ -1198,6 +1234,10 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
             "prepared-text-unary-http-focused",
             "native/prepared-text-unary-http",
         ),
+        (
+            "prepared-text-unary-server-process-focused",
+            "native/prepared-text-unary-server-process",
+        ),
         ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
         (
             "prepared-text-direct-terminal-smoke-focused",
@@ -1251,6 +1291,10 @@ def print_report(plan: VerificationPlan) -> None:
         (
             "prepared-text-unary-http-focused",
             "native/prepared-text-unary-http",
+        ),
+        (
+            "prepared-text-unary-server-process-focused",
+            "native/prepared-text-unary-server-process",
         ),
         ("prepared-text-delivery-focused", "native/prepared-text-delivery"),
         (

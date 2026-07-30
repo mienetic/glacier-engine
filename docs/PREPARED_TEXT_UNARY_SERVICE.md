@@ -1,7 +1,7 @@
 # Bounded Prepared-Text Unary Service
 
 Status: **experimental process-local kernel with a bounded loopback HTTP/1.1
-adapter and retained client**.
+adapter, retained client, and R1k-b8 Phase A managed child-process lifecycle**.
 
 `prepared_text_unary_service` composes the existing prepared-model,
 `LaneWeave`, `ResourceBank`, publication, and terminal-result contracts into a
@@ -140,6 +140,34 @@ content, and token-count correlation. Calls are serialized because the client
 reuses its bounded workspaces. It does not authenticate the peer or
 automatically retry a request.
 
+## Managed child-process lifecycle, Phase A
+
+`ManagedLifecycleV1` wraps the serial listener without changing `ServiceV1` or
+the frozen HTTP profile. One nonzero process generation starts in `starting`,
+publishes `ready` after the package-bound runtime and loopback listener exist,
+moves once to `draining`, and ends in `stopped`. Lifecycle failure instead
+publishes `failed`. Its snapshot retains exact accepted, completed, failed, and
+active connection counts.
+
+Drain closes execution admission as well as listener admission. The runtime
+takes its completion mutex and disables new completion admission before
+`draining` becomes visible. A loopback wake then releases a blocked `accept`.
+An already-running serialized completion holds that same mutex through terminal
+response construction, so drain cannot overtake its admission boundary. This
+is a bounded clean-drain rule, not request timeout or disconnect cancellation.
+
+The focused real-process fixture uses one executable in supervisor and child
+worker modes. The child accepts only `drain\n` followed by EOF or empty stdin
+EOF as out-of-band control. Its bounded `READY`, `DRAINING`, and `CLOSED`
+frames contain generation, model, port, and lifecycle/close facts but no prompt
+or host path. The supervisor proves invalid generation zero produces no ready
+frame; generation A serves model-list, completion, and exact replay, survives a
+malformed raw peer connect/disconnect followed by a valid barrier request, then
+closes with zero active requests and zero Bank ownership. Generation B loads
+the same package with a new process generation and idempotency key, proves the
+same model, binding, content, and output identity, and closes cleanly. This
+fresh restart does not preserve retained idempotency records.
+
 ## Focused verification
 
 Run the bounded acceptance root without compiling the broad model-forward
@@ -168,33 +196,48 @@ zig build unary-http-compile \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
+Run or compile the focused managed real-process acceptance:
+
+```sh
+zig build unary-server-process-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+
+zig build unary-server-process-compile \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
 The acceptance fixture uses a generated `32/64/1/256` ordinary package. It
 checks two-request interleaving against independent generation oracles, active
 and completed idempotent replay, conflict and capacity immutability,
 cancellation with a hidden private prefix, stale-handle fencing, retained
-response ownership, and final zero Scheduler/Bank ownership.
+response ownership, and final zero Scheduler/Bank ownership. The process
+acceptance separately reuses one dual-mode executable for its supervisor and
+two fresh child generations; it is host real-process lifecycle evidence rather
+than a production daemon or native foreign-target run.
 
 `tools/verify.sh affected-fast` selects `unary-http-test` once for HTTP codec,
-adapter, API, client, or acceptance-test changes. A unary-kernel implementation
-change selects `unary-text-service-test` and `unary-http-test` in one host Zig
-invocation. Complete affected verification selects the corresponding
-compile-only roots on retained targets; those foreign builds are compile
-evidence, not native serving evidence. Package-aware CLI changes continue to
-share the unary acceptance root and installed text-runtime golden path in one
-Zig invocation.
+adapter, API, client, or acceptance-test changes. Managed lifecycle or process
+acceptance changes select `unary-server-process-test`. A shared unary-kernel or
+server implementation change composes `unary-text-service-test`,
+`unary-http-test`, and `unary-server-process-test` in one host Zig invocation.
+Complete affected verification selects the corresponding compile-only roots on
+retained targets; those foreign builds are compile evidence, not native serving
+evidence. Package-aware CLI changes continue to share the unary acceptance root
+and installed text-runtime golden path in one Zig invocation.
 
 ## Deliberate nonclaims and next work
 
-This slice establishes only an experimental serial loopback socket and bounded
-JSON profile around one in-process runtime. It does not establish non-loopback
-serving, a separately managed server process, concurrent model execution,
-streaming publication, durable idempotency, disconnect cancellation,
-graceful-drain or restart behavior, process-death recovery, authentication,
-authorization, TLS, automatic retry, quota enforcement, GPU execution,
-production-model quality, or performance. The next serving slices are:
+This slice establishes an experimental serial loopback socket, bounded JSON
+profile, retained client, and one focused managed child-process Phase A. It does
+not establish a packaged production daemon, non-loopback serving, concurrent
+model execution, streaming publication, durable idempotency, request timeout
+or disconnect cancellation, accepted-work coverage across every drain phase,
+process-death recovery, authentication, authorization, TLS, automatic retry,
+quota enforcement, GPU execution, production-model quality, native multi-OS
+serving, load evidence, or performance. The next serving slices are:
 
-1. add disconnect, timeout, overload, graceful-drain, and restart campaigns
-   around a separately managed server process;
+1. extend the managed process through disconnect, timeout, overload,
+   accepted-work drain, forced-death, and durable restart campaigns;
 2. add load generation only after that process boundary exists, separating
    admission latency, first-token latency, throughput, fairness, and cleanup;
 3. define a bounded per-tenant queue if more than one concurrent request per

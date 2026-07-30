@@ -27,6 +27,19 @@ before the first stable release.
   values, rejects redirects, and validates response correlation. It does not
   add authentication, TLS, streaming, automatic retry, durable idempotency,
   restart, disconnect, production-model, GPU, or performance evidence.
+- R1k-b8 Phase A adds an experimental managed lifecycle around that serial
+  loopback server. `ManagedLifecycleV1` records one nonzero process generation,
+  exact connection outcomes, and the monotone
+  `starting -> ready -> draining -> stopped` path with a terminal `failed`
+  state. An out-of-band `drain\n` command followed by EOF, or empty stdin EOF,
+  closes completion admission before waking the listener. A focused dual-mode
+  real-process fixture survives a malformed peer, verifies retained-client
+  request and replay behavior, closes with zero active service requests and
+  zero Bank ownership, and starts a fresh child from the same package with the
+  same model identity. This does not make idempotency durable across restart or
+  add durable or process-death recovery, streaming, request timeout or
+  disconnect cancellation, authentication, TLS, concurrent serving, load or
+  performance evidence, GPU execution, or native multi-OS serving evidence.
 
 ### Changed
 
@@ -47,7 +60,10 @@ before the first stable release.
   Unary HTTP codec, adapter, API, client, and acceptance changes run
   `unary-http-test` once under `affected-fast`; complete affected verification
   selects `unary-http-compile` on retained targets. Kernel implementation
-  changes run the service and HTTP roots in one host Zig invocation.
+  changes run the service and HTTP roots in one host Zig invocation. Managed
+  server-process lifecycle changes add `unary-server-process-test` to that
+  shared host invocation; complete affected verification selects only its
+  `unary-server-process-compile` companion on retained targets.
   Prepared-text session changes now select only the CPU, durable, and host-tool
   compile profiles, while the process-local variable-terminal module selects
   only the host-tool profile; both reuse that same host golden DAG instead of

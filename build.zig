@@ -1102,6 +1102,48 @@ pub fn build(b: *std.Build) void {
     );
     unary_http_compile_step.dependOn(&unary_http_tests.step);
 
+    // A single dual-mode artifact supervises and re-executes itself as the
+    // bounded unary server worker. This proves the process boundary without
+    // compiling separate controller and worker copies of the runtime graph.
+    const unary_server_process_tests = b.addExecutable(.{
+        .name = "glacier-unary-server-process-test",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(
+                "tests/prepared_text_unary_server_process.zig",
+            ),
+            .target = target,
+            .optimize = optimize,
+            .sanitize_thread = sanitize_thread,
+        }),
+    });
+    unary_server_process_tests.root_module.addImport(
+        "engine",
+        engine_mod,
+    );
+    unary_server_process_tests.root_module.addImport(
+        "core",
+        core_mod,
+    );
+    unary_server_process_tests.linkLibC();
+    if (int4_neon) |lib|
+        unary_server_process_tests.linkLibrary(lib);
+    const run_unary_server_process_tests =
+        b.addRunArtifact(unary_server_process_tests);
+    const unary_server_process_test_step = b.step(
+        "unary-server-process-test",
+        "Run bounded managed unary server process acceptance",
+    );
+    unary_server_process_test_step.dependOn(
+        &run_unary_server_process_tests.step,
+    );
+    const unary_server_process_compile_step = b.step(
+        "unary-server-process-compile",
+        "Compile bounded managed unary server process acceptance",
+    );
+    unary_server_process_compile_step.dependOn(
+        &unary_server_process_tests.step,
+    );
+
     // Grounded DecodeLane4 evidence primitives remain separate from the
     // production CLI: fixed lane-local token journals and the four-request
     // post-commit barrier can therefore be tested without pulling protocol or
@@ -1302,6 +1344,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_model_tests.step);
     test_step.dependOn(&run_unary_text_service_tests.step);
     test_step.dependOn(&run_unary_http_tests.step);
+    test_step.dependOn(&run_unary_server_process_tests.step);
     test_step.dependOn(&run_lane4_runner_core_tests.step);
     test_step.dependOn(&run_lane4_runner_observation_tests.step);
     test_step.dependOn(&run_lane4_event_wire_tests.step);
@@ -1334,6 +1377,7 @@ pub fn build(b: *std.Build) void {
     test_compile_step.dependOn(&model_tests.step);
     test_compile_step.dependOn(&unary_text_service_tests.step);
     test_compile_step.dependOn(&unary_http_tests.step);
+    test_compile_step.dependOn(&unary_server_process_tests.step);
     test_compile_step.dependOn(&lane4_runner_core_tests.step);
     test_compile_step.dependOn(&lane4_runner_observation_tests.step);
     test_compile_step.dependOn(&lane4_event_wire_tests.step);
@@ -6990,6 +7034,9 @@ pub fn build(b: *std.Build) void {
         &unary_text_service_tests.step,
     );
     profile_cpu_compile_step.dependOn(&unary_http_tests.step);
+    profile_cpu_compile_step.dependOn(
+        &unary_server_process_tests.step,
+    );
 
     const profile_durable_compile_step = b.step(
         "profile-durable-compile",

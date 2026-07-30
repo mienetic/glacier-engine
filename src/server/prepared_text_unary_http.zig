@@ -21,6 +21,7 @@ pub const RuntimeV1 = struct {
     model_binding_sha256: protocol.Digest,
     model_id: [protocol.model_id_bytes]u8,
     request_mutex: std.Thread.Mutex = .{},
+    accepting_completions: bool = true,
 };
 
 pub const WorkspaceV1 = struct {
@@ -92,6 +93,22 @@ pub fn initV1(
         .model_binding_sha256 = binding_sha256,
         .model_id = model_id,
     };
+}
+
+/// Closes only HTTP completion admission. A request already admitted to the
+/// unary service finishes under the same mutex before this call returns.
+pub fn beginDrainV1(runtime: *RuntimeV1) bool {
+    runtime.request_mutex.lock();
+    defer runtime.request_mutex.unlock();
+    const was_accepting = runtime.accepting_completions;
+    runtime.accepting_completions = false;
+    return was_accepting;
+}
+
+pub fn acceptingCompletionsV1(runtime: *RuntimeV1) bool {
+    runtime.request_mutex.lock();
+    defer runtime.request_mutex.unlock();
+    return runtime.accepting_completions;
 }
 
 pub fn serveRequestV1(
@@ -281,6 +298,15 @@ fn serveCompletionV1(
 
     runtime.request_mutex.lock();
     defer runtime.request_mutex.unlock();
+
+    if (!runtime.accepting_completions) {
+        return respondApiError(
+            request,
+            workspace,
+            .service_closed,
+            request_sha256,
+        );
+    }
 
     const admission = runtime.service.admitV1(.{
         .tenant_key = decoded.request.tenant_key,
