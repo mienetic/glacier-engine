@@ -280,6 +280,10 @@ pub const ManagedConcurrentEventV1 = struct {
     running_connections: u8,
 };
 
+/// Evidence callbacks may execute concurrently on the acceptor, worker,
+/// watchdog, or drain-caller thread and may arrive in a different order from
+/// their canonical `event.ordinal`. The context must remain valid until the
+/// serving call returns and must synchronize every shared access.
 pub const ManagedConcurrentObserverV1 = struct {
     context: *anyopaque,
     event_fn: *const fn (
@@ -3012,7 +3016,8 @@ pub fn serveManagedConcurrentListenerV1(
 ///
 /// The observer is evidence-only. Its callback runs outside every lifecycle,
 /// runtime, service, and socket-control mutex and cannot change a production
-/// winner.
+/// winner. Callbacks may be concurrent and delivered out of ordinal order;
+/// the context must be thread-safe and remain valid until this call returns.
 pub fn serveManagedConcurrentListenerWithObserverV1(
     listener: *std.net.Server,
     config: ServerConfig,
@@ -3321,14 +3326,9 @@ fn managedConcurrentAcceptLoopV1(
             if (!still_ready) return;
             return err;
         };
-        setAcceptedSocketBlockingV1(
-            connection.stream.handle,
-        ) catch |err| {
-            var failed_connection = connection;
-            failed_connection.stream.close();
-            return err;
-        };
 
+        // Start the shared accept-origin budget before any socket
+        // normalization so scheduler or fcntl delay cannot extend it.
         const accept_timer =
             if (config.receive_timeout_ns == 0 and
             config.full_request_timeout_ns == 0)
@@ -3344,6 +3344,13 @@ fn managedConcurrentAcceptLoopV1(
                     if (!still_ready) return;
                     return err;
                 };
+        setAcceptedSocketBlockingV1(
+            connection.stream.handle,
+        ) catch |err| {
+            var failed_connection = connection;
+            failed_connection.stream.close();
+            return err;
+        };
 
         lifecycle.managed.mutex.lock();
         const should_accept =
@@ -4160,19 +4167,31 @@ const ManagedDeadlineReaderV1 = struct {
     ) std.Io.Reader.StreamError!usize {
         const self: *ManagedDeadlineReaderV1 =
             @alignCast(@fieldParentPtr("interface", reader));
-        self.waitUntilReadable() catch return error.ReadFailed;
         const destination = limit.slice(
             try writer.writableSliceGreedy(1),
         );
-        const read_count = std.posix.recv(
-            self.stream.handle,
-            destination,
-            0,
-        ) catch
-            return error.ReadFailed;
-        if (read_count == 0) return error.EndOfStream;
-        writer.advance(read_count);
-        return read_count;
+        while (true) {
+            self.waitUntilReadable() catch return error.ReadFailed;
+            // F1 is POSIX-only. Read nonblocking after poll so stale or
+            // consumed readiness cannot strand a blocking accepted socket
+            // inside recv and prevent bounded drain/join convergence.
+            const flags: u32 =
+                if (builtin.os.tag == .windows)
+                    0
+                else
+                    std.posix.MSG.DONTWAIT;
+            const read_count = std.posix.recv(
+                self.stream.handle,
+                destination,
+                flags,
+            ) catch |err| switch (err) {
+                error.WouldBlock => continue,
+                else => return error.ReadFailed,
+            };
+            if (read_count == 0) return error.EndOfStream;
+            writer.advance(read_count);
+            return read_count;
+        }
     }
 
     fn waitUntilReadable(self: *ManagedDeadlineReaderV1) !void {

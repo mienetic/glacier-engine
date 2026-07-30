@@ -339,10 +339,12 @@ handoff, counters, and snapshots. One shared watchdog evaluates deadlines for
 all queued and running slots; the concurrent path does not create one
 watchdog thread per connection. The timer begins immediately after `accept`,
 so time spent waiting in FIFO consumes both the receive timeout and the
-accept-origin full-request timeout. When the shorter receive deadline is
-enabled, it remains the unique incomplete-request winner. A queued expiry
-retires the fenced lease and closes the socket without reading a request,
-creating a service record, or synthesizing an HTTP response.
+accept-origin full-request timeout. It starts before the accepted socket is
+returned to blocking mode, so scheduler or socket-normalization delay cannot
+extend either budget. When the shorter receive deadline is enabled, it remains
+the unique incomplete-request winner. A queued expiry retires the fenced lease
+and closes the socket without reading a request, creating a service record, or
+synthesizing an HTTP response.
 
 When the accepted FIFO reaches its configured capacity, the acceptor pauses
 before the next `accept` and waits for capacity. Additional peers remain under
@@ -353,12 +355,15 @@ and revalidates lifecycle state before entering `accept`. Every accepted socket
 is returned to blocking mode before FIFO or worker handoff. Managed receive
 revalidates lifecycle on every readiness-wait iteration, with each quantum
 capped at 100 milliseconds even when the configured timeout is zero, so drain
-and fatal convergence do not depend on cross-thread `shutdown` succeeding. An
-unexpected shutdown error advances no successful signal counter or event for
-that connection and leaves it unclaimed, allowing failure convergence to retry
-and take over. This bounded transport path does not return an unparsed-request
-HTTP 429 or 503; the existing 429 for service or Scheduler capacity remains a
-distinct post-parse application response.
+and fatal convergence do not depend on cross-thread `shutdown` succeeding.
+After readiness, the POSIX read itself is nonblocking; stale or concurrently
+consumed readiness returns to the bounded poll/revalidation loop instead of
+stranding a worker in `recv`. An unexpected shutdown error advances no
+successful signal counter or event for that connection and leaves it
+unclaimed, allowing failure convergence to retry and take over. This bounded
+transport path does not return an unparsed-request HTTP 429 or 503; the existing
+429 for service or Scheduler capacity remains a distinct post-parse
+application response.
 
 Socket ownership moves exactly once from acceptor to FIFO to one worker.
 Queued timeout, drain, or failure first detaches the still-queued connection
@@ -393,7 +398,11 @@ flags captured before serving. It may publish `stopped` only when the FIFO and
 all connection slots are empty; the existing service close separately verifies
 zero Scheduler and Bank ownership. The optional observer runs outside
 lifecycle, runtime, service, and socket-control locks and cannot select a
-production winner.
+production winner. Its callback may execute concurrently on acceptor, worker,
+watchdog, or drain-caller threads and may arrive out of ordinal order. Observer
+context must therefore remain alive until the serving call returns and
+synchronize every shared access; `event.ordinal`, not callback arrival, is the
+canonical event order.
 
 The deterministic native-loopback gate continues to pass through
 `zig build unary-http-test -Dmetal=false -Doptimize=ReleaseSafe -j2`.
