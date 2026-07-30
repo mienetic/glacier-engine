@@ -1939,7 +1939,7 @@ graceful drain, restart, durable idempotency, process-death recovery, native
 multi-OS serving, GPU execution, production-model quality, or performance
 evidence.
 
-#### R1k-b8 — Managed unary server process lifecycle, Phase A
+#### R1k-b8 — Managed unary server process lifecycle, Phases A-B
 
 Status: **integrated experimental host-process lifecycle slice**.
 
@@ -1951,12 +1951,17 @@ loopback adapter. Its monotone lifecycle begins at `starting`, publishes
 `failed`. The lifecycle state is bounded process-control evidence, not a
 readiness or liveness service guarantee.
 
-The drain boundary is also an execution-admission boundary. Before the managed
-state exposes `draining`, the runtime takes its completion mutex and disables
-new completion admission. A loopback wake then releases a listener blocked in
-`accept`. Connection-local parsing or peer-disconnect failure increments the
-failed-connection facts without terminating the ready listener. The HTTP R1
-model-list and completion profile remains unchanged.
+Phase B adds one active-connection lease fenced by process generation,
+connection sequence, and native handle. The lease starts in exact phase
+`receiving_head` and advances once to `request_head_received` after the HTTP
+head has been received. The drain boundary remains an execution-admission
+boundary: before managed state exposes `draining`, the runtime closes
+completion admission. While still holding the lifecycle lock, drain performs
+receive-side shutdown on a leased connection or uses the existing loopback
+wake when no connection is active. The serving thread is the sole connection
+closer. It accounts the outcome and retires the fenced lease before its
+deferred close, so drain does not race a second owner closing a reused handle.
+The HTTP R1 model-list and completion profile remains unchanged.
 
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
@@ -1967,22 +1972,31 @@ A proves model listing, one completion, exact process-local replay, malformed
 peer isolation followed by another valid model-list request, clean drain, zero
 active service requests, and zero Bank ownership. Generation B loads the same
 package with a new idempotency key and proves the same model, binding, content,
-and output identity before another clean close. Generation zero fails before
-any `READY` frame.
+and output identity before another clean close. Two additional real child
+generations hold a partial HTTP head and a complete head with a declared but
+partial body open. Drain meets those peers in `receiving_head` and
+`request_head_received`, respectively, receive-cancels each, records exactly
+one accepted, zero completed, one failed, and zero active connection, and
+closes with zero active service requests, zero terminal service records, and
+zero Bank ownership. Generation zero fails before any `READY` frame.
 
 `unary-server-process-test` runs that real host-process fixture without the
 broad model-forward suite. `unary-server-process-compile` supplies compile-only
 evidence for retained targets; it does not execute a child or establish native
 serving support there. Shared kernel or server implementation changes compose
-the service, HTTP, and process roots in one host Zig invocation.
+the service, HTTP, and process roots in one host Zig invocation. Phase B reuses
+the same dual-mode executable and these existing targets; it adds no compile
+root.
 
-Phase A does not retain idempotency records or active execution across process
-restart. It adds no durable recovery, process-death recovery, request timeout
-or disconnect cancellation, accepted-work drain matrix, concurrent serving,
-overload queue, streaming, early EOS, authentication, authorization, TLS,
-quota, GPU execution, native multi-OS serving promotion, production-model
-quality, load evidence, or performance claim. It does not meet the full serving
-promotion gate.
+Phases A-B do not retain idempotency records or active execution across process
+restart. Receive-side drain cancellation before service admission is not a
+wall-clock request timeout, a post-admission accepted-work cancellation
+matrix, or slow-response-write cancellation. This slice adds no durable or
+process-death recovery, concurrent serving, overload queue, streaming, early
+EOS, authentication, authorization, TLS, quota, GPU execution, load evidence,
+or performance claim. Retained-target compile closure is not native serving
+proof on Windows or FreeBSD, and shutdown of a pending overlapped receive on
+Windows remains unproven. It does not meet the full serving promotion gate.
 
 #### Public durable-runtime composition foundation
 
@@ -2038,15 +2052,17 @@ the direct-terminal proof remains a bounded four-boundary POSIX smoke rather
 than an exhaustive storage or power-loss campaign. Ordinary-package production
 and admission now include checked durable fixed output `1..64`, with focused
 `N=2`, fresh-process `N=4`, and `N=64` evidence for one narrow CPU/POSIX
-profile. R1k-b8 Phase A now proves a clean managed child-process drain,
-zero-ownership close, and same-package fresh restart, but not durable request
-state, crash recovery, or the full serving lifecycle. Production artifacts,
-remote delivery, broader tokenizers/models, GPU package execution, and
-multi-OS requirements remain open. The combined 49-boundary worker now carries
-an admitted ordinary-profile bundle, while a separate same-host fixture
-executes the installed CLI from isolated ambient state. A truly
-clean-host/native multi-OS run and an installed package-aware command
-process-death campaign remain open.
+profile. R1k-b8 Phases A-B now prove a clean managed child-process drain,
+receive-side cancellation of held-open partial HTTP heads and bodies before
+service admission, zero-ownership close, and same-package fresh restart. They
+do not prove wall-clock timeout, post-admission accepted-work or
+slow-response-write cancellation, durable request state, crash recovery, or
+the full serving lifecycle. Production artifacts, remote delivery, broader
+tokenizers/models, GPU package execution, and multi-OS requirements remain
+open. The combined 49-boundary worker now carries an admitted ordinary-profile
+bundle, while a separate same-host fixture executes the installed CLI from
+isolated ambient state. A truly clean-host/native multi-OS run and an installed
+package-aware command process-death campaign remain open.
 
 ### R2 — Stateless tensor families
 

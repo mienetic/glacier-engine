@@ -1,7 +1,8 @@
 # Bounded Prepared-Text Unary Service
 
 Status: **experimental process-local kernel with a bounded loopback HTTP/1.1
-adapter, retained client, and R1k-b8 Phase A managed child-process lifecycle**.
+adapter, retained client, and R1k-b8 Phases A-B managed child-process
+lifecycle**.
 
 `prepared_text_unary_service` composes the existing prepared-model,
 `LaneWeave`, `ResourceBank`, publication, and terminal-result contracts into a
@@ -140,33 +141,46 @@ content, and token-count correlation. Calls are serialized because the client
 reuses its bounded workspaces. It does not authenticate the peer or
 automatically retry a request.
 
-## Managed child-process lifecycle, Phase A
+## Managed child-process lifecycle, Phases A-B
 
 `ManagedLifecycleV1` wraps the serial listener without changing `ServiceV1` or
 the frozen HTTP profile. One nonzero process generation starts in `starting`,
 publishes `ready` after the package-bound runtime and loopback listener exist,
 moves once to `draining`, and ends in `stopped`. Lifecycle failure instead
 publishes `failed`. Its snapshot retains exact accepted, completed, failed, and
-active connection counts.
+active connection counts. Phase B gives the sole active connection a lease
+fenced by process generation, connection sequence, and native handle. Its
+phase is exactly `receiving_head` until the HTTP head arrives, then
+`request_head_received`. The snapshot also retains the exact drain-signaled
+connection count and last signaled phase.
 
 Drain closes execution admission as well as listener admission. The runtime
 takes its completion mutex and disables new completion admission before
-`draining` becomes visible. A loopback wake then releases a blocked `accept`.
-An already-running serialized completion holds that same mutex through terminal
-response construction, so drain cannot overtake its admission boundary. This
-is a bounded clean-drain rule, not request timeout or disconnect cancellation.
+`draining` becomes visible. While still holding the lifecycle lock, drain
+performs receive-side shutdown on the fenced active lease; with no active
+connection, a loopback wake releases a blocked `accept`. The serving thread
+remains the only socket closer: it accounts success or failure and retires the
+lease before its deferred close. An already-admitted serialized completion
+holds the completion mutex through terminal response construction, so this
+receive cancellation does not claim to interrupt accepted execution.
 
 The focused real-process fixture uses one executable in supervisor and child
-worker modes. The child accepts only `drain\n` followed by EOF or empty stdin
-EOF as out-of-band control. Its bounded `READY`, `DRAINING`, and `CLOSED`
+worker modes. The ordinary clean path accepts `drain\n` followed by EOF or
+empty stdin EOF as out-of-band control; phase-targeted fixture controls select
+the two partial-receive cases. Its bounded `READY`, `DRAINING`, and `CLOSED`
 frames contain generation, model, port, and lifecycle/close facts but no prompt
 or host path. The supervisor proves invalid generation zero produces no ready
 frame; generation A serves model-list, completion, and exact replay, survives a
 malformed raw peer connect/disconnect followed by a valid barrier request, then
-closes with zero active requests and zero Bank ownership. Generation B loads
-the same package with a new process generation and idempotency key, proves the
-same model, binding, content, and output identity, and closes cleanly. This
-fresh restart does not preserve retained idempotency records.
+closes with zero active requests and zero Bank ownership. Separate real child
+generations hold one partial header open in `receiving_head` and one complete
+head with a declared but partial body open in `request_head_received`. Drain
+receive-cancels each peer and records exactly one accepted, zero completed, one
+failed, and zero active connection; each child closes with zero active service
+requests, zero terminal service records, and zero Bank ownership. Generation B
+loads the same package with a new process generation and idempotency key,
+proves the same model, binding, content, and output identity, and closes
+cleanly. This fresh restart does not preserve retained idempotency records.
 
 ## Focused verification
 
@@ -211,8 +225,9 @@ checks two-request interleaving against independent generation oracles, active
 and completed idempotent replay, conflict and capacity immutability,
 cancellation with a hidden private prefix, stale-handle fencing, retained
 response ownership, and final zero Scheduler/Bank ownership. The process
-acceptance separately reuses one dual-mode executable for its supervisor and
-two fresh child generations; it is host real-process lifecycle evidence rather
+acceptance separately reuses one dual-mode executable for its supervisor,
+clean/restart children, and both partial-receive children; Phase B adds no
+artifact or build target. It is host real-process lifecycle evidence rather
 than a production daemon or native foreign-target run.
 
 `tools/verify.sh affected-fast` selects `unary-http-test` once for HTTP codec,
@@ -222,22 +237,29 @@ server implementation change composes `unary-text-service-test`,
 `unary-http-test`, and `unary-server-process-test` in one host Zig invocation.
 Complete affected verification selects the corresponding compile-only roots on
 retained targets; those foreign builds are compile evidence, not native serving
-evidence. Package-aware CLI changes continue to share the unary acceptance root
-and installed text-runtime golden path in one Zig invocation.
+evidence. The Phase B partial-receive cases remain inside the existing process
+executable, test target, and compile-only companion. Package-aware CLI changes
+continue to share the unary acceptance root and installed text-runtime golden
+path in one Zig invocation.
 
 ## Deliberate nonclaims and next work
 
 This slice establishes an experimental serial loopback socket, bounded JSON
-profile, retained client, and one focused managed child-process Phase A. It does
-not establish a packaged production daemon, non-loopback serving, concurrent
-model execution, streaming publication, durable idempotency, request timeout
-or disconnect cancellation, accepted-work coverage across every drain phase,
+profile, retained client, and focused managed child-process Phases A-B.
+Receive-side drain cancellation of the two pre-service partial-receive phases
+is not a wall-clock timeout, a post-admission accepted-work cancellation
+matrix, or slow-response-write cancellation. This slice does not establish a
+packaged production daemon, non-loopback serving, concurrent model execution,
+overload policy, streaming publication, durable idempotency or crash recovery,
 process-death recovery, authentication, authorization, TLS, automatic retry,
-quota enforcement, GPU execution, production-model quality, native multi-OS
-serving, load evidence, or performance. The next serving slices are:
+quota enforcement, GPU execution, production-model quality, load evidence, or
+performance. Retained-target compilation is not native Windows or FreeBSD
+serving proof, and shutdown of a pending overlapped receive on Windows remains
+unproven. The next serving slices are:
 
-1. extend the managed process through disconnect, timeout, overload,
-   accepted-work drain, forced-death, and durable restart campaigns;
+1. extend the managed process through wall-clock timeout, post-admission
+   accepted-work drain, slow-response-write cancellation, overload,
+   forced-death, and durable restart campaigns;
 2. add load generation only after that process boundary exists, separating
    admission latency, first-token latency, throughput, fairness, and cleanup;
 3. define a bounded per-tenant queue if more than one concurrent request per

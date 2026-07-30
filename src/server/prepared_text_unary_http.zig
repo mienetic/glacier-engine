@@ -249,6 +249,10 @@ fn serveCompletionV1(
     body_reader.readSliceAll(
         workspace.body[0..content_length],
     ) catch {
+        // Managed drain interrupts only the receive side. Do not turn that
+        // transport cancellation into a client-visible malformed-body reply.
+        if (!acceptingCompletionsV1(runtime))
+            return error.ConnectionDraining;
         return respondApiError(
             request,
             workspace,

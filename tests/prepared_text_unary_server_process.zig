@@ -21,12 +21,17 @@ const fixture_config =
 const worker_mode = "worker";
 const loopback_host = "127.0.0.1";
 const drain_command = "drain\n";
+const drain_head_command = "drain-head\n";
+const drain_body_command = "drain-body\n";
 const prompt = "http-probe-6";
 const generation_a: u64 = 0x4753_5052_0000_0101;
-const generation_b: u64 = 0x4753_5052_0000_0102;
+const generation_partial_head: u64 = 0x4753_5052_0000_0102;
+const generation_partial_body: u64 = 0x4753_5052_0000_0103;
+const generation_b: u64 = 0x4753_5052_0000_0104;
 const frame_max_bytes = 256;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
+const control_poll_limit: usize = 500;
 
 pub fn main() !void {
     if (comptime engine.bounded_file_input.availableV1() and
@@ -385,7 +390,11 @@ fn runWorker(
         listen_address.getPort(),
         &runtime.model_id,
     );
-    try readDrainCommand(std.fs.File.stdin());
+    const drain_control =
+        try readDrainControl(std.fs.File.stdin());
+    if (drain_control.requestedPhase()) |phase| {
+        try waitForActivePhase(&lifecycle, phase);
+    }
     try server_api.requestDrainAndWakeV1(
         &lifecycle,
         &runtime,
@@ -393,7 +402,12 @@ fn runWorker(
     );
     if (http_server.acceptingCompletionsV1(&runtime))
         return error.DrainAdmissionStillOpen;
+    try waitForInactiveConnection(&lifecycle);
     const draining = lifecycle.snapshotV1();
+    try validateDrainSignalReceipt(
+        draining,
+        drain_control.requestedPhase(),
+    );
     try emitDraining(draining);
 
     serve_thread.join();
@@ -402,10 +416,15 @@ fn runWorker(
 
     const stopped = lifecycle.snapshotV1();
     if (stopped.state != .stopped or
-        stopped.active_connections != 0)
+        stopped.active_connections != 0 or
+        stopped.active_connection_phase != .none)
     {
         return error.InvalidLifecycleReceipt;
     }
+    try validateDrainSignalReceipt(
+        stopped,
+        drain_control.requestedPhase(),
+    );
     const service_snapshot = try harness.service.snapshotV1();
     if (service_snapshot.active_requests != 0 or
         service_snapshot.bank == null or
@@ -441,8 +460,24 @@ fn forceDrainAndWake(
     };
 }
 
-fn readDrainCommand(stdin: std.fs.File) !void {
-    var command: [drain_command.len + 1]u8 = undefined;
+const DrainControl = enum {
+    immediate,
+    partial_head,
+    partial_body,
+
+    fn requestedPhase(
+        self: DrainControl,
+    ) ?server_api.ManagedConnectionPhaseV1 {
+        return switch (self) {
+            .immediate => null,
+            .partial_head => .receiving_head,
+            .partial_body => .request_head_received,
+        };
+    }
+};
+
+fn readDrainControl(stdin: std.fs.File) !DrainControl {
+    var command: [drain_body_command.len + 1]u8 = undefined;
     var count: usize = 0;
     while (true) {
         var byte: [1]u8 = undefined;
@@ -453,9 +488,83 @@ fn readDrainCommand(stdin: std.fs.File) !void {
         command[count] = byte[0];
         count += 1;
     }
-    if (count == 0) return;
-    if (!std.mem.eql(u8, command[0..count], drain_command))
-        return error.InvalidControlCommand;
+    if (count == 0 or
+        std.mem.eql(u8, command[0..count], drain_command))
+    {
+        return .immediate;
+    }
+    if (std.mem.eql(
+        u8,
+        command[0..count],
+        drain_head_command,
+    )) {
+        return .partial_head;
+    }
+    if (std.mem.eql(
+        u8,
+        command[0..count],
+        drain_body_command,
+    )) {
+        return .partial_body;
+    }
+    return error.InvalidControlCommand;
+}
+
+fn waitForActivePhase(
+    lifecycle: *server_api.ManagedLifecycleV1,
+    expected: server_api.ManagedConnectionPhaseV1,
+) !void {
+    var polls: usize = 0;
+    while (polls < control_poll_limit) : (polls += 1) {
+        const snapshot = lifecycle.snapshotV1();
+        if (snapshot.state != .ready)
+            return error.UnexpectedLifecycleState;
+        if (snapshot.active_connections == 1 and
+            snapshot.active_connection_phase == expected)
+        {
+            return;
+        }
+        std.Thread.sleep(watchdog_poll_ns);
+    }
+    return error.ActivePhaseTimeout;
+}
+
+fn waitForInactiveConnection(
+    lifecycle: *server_api.ManagedLifecycleV1,
+) !void {
+    var polls: usize = 0;
+    while (polls < control_poll_limit) : (polls += 1) {
+        const snapshot = lifecycle.snapshotV1();
+        if (snapshot.state != .draining and
+            snapshot.state != .stopped)
+        {
+            return error.UnexpectedLifecycleState;
+        }
+        if (snapshot.active_connections == 0 and
+            snapshot.active_connection_phase == .none)
+        {
+            return;
+        }
+        std.Thread.sleep(watchdog_poll_ns);
+    }
+    return error.InactiveConnectionTimeout;
+}
+
+fn validateDrainSignalReceipt(
+    snapshot: server_api.ManagedSnapshotV1,
+    expected_phase: ?server_api.ManagedConnectionPhaseV1,
+) !void {
+    if (expected_phase) |phase| {
+        if (snapshot.drain_signaled_connections != 1 or
+            snapshot.last_drain_signaled_phase != phase)
+        {
+            return error.InvalidDrainSignalReceipt;
+        }
+    } else if (snapshot.drain_signaled_connections != 0 or
+        snapshot.last_drain_signaled_phase != .none)
+    {
+        return error.InvalidDrainSignalReceipt;
+    }
 }
 
 fn emitReady(
@@ -478,13 +587,15 @@ fn emitDraining(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "DRAINING {d} {d} {d} {d} {d}\n",
+        "DRAINING {d} {d} {d} {d} {d} {d} {d}\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
             snapshot.completed_connections,
             snapshot.failed_connections,
             snapshot.active_connections,
+            snapshot.drain_signaled_connections,
+            @intFromEnum(snapshot.last_drain_signaled_phase),
         },
     );
     try std.fs.File.stdout().writeAll(frame);
@@ -498,13 +609,15 @@ fn emitClosed(
     var storage: [frame_max_bytes]u8 = undefined;
     const frame = try std.fmt.bufPrint(
         &storage,
-        "CLOSED {d} {d} {d} {d} {d} {d} {d} 1\n",
+        "CLOSED {d} {d} {d} {d} {d} {d} {d} {d} {d} 1\n",
         .{
             snapshot.process_generation,
             snapshot.accepted_connections,
             snapshot.completed_connections,
             snapshot.failed_connections,
             snapshot.active_connections,
+            snapshot.drain_signaled_connections,
+            @intFromEnum(snapshot.last_drain_signaled_phase),
             service_active,
             terminal_records,
         },
@@ -524,6 +637,8 @@ const ActivityFrame = struct {
     completed: u64,
     failed: u64,
     active: u8,
+    drain_signaled: u64,
+    last_drain_phase: server_api.ManagedConnectionPhaseV1,
 };
 
 const ClosedFrame = struct {
@@ -599,6 +714,10 @@ fn parseActivity(
         return error.InvalidFrame;
     const active = fields.next() orelse
         return error.InvalidFrame;
+    const drain_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_phase = fields.next() orelse
+        return error.InvalidFrame;
     if (fields.next() != null or
         !std.mem.eql(u8, name, expected_name))
     {
@@ -610,6 +729,8 @@ fn parseActivity(
         .completed = try parseCanonicalInt(u64, completed),
         .failed = try parseCanonicalInt(u64, failed),
         .active = try parseCanonicalInt(u8, active),
+        .drain_signaled = try parseCanonicalInt(u64, drain_signaled),
+        .last_drain_phase = try parseConnectionPhase(last_drain_phase),
     };
 }
 
@@ -625,6 +746,10 @@ fn parseClosed(line: []const u8) !ClosedFrame {
     const failed = fields.next() orelse
         return error.InvalidFrame;
     const active = fields.next() orelse
+        return error.InvalidFrame;
+    const drain_signaled = fields.next() orelse
+        return error.InvalidFrame;
+    const last_drain_phase = fields.next() orelse
         return error.InvalidFrame;
     const service_active = fields.next() orelse
         return error.InvalidFrame;
@@ -647,10 +772,23 @@ fn parseClosed(line: []const u8) !ClosedFrame {
             .completed = try parseCanonicalInt(u64, completed),
             .failed = try parseCanonicalInt(u64, failed),
             .active = try parseCanonicalInt(u8, active),
+            .drain_signaled = try parseCanonicalInt(u64, drain_signaled),
+            .last_drain_phase = try parseConnectionPhase(last_drain_phase),
         },
         .service_active = try parseCanonicalInt(u32, service_active),
         .terminal_records = try parseCanonicalInt(u32, terminal_records),
         .bank_zero = try parseCanonicalInt(u8, bank_zero),
+    };
+}
+
+fn parseConnectionPhase(
+    text: []const u8,
+) !server_api.ManagedConnectionPhaseV1 {
+    return switch (try parseCanonicalInt(u8, text)) {
+        0 => .none,
+        1 => .receiving_head,
+        2 => .request_head_received,
+        else => error.InvalidFrame,
     };
 }
 
@@ -780,6 +918,22 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         true,
     );
     try validateObservation(first, oracle);
+    try exercisePartialDrain(
+        allocator,
+        executable,
+        &fixture,
+        generation_partial_head,
+        .head,
+        &oracle.model_id,
+    );
+    try exercisePartialDrain(
+        allocator,
+        executable,
+        &fixture,
+        generation_partial_body,
+        .body,
+        &oracle.model_id,
+    );
     const second = try exerciseWorker(
         allocator,
         executable,
@@ -958,6 +1112,180 @@ fn proveInvalidStartup(
     }
 }
 
+const PartialDrainKind = enum {
+    head,
+    body,
+
+    fn command(self: PartialDrainKind) []const u8 {
+        return switch (self) {
+            .head => drain_head_command,
+            .body => drain_body_command,
+        };
+    }
+
+    fn phase(
+        self: PartialDrainKind,
+    ) server_api.ManagedConnectionPhaseV1 {
+        return switch (self) {
+            .head => .receiving_head,
+            .body => .request_head_received,
+        };
+    }
+};
+
+fn exercisePartialDrain(
+    allocator: std.mem.Allocator,
+    executable: []const u8,
+    fixture: *const Fixture,
+    generation: u64,
+    kind: PartialDrainKind,
+    expected_model_id: *const [protocol.model_id_bytes]u8,
+) !void {
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        fixture,
+        generation,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+    var watchdog: WorkerWatchdog = .{
+        .process_id = child.id,
+    };
+    try watchdog.start();
+    var watchdog_running = true;
+    defer if (watchdog_running) {
+        _ = watchdog.stop();
+    };
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try require(ready.generation == generation);
+    try require(std.mem.eql(
+        u8,
+        &ready.model_id,
+        expected_model_id,
+    ));
+
+    const address = try std.net.Address.parseIp(
+        loopback_host,
+        ready.port,
+    );
+    const peer = try std.net.tcpConnectToAddress(address);
+    defer peer.close();
+    try writePartialRequest(peer, ready, kind);
+
+    try child.stdin.?.writeAll(kind.command());
+    child.stdin.?.close();
+    child.stdin = null;
+
+    const draining = try parseActivity(
+        try readFrame(child.stdout.?, &frame_storage),
+        "DRAINING",
+    );
+    try validateActivity(
+        draining,
+        generation,
+        1,
+        0,
+        1,
+        1,
+        kind.phase(),
+    );
+    try requirePeerEofWithoutResponse(peer);
+
+    const closed = try parseClosed(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try validateActivity(
+        closed.activity,
+        generation,
+        1,
+        0,
+        1,
+        1,
+        kind.phase(),
+    );
+    try require(closed.service_active == 0);
+    try require(closed.terminal_records == 0);
+    try require(closed.bank_zero == 1);
+    try requireWorkerEof(child.stdout.?);
+
+    const did_time_out = watchdog.stop();
+    watchdog_running = false;
+    if (did_time_out) return error.WorkerTimeout;
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| try require(code == 0),
+        else => return error.UnexpectedWorkerTermination,
+    }
+}
+
+fn writePartialRequest(
+    peer: std.net.Stream,
+    ready: ReadyFrame,
+    kind: PartialDrainKind,
+) !void {
+    switch (kind) {
+        .head => try peer.writeAll(
+            "GET /v1/models HTTP/1.1\r\nHost: 127.0.0.1",
+        ),
+        .body => {
+            var body_storage: [protocol.request_body_max_bytes]u8 = undefined;
+            const body = try protocol.encodeRequestV1(.{
+                .model_id = &ready.model_id,
+                .tenant_key = 31,
+                .idempotency_key = "server-process-partial-body",
+                .prompt_utf8 = prompt,
+                .max_new_tokens = 1,
+            }, &body_storage);
+            if (body.len < 2)
+                return error.InvalidPartialRequestFixture;
+
+            var head_storage: [1024]u8 = undefined;
+            const head = try std.fmt.bufPrint(
+                &head_storage,
+                "POST {s} HTTP/1.1\r\n" ++
+                    "Host: {s}:{d}\r\n" ++
+                    "Content-Type: {s}\r\n" ++
+                    "Content-Length: {d}\r\n" ++
+                    "{s}: server-process-partial-body\r\n" ++
+                    "{s}: 31\r\n" ++
+                    "Connection: close\r\n\r\n",
+                .{
+                    protocol.completions_path_v1,
+                    loopback_host,
+                    ready.port,
+                    protocol.json_content_type,
+                    body.len,
+                    protocol.idempotency_header,
+                    protocol.tenant_header,
+                },
+            );
+            try peer.writeAll(head);
+            try peer.writeAll(body[0 .. body.len - 1]);
+        },
+    }
+}
+
+fn requirePeerEofWithoutResponse(peer: std.net.Stream) !void {
+    var response: [1]u8 = undefined;
+    const read_count = peer.read(&response) catch |read_error| {
+        const transport_error: anyerror = read_error;
+        switch (transport_error) {
+            error.ConnectionResetByPeer,
+            error.ConnectionAborted,
+            => return,
+            else => return read_error,
+        }
+    };
+    if (read_count != 0)
+        return error.UnexpectedPartialDrainResponse;
+}
+
 fn exerciseWorker(
     allocator: std.mem.Allocator,
     executable: []const u8,
@@ -1057,6 +1385,8 @@ fn exerciseWorker(
         expected_accepted,
         expected_completed,
         expected_failed,
+        0,
+        .none,
     );
     try validateActivity(
         closed.activity,
@@ -1064,6 +1394,8 @@ fn exerciseWorker(
         expected_accepted,
         expected_completed,
         expected_failed,
+        0,
+        .none,
     );
     try require(closed.service_active == 0);
     try require(closed.terminal_records == 1);
@@ -1138,12 +1470,18 @@ fn validateActivity(
     accepted: u64,
     completed: u64,
     failed: u64,
+    drain_signaled: u64,
+    last_drain_phase: server_api.ManagedConnectionPhaseV1,
 ) !void {
     try require(activity.generation == generation);
     try require(activity.accepted == accepted);
     try require(activity.completed == completed);
     try require(activity.failed == failed);
     try require(activity.active == 0);
+    try require(activity.drain_signaled == drain_signaled);
+    try require(
+        activity.last_drain_phase == last_drain_phase,
+    );
 }
 
 fn expectModels(
