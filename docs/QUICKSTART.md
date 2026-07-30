@@ -569,7 +569,38 @@ grants no durability; publication must already have been selected by a
 compatible durable writer, including package-aware `text-run`. See
 [Prepared-Text Result Inspector](PREPARED_TEXT_RESULT_INSPECTOR.md).
 
-## 12. Make a first contribution
+## 12. Inspect a token transaction journal
+
+Inspect one bounded strict-B4 TokenTxn journal against a complete expectation
+obtained through a separately trusted workflow:
+
+```sh
+python3 bench/token_txn_inspector.py \
+  --evidence PATH/token-txn.jsonl \
+  --expectation PATH/token-txn.expectation.json
+```
+
+This Python-first path does not compile Zig. The default deterministic report
+contains roots, epochs, counts, and other correlatable metadata but omits token
+IDs. Add `--reveal-token-ids` only when the report destination may receive the
+complete four-lane output. Both inputs already contain those token IDs.
+
+A successful result verifies the fixed journal's integrity and composition
+relative to the supplied expectation. It does not authenticate either file,
+decide that the expectation is authoritative, grant runtime or disclosure
+authority, or execute a model. See
+[Token Transaction Inspector](TOKEN_TXN_INSPECTOR.md) for the exact expectation
+schema, bounds, and nonclaims.
+
+Run the focused test with:
+
+```sh
+python3 -m unittest \
+  bench.tests.test_lane4_token_txn_event_evidence \
+  bench.tests.test_token_txn_inspector
+```
+
+## 13. Make a first contribution
 
 Pick one item from [Contributor projects](PROJECTS.md). Add or update a rejection
 test before changing the contract, run the smallest relevant suite, and open a

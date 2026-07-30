@@ -383,6 +383,13 @@ NATIVE_UNARY_LOAD_FOCUSED_PATHS = {
     "bench/tests/test_native_unary_server_load_publication.py",
 }
 
+TOKEN_TXN_INSPECTOR_FOCUSED_PATHS = {
+    "bench/lane4_token_txn_event_evidence.py",
+    "bench/tests/test_lane4_token_txn_event_evidence.py",
+    "bench/token_txn_inspector.py",
+    "bench/tests/test_token_txn_inspector.py",
+}
+
 WORKLOAD_REPORT_PORTABLE_PATHS = {
     "src/core/native_metal_supervisor_recovery_death_report.zig",
     "src/core/native_workload_campaign_manifest.zig",
@@ -768,6 +775,19 @@ def _decision_for_path(path: str) -> PathDecision:
                 {
                     "native-unary-load-focused",
                     "python-changed",
+                }
+            ),
+            (),
+        )
+
+    if path in TOKEN_TXN_INSPECTOR_FOCUSED_PATHS:
+        return PathDecision(
+            path,
+            "token transaction verifier, inspector, or focused test changed",
+            frozenset(
+                {
+                    "python-changed",
+                    "token-txn-inspector-focused",
                 }
             ),
             (),
@@ -1595,6 +1615,7 @@ def _gate_names(decision: PathDecision) -> Tuple[str, ...]:
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
         ("native-unary-load-focused", "python/native-unary-load"),
+        ("token-txn-inspector-focused", "python/token-txn-inspector"),
         ("shell-changed", "shell/changed-syntax"),
         ("rust-native", "interop/rust"),
         ("native-full", "native/releasesafe-suite"),
@@ -1694,6 +1715,7 @@ def print_report(plan: VerificationPlan) -> None:
         ("python-changed", "python/changed-syntax"),
         ("python-full", "python/full-suite"),
         ("native-unary-load-focused", "python/native-unary-load"),
+        ("token-txn-inspector-focused", "python/token-txn-inspector"),
         ("shell-changed", "shell/changed-syntax"),
         ("rust-native", "interop/rust"),
         ("native-full", "native/releasesafe-suite"),

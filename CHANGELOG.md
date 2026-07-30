@@ -8,6 +8,16 @@ before the first stable release.
 
 ### Added
 
+- A Python-first, read-only TokenTxn inspector now verifies one bounded
+  strict-B4 journal against a complete caller-supplied trusted expectation.
+  It rejects noncanonical or oversized inputs, replays the fixed receipt and
+  64-wave chain, checks every root and all four 64-token lane outputs, and
+  emits deterministic metadata without token IDs by default. An explicit
+  `--reveal-token-ids` flag enables full token disclosure. The focused
+  affected-path gate runs Python syntax and the focused replay/inspector
+  regressions without a Zig compile. Verification establishes integrity and
+  composition relative to the expectation; it does not establish authenticity,
+  provenance, authority, durability, model execution, or performance.
 - Added the manual
   `open-loop-transient-pressure-v1` native CPU/loopback profile without another
   executable or compile root. After 8 sequential warmups, 64 measured client

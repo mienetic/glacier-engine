@@ -1386,6 +1386,20 @@ if [ "$affected_profile" -eq 1 ] &&
     fi
 fi
 
+if [ "$affected_profile" -eq 1 ] &&
+    [ "$affected_plan_ready" -eq 1 ] &&
+    plan_has "token-txn-inspector-focused"; then
+    if [ "$has_python" -eq 1 ]; then
+        run_gate "python/token-txn-inspector" \
+            python3 -m unittest \
+            bench.tests.test_lane4_token_txn_event_evidence \
+            bench.tests.test_token_txn_inspector
+    else
+        record_skip "python/token-txn-inspector" \
+            "requires a working python3 executable"
+    fi
+fi
+
 if [ "$profile" = "affected-fast" ] &&
     [ "$affected_plan_ready" -eq 1 ] &&
     plan_has "verification-policy-focused"; then

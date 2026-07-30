@@ -298,6 +298,15 @@ EXPECTED_NATIVE_UNARY_LOAD_FOCUSED_PATHS = frozenset(
     }
 )
 
+EXPECTED_TOKEN_TXN_INSPECTOR_FOCUSED_PATHS = frozenset(
+    {
+        "bench/lane4_token_txn_event_evidence.py",
+        "bench/tests/test_lane4_token_txn_event_evidence.py",
+        "bench/token_txn_inspector.py",
+        "bench/tests/test_token_txn_inspector.py",
+    }
+)
+
 EXPECTED_WORKLOAD_REPORT_PORTABLE_PATHS = frozenset(
     {
         "src/core/native_metal_supervisor_recovery_death_report.zig",
@@ -1746,6 +1755,36 @@ class VerificationPolicyTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     ("quick", "python/changed-syntax", "python/native-unary-load"),
+                    policy._gate_names(plan.decisions[0]),
+                )
+
+    def test_token_txn_inspector_paths_select_only_the_focused_python_gate(self):
+        self.assertEqual(
+            EXPECTED_TOKEN_TXN_INSPECTOR_FOCUSED_PATHS,
+            policy.TOKEN_TXN_INSPECTOR_FOCUSED_PATHS,
+        )
+        for changed_path in sorted(EXPECTED_TOKEN_TXN_INSPECTOR_FOCUSED_PATHS):
+            with self.subTest(changed_path=changed_path):
+                plan = self.assert_targets([changed_path], ())
+                self.assertEqual(
+                    frozenset(
+                        {
+                            "python-changed",
+                            "token-txn-inspector-focused",
+                        }
+                    ),
+                    plan.flags,
+                )
+                self.assertFalse(plan.requires("native-full"))
+                self.assertFalse(plan.requires("python-full"))
+                self.assertFalse(plan.requires("metal-native"))
+                self.assertFalse(plan.decisions[0].host_quick)
+                self.assertEqual(
+                    (
+                        "quick",
+                        "python/changed-syntax",
+                        "python/token-txn-inspector",
+                    ),
                     policy._gate_names(plan.decisions[0]),
                 )
 
@@ -3236,6 +3275,36 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         (
             repository / "bench" / "native_unary_server_load_publication.py"
         ).write_text("", encoding="ascii")
+        for verifier_name in (
+            "lane4_token_txn_event_evidence",
+            "token_txn_inspector",
+        ):
+            (repository / "bench" / (verifier_name + ".py")).write_text(
+                "VERIFIER_FIXTURE = True\n",
+                encoding="ascii",
+            )
+            module_name = "bench.tests.test_" + verifier_name
+            (
+                repository
+                / "bench"
+                / "tests"
+                / ("test_" + verifier_name + ".py")
+            ).write_text(
+                "import os\n"
+                "import unittest\n"
+                "_integration_log = os.environ.get("
+                "'VERIFY_INTEGRATION_PYTHON_LOG')\n"
+                "if _integration_log:\n"
+                "    with open("
+                "_integration_log, 'a', encoding='ascii'"
+                ") as stream:\n"
+                f"        stream.write({module_name!r} + '\\n')\n"
+                f"class {verifier_name.title().replace('_', '')}Tests("
+                "unittest.TestCase):\n"
+                "    def test_fixture(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="ascii",
+            )
         (repository / "build.zig").write_text("", encoding="ascii")
         self.initialize_repository(repository)
         self.run_git(repository, "add", ".")
@@ -3299,6 +3368,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
         environment["PATH"] = str(fake_bin) + os.pathsep + environment["PATH"]
         environment["TMPDIR"] = str(root)
         environment["VERIFY_INTEGRATION_ZIG_LOG"] = str(root / "zig.calls")
+        environment["VERIFY_INTEGRATION_PYTHON_LOG"] = str(root / "python.calls")
         environment.pop("GLACIER_VERIFY_BASE", None)
         environment.pop("GLACIER_VERIFY_REQUIRE_NATIVE", None)
         environment.pop("GLACIER_VERIFY_REUSE_ZIG_CACHE", None)
@@ -4974,6 +5044,76 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                         "native/prepared-text-unary-server-process",
                         result.stdout,
                     )
+
+    def test_affected_fast_runs_token_txn_verifier_pair_python_only(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            repository, merge_base, environment = self.make_repository(root)
+            for changed_path in EXPECTED_TOKEN_TXN_INSPECTOR_FOCUSED_PATHS:
+                path = repository / changed_path
+                path.write_text(
+                    path.read_text(encoding="ascii")
+                    + "\n# Focused verifier change.\n",
+                    encoding="ascii",
+                )
+
+            result = self.run_affected_fast(
+                repository,
+                merge_base,
+                environment,
+            )
+
+            self.assertEqual(
+                0,
+                result.returncode,
+                result.stdout + result.stderr,
+            )
+            self.assertIn("PASS  python/changed-syntax:", result.stdout)
+            self.assertEqual(
+                1,
+                result.stdout.count("PASS  python/token-txn-inspector:"),
+                result.stdout,
+            )
+            self.assertNotIn(
+                "PASS  python/verification-policy:",
+                result.stdout,
+            )
+            self.assertIn(
+                "SKIP  python/full-suite: affected-fast defers full discovery",
+                result.stdout,
+            )
+            self.assertFalse(
+                any(
+                    line.startswith("PASS  native/")
+                    or line.startswith("PASS  portable/")
+                    or line.startswith("PASS  host/")
+                    for line in result.stdout.splitlines()
+                ),
+                result.stdout,
+            )
+            self.assertEqual(
+                [
+                    "bench.tests.test_lane4_token_txn_event_evidence",
+                    "bench.tests.test_token_txn_inspector",
+                ],
+                Path(environment["VERIFY_INTEGRATION_PYTHON_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines(),
+            )
+            calls = (
+                Path(environment["VERIFY_INTEGRATION_ZIG_LOG"])
+                .read_text(encoding="ascii")
+                .splitlines()
+            )
+            self.assertFalse(
+                any(
+                    line.startswith("build ")
+                    or " -Dtarget=" in line
+                    or "native-metal-suite" in line
+                    for line in calls
+                ),
+                calls,
+            )
 
     def test_affected_fast_runs_prepared_text_focused_dag_once(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
