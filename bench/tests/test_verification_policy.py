@@ -792,10 +792,7 @@ class VerificationPolicyTests(unittest.TestCase):
                 expected_flags = {
                     "prepared-text-package-text-run-focused",
                 }
-                if changed_path in {
-                    "src/cli/text_run.zig",
-                    "src/prepared_text_session.zig",
-                }:
+                if changed_path == "src/prepared_text_session.zig":
                     expected_flags.add(
                         "prepared-text-unary-service-focused"
                     )
@@ -816,7 +813,7 @@ class VerificationPolicyTests(unittest.TestCase):
                     policy._gate_names(plan.decisions[0]),
                 )
                 if changed_path == "src/cli/text_run.zig":
-                    self.assertIn(
+                    self.assertNotIn(
                         "native/prepared-text-unary-service",
                         policy._gate_names(plan.decisions[0]),
                     )
@@ -4038,9 +4035,8 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 "focused host Zig DAG",
                 result.stdout,
             )
-            self.assertIn(
-                "PASS  native/prepared-text-unary-service: covered by the "
-                "focused host Zig DAG",
+            self.assertNotIn(
+                "native/prepared-text-unary-service",
                 result.stdout,
             )
             self.assertNotIn(
@@ -4059,10 +4055,7 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             focused_calls = [
                 line
                 for line in calls
-                if line.startswith(
-                    "build unary-text-service-test "
-                    "text-runtime-golden-path-test "
-                )
+                if line.startswith("build text-runtime-golden-path-test ")
             ]
             self.assertEqual(1, len(focused_calls), calls)
             build_calls = [line for line in calls if line.startswith("build ")]

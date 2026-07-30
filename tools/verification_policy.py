@@ -879,10 +879,7 @@ def _decision_for_path(path: str) -> PathDecision:
 
     if lower in PREPARED_TEXT_PACKAGE_TEXT_RUN_FOCUSED_PATHS:
         package_text_flags = {"prepared-text-package-text-run-focused"}
-        if lower in {
-            "src/cli/text_run.zig",
-            "src/prepared_text_session.zig",
-        }:
+        if lower == "src/prepared_text_session.zig":
             package_text_flags.add(
                 "prepared-text-unary-service-focused"
             )

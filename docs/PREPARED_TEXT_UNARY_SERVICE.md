@@ -351,8 +351,8 @@ Those foreign builds are compile evidence, not native serving evidence. The
 Phase B receive-drain, Phase C receive-timeout, and Phase D admitted-work drain
 cases plus Phase E1 reset/response-ready cases remain inside the existing
 process executable, test target, and compile-only companion.
-Package-aware CLI changes continue to share the unary acceptance root and
-installed text-runtime golden path in one Zig invocation.
+Shared prepared-text session changes continue to select the unary acceptance
+root and installed text-runtime golden path in one Zig invocation.
 
 ## Deliberate nonclaims and next work
 
