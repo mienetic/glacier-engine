@@ -2294,6 +2294,31 @@ No queued timed-out socket is server-parsed. Request-to-lease association is
 the campaign's deterministic single-outstanding client-plan/transmit
 correlation, not server-parsed request attestation.
 
+The evidence plane now also has an authoritative single-file `.glpub`
+publication primitive. One fixed, bounded container stores canonical compact
+manifest JSON and the exact native-load envelope, then binds their raw SHA-256
+values into a domain-separated publication identity and whole-bundle seal.
+Its strict offline decoder rejects noncanonical or duplicate-key JSON,
+non-finite values, unknown flags, invalid section lengths, empty sections,
+truncation, trailing bytes, component substitution, identity drift, and seal
+mismatch. The file writer verifies the complete candidate before a
+same-directory temporary-file sync and one-path atomic replacement; it does
+not synchronize the parent directory.
+
+This completes the bounded codec and capture-workflow integration. The
+canonical manifest contains a publication context for the selected profile,
+producer, supported operating system, machine and challenge identities,
+pre/post environment roots, eligibility policy and decision, and exact
+envelope. The strict verifier also recomputes the report summary, claim scope,
+limitations, and compatibility aliases. The manual target emits it only when
+`-Dunary-server-native-load-publication-output=PATH/report.glpub` is selected,
+and the native-load CLI strictly verifies the retained file offline without a
+producer or current-host probe. Its optional envelope and contextual JSON
+remain non-authoritative compatibility exports that are independently atomic
+rather than one pair transaction. Bundle hashes prove exact integrity and
+composition, not signer authentication, trusted capture provenance, crash
+recovery, or physical power-loss durability.
+
 The load target is manual, uses `-j1`, and is absent from default tests and
 automatic CI. Native macOS may mark the environment eligible only after stable
 power, Low Power Mode, thermal-constraint, external-CPU-load, CPU-drift, and

@@ -378,7 +378,9 @@ PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS = {
 
 NATIVE_UNARY_LOAD_FOCUSED_PATHS = {
     "bench/native_unary_server_load.py",
+    "bench/native_unary_server_load_publication.py",
     "bench/tests/test_native_unary_server_load.py",
+    "bench/tests/test_native_unary_server_load_publication.py",
 }
 
 WORKLOAD_REPORT_PORTABLE_PATHS = {

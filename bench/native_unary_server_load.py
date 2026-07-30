@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import datetime as dt
 import hashlib
 import json
 import math
@@ -34,7 +35,9 @@ if __package__ in (None, ""):
 from bench import lane4_evidence
 from bench import native_environment_admission
 from bench import native_observer
+from bench import native_observer_linux
 from bench import native_workload_report
+from bench import native_unary_server_load_publication as publication
 
 
 MAGIC = b"GF1LOAD1"
@@ -72,6 +75,51 @@ PUBLISHABLE_EXTERNAL_CPU_PPM = 200_000
 MAX_EXTERNAL_CPU_PPM = 500_000
 MAX_EXTERNAL_CPU_DRIFT_PPM = 150_000
 MAX_BOUNDARY_CPU_DRIFT_PPM = 300_000
+PUBLICATION_CONTEXT_SCHEMA = (
+    "glacier.native-unary-server-load-publication-context/v1"
+)
+PUBLICATION_ELIGIBILITY_POLICY = (
+    "glacier.native-unary-server-load-publication-eligibility/v1"
+)
+PRE_ENVIRONMENT_DOMAIN = (
+    b"glacier-native-unary-load-pre-environment-v1\x00"
+)
+POST_ENVIRONMENT_DOMAIN = (
+    b"glacier-native-unary-load-post-environment-v1\x00"
+)
+LINUX_ATTRIBUTION_UNAVAILABLE = (
+    "linux_external_cpu_attribution_unavailable"
+)
+DARWIN_PRE_EXTERNAL_CPU_ABOVE_BOUND = (
+    "darwin_pre_run_external_cpu_above_publishable_bound"
+)
+DARWIN_POST_EXTERNAL_CPU_ABOVE_BOUND = (
+    "darwin_post_run_external_cpu_above_publishable_bound"
+)
+DARWIN_ADMISSION_FIELDS = {
+    "schema",
+    "captured_at_utc",
+    "host",
+    "power_source",
+    "battery_state",
+    "thermal_state",
+    "foundation_thermal_state",
+    "low_power_mode_enabled",
+    "cpu_speed_limit_percent",
+    "scheduler_limit_percent",
+    "available_cpus",
+    "raw_pmset_battery_sha256",
+    "raw_pmset_thermal_sha256",
+    "raw_foundation_process_info_sha256",
+    "foundation_probe_source_sha256",
+    "foundation_probe_runner_sha256",
+    "measurement_admitted",
+    "reasons",
+    "claim_scope",
+    "performance_claim",
+    "promotion_decision",
+    "measurements_publishable",
+}
 
 BODY_DOMAIN = b"glacier-f1-native-unary-load-body-v1\x00"
 FOOTER_DOMAIN = b"glacier-f1-native-unary-load-footer-v1\x00"
@@ -1748,6 +1796,478 @@ def _canonical_json(value: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+def _exact_mapping(
+    value: object,
+    expected_keys: set[str],
+    label: str,
+) -> Mapping[str, Any]:
+    _require(isinstance(value, Mapping), "%s is not a mapping" % label)
+    _require(set(value) == expected_keys, "%s fields are not exact" % label)
+    return value
+
+
+def _hex_sha256(value: object, label: str) -> bytes:
+    _require(
+        isinstance(value, str)
+        and len(value) == 64
+        and value == value.lower(),
+        "%s is not canonical SHA-256 hex" % label,
+    )
+    try:
+        decoded = bytes.fromhex(value)
+    except ValueError as error:
+        raise VerificationError(
+            "%s is not canonical SHA-256 hex" % label
+        ) from error
+    _require(len(decoded) == 32, "%s is not SHA-256" % label)
+    return decoded
+
+
+def _require_canonical_equal(
+    actual: object,
+    expected: object,
+    message: str,
+) -> None:
+    try:
+        equal = (
+            publication.canonical_json_bytes(actual)
+            == publication.canonical_json_bytes(expected)
+        )
+    except publication.PublicationError as error:
+        raise VerificationError(message) from error
+    _require(equal, message)
+
+
+def _verified_utc(value: object, label: str) -> dt.datetime:
+    _require(
+        type(value) is str and bool(value),
+        "%s timestamp is invalid" % label,
+    )
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError as error:
+        raise VerificationError(
+            "%s timestamp is invalid" % label
+        ) from error
+    _require(
+        parsed.tzinfo is not None
+        and parsed.utcoffset() == dt.timedelta(0)
+        and parsed.isoformat() == value,
+        "%s timestamp is not canonical UTC" % label,
+    )
+    return parsed
+
+
+def _verified_machine_fingerprint(
+    value: object,
+    *,
+    system: str,
+) -> bytes:
+    fields = (
+        {
+            "system",
+            "release",
+            "machine",
+            "cpu_brand",
+            "logical_cpu_count",
+            "boot_session_sha256",
+            "fingerprint_sha256",
+        }
+        if system == "Darwin"
+        else {
+            "system",
+            "release",
+            "machine",
+            "processor",
+            "logical_cpu_count",
+            "boot_session_sha256",
+            "fingerprint_sha256",
+        }
+    )
+    machine = _exact_mapping(value, fields, "machine")
+    _require(machine.get("system") == system, "machine system mismatch")
+    for field in (
+        "release",
+        "machine",
+        "cpu_brand" if system == "Darwin" else "processor",
+    ):
+        _require(
+            isinstance(machine.get(field), str) and bool(machine[field]),
+            "machine %s is invalid" % field,
+        )
+    logical_cpu_count = machine.get("logical_cpu_count")
+    _require(
+        type(logical_cpu_count) is int
+        and 1 <= logical_cpu_count <= (1 << 20),
+        "machine logical CPU count is invalid",
+    )
+    boot_session = machine.get("boot_session_sha256")
+    if boot_session is not None:
+        _hex_sha256(boot_session, "machine boot session")
+    descriptor = {
+        key: machine[key]
+        for key in fields
+        if key != "fingerprint_sha256"
+    }
+    canonical = json.dumps(
+        descriptor,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    fingerprint = hashlib.sha256(canonical).digest()
+    _require(
+        _hex_sha256(
+            machine.get("fingerprint_sha256"),
+            "machine fingerprint",
+        )
+        == fingerprint,
+        "machine fingerprint is inconsistent",
+    )
+    return fingerprint
+
+
+def _verify_retained_native_observation(
+    value: object,
+    *,
+    system: str,
+    phase: str,
+) -> Mapping[str, Any]:
+    expected_fields = {
+        "schema",
+        "adapter",
+        "phase",
+        "system",
+        "observed_process_id",
+        "captured_at_utc",
+        "capture_interval",
+        "availability_counts",
+        "metrics",
+        "claim_scope",
+    }
+    if system == "Linux":
+        expected_fields |= {
+            "actual_system",
+            "capture_mode",
+            "publication_eligible",
+        }
+    observation = _exact_mapping(
+        value,
+        expected_fields,
+        "%s native observation" % phase,
+    )
+    expected_schema = (
+        native_observer.SCHEMA
+        if system == "Darwin"
+        else native_observer.HOST_SCHEMA
+    )
+    expected_adapter = (
+        native_observer.ADAPTER
+        if system == "Darwin"
+        else native_observer_linux.ADAPTER
+    )
+    _require(
+        observation["schema"] == expected_schema
+        and observation["adapter"] == expected_adapter
+        and observation["phase"] == phase
+        and observation["system"] == system
+        and observation["claim_scope"] == "native-observation-only",
+        "%s native observation identity is invalid" % phase,
+    )
+    if system == "Linux":
+        _require(
+            observation["actual_system"] == "Linux"
+            and observation["capture_mode"] == "native"
+            and observation["publication_eligible"] is True,
+            "%s Linux observation is not a native capture" % phase,
+        )
+    process_id = observation["observed_process_id"]
+    _require(
+        type(process_id) is int
+        and 1 <= process_id <= (1 << 31) - 1,
+        "%s observed process id is invalid" % phase,
+    )
+    _verified_utc(
+        observation["captured_at_utc"],
+        "%s observation" % phase,
+    )
+    interval = _exact_mapping(
+        observation["capture_interval"],
+        {"sample_clock_domain", "started_ns", "finished_ns"},
+        "%s capture interval" % phase,
+    )
+    started_ns = interval["started_ns"]
+    finished_ns = interval["finished_ns"]
+    _require(
+        interval["sample_clock_domain"] == "host_monotonic"
+        and type(started_ns) is int
+        and type(finished_ns) is int
+        and 0 <= started_ns <= finished_ns <= native_observer.I64_MAX,
+        "%s capture interval is invalid" % phase,
+    )
+    metrics = observation["metrics"]
+    _require(
+        type(metrics) is list
+        and len(metrics) == len(native_observer.METRIC_SPECS),
+        "%s metric set is not fixed" % phase,
+    )
+    canonical_metrics: list[dict[str, Any]] = []
+    metric_fields = (
+        "name",
+        "availability",
+        "value",
+        "unit",
+        "sample_clock_domain",
+        "value_clock_domain",
+        "phase",
+        "subject",
+        "source_identity_sha256",
+        "provenance",
+        "reason",
+        "reason_sha256",
+    )
+    for metric, specification in zip(
+        metrics,
+        native_observer.METRIC_SPECS,
+        strict=True,
+    ):
+        retained_metric = _exact_mapping(
+            metric,
+            set(metric_fields),
+            "%s metric record" % phase,
+        )
+        ordered_metric = {
+            field: retained_metric[field]
+            for field in metric_fields
+        }
+        try:
+            canonical = (
+                native_observer._common.validate_metric_record(
+                    ordered_metric,
+                    expected_system=system,
+                )
+            )
+        except native_observer.ObservationError as error:
+            raise VerificationError(
+                "%s metric record is invalid: %s" % (phase, error)
+            ) from error
+        _require(
+            canonical["name"] == specification[0]
+            and canonical["phase"] == phase
+            and canonical["provenance"]["adapter"]
+            == expected_adapter,
+            "%s metric identity is invalid" % phase,
+        )
+        _require_canonical_equal(
+            metric,
+            canonical,
+            "%s metric record is not type-exact" % phase,
+        )
+        canonical_metrics.append(canonical)
+    availability_counts = _exact_mapping(
+        observation["availability_counts"],
+        set(native_observer.AVAILABILITIES),
+        "%s availability counts" % phase,
+    )
+    expected_counts = {
+        availability: sum(
+            metric["availability"] == availability
+            for metric in canonical_metrics
+        )
+        for availability in native_observer.AVAILABILITIES
+    }
+    _require_canonical_equal(
+        availability_counts,
+        expected_counts,
+        "%s availability counts are inconsistent" % phase,
+    )
+    return observation
+
+
+def _publication_environment_roots(
+    environment: Mapping[str, Any],
+) -> tuple[bytes, bytes]:
+    pre = {
+        "stable_pre_run_admission": environment[
+            "stable_pre_run_admission"
+        ],
+        "native_observation": environment[
+            "pre_run_native_observation"
+        ],
+    }
+    post = {
+        "post_run_admission": environment["post_run_admission"],
+        "native_observation": environment[
+            "post_run_native_observation"
+        ],
+    }
+    return (
+        publication.canonical_json_sha256(
+            pre,
+            domain=PRE_ENVIRONMENT_DOMAIN,
+        ),
+        publication.canonical_json_sha256(
+            post,
+            domain=POST_ENVIRONMENT_DOMAIN,
+        ),
+    )
+
+
+def _publication_eligibility(
+    system: str,
+    cpu_boundary: Mapping[str, Any],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    if system == "Linux":
+        reasons.append(LINUX_ATTRIBUTION_UNAVAILABLE)
+    else:
+        if (
+            cpu_boundary.get("external_before_ppm", 1 << 60)
+            > PUBLISHABLE_EXTERNAL_CPU_PPM
+        ):
+            reasons.append(DARWIN_PRE_EXTERNAL_CPU_ABOVE_BOUND)
+        if (
+            cpu_boundary.get("external_after_ppm", 1 << 60)
+            > PUBLISHABLE_EXTERNAL_CPU_PPM
+        ):
+            reasons.append(DARWIN_POST_EXTERNAL_CPU_ABOVE_BOUND)
+    eligible = not reasons
+    retained_eligible = cpu_boundary.get(
+        "cpu_publication_eligible"
+    )
+    _require(
+        type(retained_eligible) is bool
+        and retained_eligible == eligible,
+        "CPU publication eligibility is inconsistent",
+    )
+    return {
+        "policy": PUBLICATION_ELIGIBILITY_POLICY,
+        "decision": "eligible" if eligible else "ineligible",
+        "reasons": reasons,
+        "publishable_external_cpu_ppm": PUBLISHABLE_EXTERNAL_CPU_PPM,
+    }
+
+
+def _claim_scope(campaign: CampaignProfile) -> str:
+    if campaign.name == RETENTION_CAPACITY_PROFILE_NAME:
+        return (
+            "native-loopback-unary-retention-capacity-and-"
+            "serialized-fixture-only"
+        )
+    if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
+        return (
+            "native-loopback-unary-queued-receive-timeout-and-"
+            "serialized-fixture-only"
+        )
+    return "native-loopback-unary-transport-and-serialized-fixture-only"
+
+
+def _report_manifest(
+    campaign: CampaignProfile,
+    encoded: bytes,
+    verified: VerifiedEnvelope,
+) -> dict[str, Any]:
+    return {
+        "sha256": verified.outer_sha256.hex(),
+        "bytes": len(encoded),
+        "inner_report_sha256": (
+            verified.inner_result.report_sha256.hex()
+        ),
+        "warmup_records": WARMUP_COUNT,
+        "measured_records": MEASURED_COUNT,
+        "completed_work_units": verified.profile.completed_work_units,
+        "interval_ns": verified.profile.interval_ns,
+        "throughput_numerator": verified.profile.throughput_numerator,
+        "throughput_denominator_ns": (
+            verified.profile.throughput_denominator_ns
+        ),
+        **_completed_timing_fields(verified.profile),
+        **(
+            {
+                "queued_timeout_terminal_observation_p99_ns": (
+                    verified.profile.terminal_p99_ns
+                ),
+            }
+            if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+            else {
+                "terminal_response_p99_ns": (
+                    verified.profile.terminal_p99_ns
+                ),
+            }
+        ),
+        "outcomes": {
+            "completed": campaign.measured_completed,
+            "capacity_rejected": campaign.measured_capacity_rejected,
+            "failed": 0,
+            "cancelled": 0,
+            "timed_out": campaign.measured_timed_out,
+        },
+    }
+
+
+def _manifest_limitations(
+    campaign: CampaignProfile,
+) -> list[str]:
+    return [
+        "HTTP first-byte is not first-token latency.",
+        (
+            "The tiny deterministic fixture is not representative "
+            "large-model inference."
+        ),
+        (
+            "The request mutex serializes model admission, execution, "
+            "and retirement."
+        ),
+        (
+            "Capacity rejection proves retained-record saturation, not "
+            "active-work or transport-queue saturation."
+            if campaign.name == RETENTION_CAPACITY_PROFILE_NAME
+            else (
+                "Queued receive timeout proves the fixed accept-origin "
+                "queued-expiry profile, not full-request timeout or "
+                "application overload."
+                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                else (
+                    "The successful profile contains no "
+                    "capacity-rejection evidence."
+                )
+            )
+        ),
+        (
+            "Queued sockets are never server-parsed; request-to-lease "
+            "binding is a deterministic single-outstanding "
+            "client-plan/transmit correlation, not server-parsed request "
+            "attestation."
+            if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+            else (
+                "Every retained request root is correlated under its "
+                "profile-specific producer ABI."
+            )
+        ),
+        (
+            "The queued-timeout campaign is deterministic closed-loop "
+            "pressure, not open-loop, transient, or general overload "
+            "evidence; W6 queue latency and throughput include completed "
+            "work only."
+            if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+            else "The campaign mode is closed-loop."
+        ),
+        (
+            "Logical queue and in-flight facts do not prove physical CPU "
+            "parallelism."
+        ),
+        (
+            "No GPU performance, fairness, power, energy, temperature, "
+            "or foreign-OS result is inferred."
+        ),
+        (
+            "AC and nominal constraint signals do not prove fixed clock "
+            "frequency or a measured temperature."
+        ),
+    ]
+
+
 def _completed_timing_fields(profile: InnerProfile) -> dict[str, int]:
     return {
         "completed_arrival_to_fifo_enqueue_sample_count": (
@@ -1837,100 +2357,451 @@ def run_campaign(
         system=system,
         profile_name=campaign.name,
     )
+    producer = {
+        "sha256": build_before.hex(),
+        "size_bytes": executable.stat().st_size,
+    }
+    environment = {
+        "stable_pre_run_admission": stable_captures,
+        "pre_run_native_observation": before,
+        "post_run_admission": post_admission,
+        "post_run_native_observation": after,
+        "cpu_boundary": cpu_boundary,
+    }
+    pre_environment_sha256, post_environment_sha256 = (
+        _publication_environment_roots(environment)
+    )
+    eligibility = _publication_eligibility(system, cpu_boundary)
+    _require(
+        publication_eligible
+        == (eligibility["decision"] == "eligible"),
+        "publication decision is inconsistent",
+    )
+    publication_context = {
+        "schema": PUBLICATION_CONTEXT_SCHEMA,
+        "profile": campaign.name,
+        "envelope": {
+            "sha256": verified.outer_sha256.hex(),
+            "bytes": len(encoded),
+        },
+        "producer": producer,
+        "system": system,
+        "machine_fingerprint_sha256": machine_sha256.hex(),
+        "challenge_hex": challenge.hex(),
+        "challenge_sha256": hashlib.sha256(challenge).hexdigest(),
+        "pre_environment_sha256": pre_environment_sha256.hex(),
+        "post_environment_sha256": post_environment_sha256.hex(),
+        "eligibility": eligibility,
+    }
     manifest = {
         "schema": "glacier.native-unary-server-load-capture/v1",
         "status": "verified",
         "profile": campaign.name,
         "publication_eligible": publication_eligible,
-        "claim_scope": (
-            "native-loopback-unary-retention-capacity-and-serialized-fixture-only"
-            if campaign.name == RETENTION_CAPACITY_PROFILE_NAME
-            else (
-                "native-loopback-unary-queued-receive-timeout-and-serialized-fixture-only"
-                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
-                else "native-loopback-unary-transport-and-serialized-fixture-only"
-            )
-        ),
-        "producer": {
-            "sha256": build_before.hex(),
-            "size_bytes": executable.stat().st_size,
-        },
+        "claim_scope": _claim_scope(campaign),
+        "producer": producer,
         "machine": machine_descriptor,
+        # Compatibility: this historical field contains the challenge bytes,
+        # not their digest.  Publication context names both values precisely.
         "challenge_sha256": challenge.hex(),
-        "report": {
-            "sha256": verified.outer_sha256.hex(),
-            "bytes": len(encoded),
-            "inner_report_sha256": verified.inner_result.report_sha256.hex(),
-            "warmup_records": WARMUP_COUNT,
-            "measured_records": MEASURED_COUNT,
-            "completed_work_units": verified.profile.completed_work_units,
-            "interval_ns": verified.profile.interval_ns,
-            "throughput_numerator": verified.profile.throughput_numerator,
-            "throughput_denominator_ns": verified.profile.throughput_denominator_ns,
-            **_completed_timing_fields(verified.profile),
-            **(
-                {
-                    "queued_timeout_terminal_observation_p99_ns": (
-                        verified.profile.terminal_p99_ns
-                    ),
-                }
-                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
-                else {
-                    "terminal_response_p99_ns": verified.profile.terminal_p99_ns,
-                }
-            ),
-            "outcomes": {
-                "completed": campaign.measured_completed,
-                "capacity_rejected": campaign.measured_capacity_rejected,
-                "failed": 0,
-                "cancelled": 0,
-                "timed_out": campaign.measured_timed_out,
-            },
-        },
-        "environment": {
-            "stable_pre_run_admission": stable_captures,
-            "pre_run_native_observation": before,
-            "post_run_admission": post_admission,
-            "post_run_native_observation": after,
-            "cpu_boundary": cpu_boundary,
-        },
-        "limitations": [
-            "HTTP first-byte is not first-token latency.",
-            "The tiny deterministic fixture is not representative large-model inference.",
-            "The request mutex serializes model admission, execution, and retirement.",
-            (
-                "Capacity rejection proves retained-record saturation, not active-work or transport-queue saturation."
-                if campaign.name == RETENTION_CAPACITY_PROFILE_NAME
-                else (
-                    "Queued receive timeout proves the fixed accept-origin queued-expiry profile, not full-request timeout or application overload."
-                    if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
-                    else "The successful profile contains no capacity-rejection evidence."
-                )
-            ),
-            (
-                "Queued sockets are never server-parsed; request-to-lease binding is a deterministic "
-                "single-outstanding client-plan/transmit correlation, not server-parsed request attestation."
-                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
-                else "Every retained request root is correlated under its profile-specific producer ABI."
-            ),
-            (
-                "The queued-timeout campaign is deterministic closed-loop pressure, not open-loop, "
-                "transient, or general overload evidence; W6 queue latency and throughput include "
-                "completed work only."
-                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
-                else "The campaign mode is closed-loop."
-            ),
-            "Logical queue and in-flight facts do not prove physical CPU parallelism.",
-            "No GPU performance, fairness, power, energy, temperature, or foreign-OS result is inferred.",
-            "AC and nominal constraint signals do not prove fixed clock frequency or a measured temperature.",
-        ],
+        "publication_context": publication_context,
+        "report": _report_manifest(campaign, encoded, verified),
+        "environment": environment,
+        "limitations": _manifest_limitations(campaign),
     }
     return encoded, manifest, verified
 
 
+def _verify_admitted_darwin_environment(
+    value: object,
+    *,
+    machine_fingerprint: bytes,
+    foundation_runner_sha256: str,
+    label: str,
+) -> None:
+    snapshot = _exact_mapping(
+        value,
+        DARWIN_ADMISSION_FIELDS,
+        label,
+    )
+    _require(
+        not native_environment_admission._snapshot_rejections(snapshot),
+        "%s is not an admitted Darwin environment" % label,
+    )
+    _verified_utc(snapshot["captured_at_utc"], label)
+    _require(
+        snapshot["battery_state"]
+        in {"charged", "charging", "not_present"}
+        and snapshot["claim_scope"] == "environment-admission-only"
+        and snapshot["performance_claim"] == "not_evaluated"
+        and snapshot["promotion_decision"] == "not_evaluated"
+        and snapshot["measurements_publishable"] is False,
+        "%s admission semantics are invalid" % label,
+    )
+    host_fingerprint = _verified_machine_fingerprint(
+        snapshot.get("host"),
+        system="Darwin",
+    )
+    _require(
+        host_fingerprint == machine_fingerprint,
+        "%s machine fingerprint mismatch" % label,
+    )
+    logical_cpu_count = snapshot["host"]["logical_cpu_count"]
+    for field in ("cpu_speed_limit_percent", "scheduler_limit_percent"):
+        retained = snapshot[field]
+        _require(
+            retained is None or type(retained) is int and retained == 100,
+            "%s %s is invalid" % (label, field),
+        )
+    available_cpus = snapshot["available_cpus"]
+    _require(
+        available_cpus is None
+        or type(available_cpus) is int
+        and available_cpus == logical_cpu_count,
+        "%s available CPUs are inconsistent" % label,
+    )
+    for field in (
+        "raw_pmset_battery_sha256",
+        "raw_pmset_thermal_sha256",
+        "raw_foundation_process_info_sha256",
+        "foundation_probe_source_sha256",
+        "foundation_probe_runner_sha256",
+    ):
+        _hex_sha256(snapshot[field], "%s %s" % (label, field))
+    _require(
+        snapshot["foundation_probe_source_sha256"]
+        == lane4_evidence.FOUNDATION_PROBE_SOURCE_SHA256
+        and snapshot["foundation_probe_runner_sha256"]
+        == foundation_runner_sha256,
+        "%s probe identity is inconsistent" % label,
+    )
+
+
+def _verify_publication_environment(
+    value: object,
+    *,
+    system: str,
+    machine_fingerprint: bytes,
+    machine_logical_cpu_count: int,
+) -> tuple[dict[str, Any], bytes, bytes]:
+    environment = _exact_mapping(
+        value,
+        {
+            "stable_pre_run_admission",
+            "pre_run_native_observation",
+            "post_run_admission",
+            "post_run_native_observation",
+            "cpu_boundary",
+        },
+        "publication environment",
+    )
+    stable = environment["stable_pre_run_admission"]
+    post_admission = environment["post_run_admission"]
+    if system == "Darwin":
+        _require(
+            type(stable) is list and len(stable) == 2,
+            "Darwin publication requires two stable pre-run captures",
+        )
+        first_capture = _exact_mapping(
+            stable[0],
+            DARWIN_ADMISSION_FIELDS,
+            "stable pre-run capture 0",
+        )
+        foundation_runner_sha256 = first_capture[
+            "foundation_probe_runner_sha256"
+        ]
+        _hex_sha256(
+            foundation_runner_sha256,
+            "stable pre-run Foundation runner",
+        )
+        for index, capture in enumerate(stable):
+            _verify_admitted_darwin_environment(
+                capture,
+                machine_fingerprint=machine_fingerprint,
+                foundation_runner_sha256=foundation_runner_sha256,
+                label="stable pre-run capture %d" % index,
+            )
+        _verify_admitted_darwin_environment(
+            post_admission,
+            machine_fingerprint=machine_fingerprint,
+            foundation_runner_sha256=foundation_runner_sha256,
+            label="post-run admission",
+        )
+    else:
+        _require(
+            stable == [] and post_admission is None,
+            "Linux publication must not claim Darwin admission",
+        )
+    before = _verify_retained_native_observation(
+        environment["pre_run_native_observation"],
+        system=system,
+        phase="pre_run",
+    )
+    after = _verify_retained_native_observation(
+        environment["post_run_native_observation"],
+        system=system,
+        phase="post_run",
+    )
+    _require(
+        before["observed_process_id"] == after["observed_process_id"]
+        and before["capture_interval"]["finished_ns"]
+        <= after["capture_interval"]["started_ns"],
+        "native publication observation sequence is inconsistent",
+    )
+    cpu_boundary = _validate_native_boundaries(
+        before,
+        after,
+        system=system,
+    )
+    _require_canonical_equal(
+        environment["cpu_boundary"],
+        cpu_boundary,
+        "retained CPU boundary is inconsistent",
+    )
+    _require(
+        cpu_boundary["logical_cpu_count"]
+        == machine_logical_cpu_count,
+        "observation logical CPU count does not match the machine",
+    )
+    pre_root, post_root = _publication_environment_roots(environment)
+    return cpu_boundary, pre_root, post_root
+
+
+def verify_publication_bundle(
+    bundle: publication.PublicationBundle,
+) -> VerifiedEnvelope:
+    _require(
+        type(bundle) is publication.PublicationBundle,
+        "publication bundle type is invalid",
+    )
+    try:
+        reconstructed = publication.decode_bundle(
+            publication.encode_bundle(
+                bundle.envelope,
+                bundle.manifest,
+            )
+        )
+    except publication.PublicationError as error:
+        raise VerificationError(
+            "publication bundle reconstruction failed: %s" % error
+        ) from error
+    for field in (
+        "manifest_bytes",
+        "envelope_sha256",
+        "manifest_sha256",
+        "publication_identity_sha256",
+        "bundle_sha256",
+    ):
+        _require(
+            getattr(bundle, field) == getattr(reconstructed, field),
+            "publication bundle %s is inconsistent" % field,
+        )
+    bundle = reconstructed
+    manifest = _exact_mapping(
+        bundle.manifest,
+        {
+            "schema",
+            "status",
+            "profile",
+            "publication_eligible",
+            "claim_scope",
+            "producer",
+            "machine",
+            "challenge_sha256",
+            "publication_context",
+            "report",
+            "environment",
+            "limitations",
+        },
+        "publication manifest",
+    )
+    _require(
+        manifest["schema"]
+        == "glacier.native-unary-server-load-capture/v1"
+        and manifest["status"] == "verified",
+        "publication manifest schema or status is invalid",
+    )
+    context = _exact_mapping(
+        manifest["publication_context"],
+        {
+            "schema",
+            "profile",
+            "envelope",
+            "producer",
+            "system",
+            "machine_fingerprint_sha256",
+            "challenge_hex",
+            "challenge_sha256",
+            "pre_environment_sha256",
+            "post_environment_sha256",
+            "eligibility",
+        },
+        "publication context",
+    )
+    _require(
+        context["schema"] == PUBLICATION_CONTEXT_SCHEMA,
+        "publication context schema is invalid",
+    )
+    profile_name = context["profile"]
+    _require(
+        isinstance(profile_name, str),
+        "publication profile is invalid",
+    )
+    campaign = _campaign_profile(profile_name)
+    system = context["system"]
+    _require(
+        system in {"Darwin", "Linux"},
+        "publication system is unsupported",
+    )
+    envelope_context = _exact_mapping(
+        context["envelope"],
+        {"sha256", "bytes"},
+        "publication envelope context",
+    )
+    _require(
+        type(envelope_context["bytes"]) is int
+        and envelope_context["bytes"] == len(bundle.envelope),
+        "publication envelope byte count mismatch",
+    )
+    envelope_sha256 = _hex_sha256(
+        envelope_context["sha256"],
+        "publication envelope digest",
+    )
+    _require(
+        envelope_sha256
+        == bundle.envelope_sha256
+        == hashlib.sha256(bundle.envelope).digest(),
+        "publication envelope digest mismatch",
+    )
+    producer = _exact_mapping(
+        context["producer"],
+        {"sha256", "size_bytes"},
+        "publication producer",
+    )
+    expected_build = _hex_sha256(
+        producer["sha256"],
+        "publication producer digest",
+    )
+    _require(
+        type(producer["size_bytes"]) is int
+        and producer["size_bytes"] > 0,
+        "publication producer size is invalid",
+    )
+    challenge_hex = context["challenge_hex"]
+    expected_challenge = _hex_sha256(
+        challenge_hex,
+        "publication challenge",
+    )
+    _require(
+        _hex_sha256(
+            context["challenge_sha256"],
+            "publication challenge digest",
+        )
+        == hashlib.sha256(expected_challenge).digest(),
+        "publication challenge digest mismatch",
+    )
+    machine_fingerprint = _hex_sha256(
+        context["machine_fingerprint_sha256"],
+        "publication machine fingerprint",
+    )
+    machine = manifest["machine"]
+    _require(
+        _verified_machine_fingerprint(
+            machine,
+            system=system,
+        )
+        == machine_fingerprint,
+        "publication machine fingerprint mismatch",
+    )
+
+    # These are the only inputs supplied to the embedded envelope verifier.
+    # No current-host probe, producer path, or ambient platform value enters
+    # offline verification.
+    verified = verify_envelope(
+        bundle.envelope,
+        expected_build=expected_build,
+        expected_machine=machine_fingerprint,
+        expected_challenge=expected_challenge,
+        system=system,
+        profile_name=campaign.name,
+    )
+
+    cpu_boundary, pre_root, post_root = (
+        _verify_publication_environment(
+            manifest["environment"],
+            system=system,
+            machine_fingerprint=machine_fingerprint,
+            machine_logical_cpu_count=machine[
+                "logical_cpu_count"
+            ],
+        )
+    )
+    _require(
+        _hex_sha256(
+            context["pre_environment_sha256"],
+            "pre-run environment root",
+        )
+        == pre_root
+        and _hex_sha256(
+            context["post_environment_sha256"],
+            "post-run environment root",
+        )
+        == post_root,
+        "publication environment root mismatch",
+    )
+    eligibility = _publication_eligibility(system, cpu_boundary)
+    _require_canonical_equal(
+        context["eligibility"],
+        eligibility,
+        "publication eligibility context mismatch",
+    )
+    eligible = eligibility["decision"] == "eligible"
+    _require(
+        type(manifest["publication_eligible"]) is bool
+        and manifest["publication_eligible"] == eligible,
+        "publication eligibility decision mismatch",
+    )
+    _require(
+        manifest["profile"] == campaign.name
+        and manifest["challenge_sha256"] == challenge_hex
+        and manifest["claim_scope"] == _claim_scope(campaign),
+        "publication context does not match legacy manifest fields",
+    )
+    _require_canonical_equal(
+        manifest["producer"],
+        producer,
+        "publication producer alias mismatch",
+    )
+    _require_canonical_equal(
+        manifest["report"],
+        _report_manifest(campaign, bundle.envelope, verified),
+        "publication report summary mismatch",
+    )
+    _require_canonical_equal(
+        manifest["limitations"],
+        _manifest_limitations(campaign),
+        "publication limitations mismatch",
+    )
+    return verified
+
+
+def verify_publication(encoded: bytes) -> VerifiedEnvelope:
+    try:
+        bundle = publication.decode_bundle(encoded)
+    except publication.PublicationError as error:
+        raise VerificationError(
+            "native load publication bundle rejected: %s" % error
+        ) from error
+    return verify_publication_bundle(bundle)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Verify the bounded F1 native unary load campaign")
-    parser.add_argument("producer", help="path to glacier-unary-server-process-test")
+    parser.add_argument(
+        "producer",
+        nargs="?",
+        help="path to glacier-unary-server-process-test",
+    )
     parser.add_argument(
         "--profile",
         choices=tuple(CAMPAIGN_PROFILES),
@@ -1939,6 +2810,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", help="optional verified binary envelope output")
     parser.add_argument("--manifest-output", help="optional verified capture-manifest JSON output")
+    parser.add_argument(
+        "--publication-output",
+        help="optional atomic envelope-plus-context publication bundle",
+    )
+    parser.add_argument(
+        "--verify-publication",
+        help="offline verification of one retained publication bundle",
+    )
     parser.add_argument("--timeout-seconds", type=float, default=RUNNER_TIMEOUT_SECONDS)
     parser.add_argument(
         "--admission-interval-seconds",
@@ -1950,24 +2829,74 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
+    publication_identity: bytes | None = None
     try:
-        encoded, manifest, verified = run_campaign(
-            Path(arguments.producer),
-            timeout_seconds=arguments.timeout_seconds,
-            admission_interval_seconds=arguments.admission_interval_seconds,
-            profile_name=arguments.profile,
-        )
-        if arguments.output:
-            _atomic_write(Path(arguments.output), encoded)
-        if arguments.manifest_output:
-            _atomic_write(Path(arguments.manifest_output), _canonical_json(manifest))
-    except (OSError, VerificationError, native_observer.ObservationError) as error:
+        if arguments.verify_publication:
+            _require(
+                arguments.producer is None,
+                "offline publication verification accepts no producer",
+            )
+            _require(
+                not arguments.output
+                and not arguments.manifest_output
+                and not arguments.publication_output,
+                "offline publication verification accepts no output path",
+            )
+            bundle = publication.read_bundle(
+                Path(arguments.verify_publication)
+            )
+            verified = verify_publication_bundle(bundle)
+            manifest = bundle.manifest
+            encoded = bundle.envelope
+            profile_name = manifest["profile"]
+            publication_identity = (
+                bundle.publication_identity_sha256
+            )
+        else:
+            _require(
+                arguments.producer is not None,
+                "native load producer path is required",
+            )
+            encoded, manifest, verified = run_campaign(
+                Path(arguments.producer),
+                timeout_seconds=arguments.timeout_seconds,
+                admission_interval_seconds=arguments.admission_interval_seconds,
+                profile_name=arguments.profile,
+            )
+            profile_name = arguments.profile
+            if arguments.output:
+                _atomic_write(Path(arguments.output), encoded)
+            if arguments.manifest_output:
+                _atomic_write(
+                    Path(arguments.manifest_output),
+                    _canonical_json(manifest),
+                )
+            if arguments.publication_output:
+                published = publication.encode_bundle(
+                    encoded,
+                    manifest,
+                )
+                bundle = publication.decode_bundle(published)
+                verify_publication_bundle(bundle)
+                publication.atomic_write(
+                    Path(arguments.publication_output),
+                    published,
+                )
+                publication_identity = (
+                    bundle.publication_identity_sha256
+                )
+    except (
+        OSError,
+        VerificationError,
+        native_observer.ObservationError,
+        publication.PublicationError,
+    ) as error:
         print("error: %s" % error, file=sys.stderr)
         return 1
     profile = verified.profile
     terminal_metric_name = (
         "queued_timeout_terminal_observation_p99_ns"
-        if arguments.profile == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+        if profile_name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
         else "terminal_response_p99_ns"
     )
     print(
@@ -1979,9 +2908,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "completed_fifo_enqueue_to_worker_dispatch_sample_count=%d "
         "completed_http_first_positive_read_p99_ns=%d "
         "completed_http_first_positive_read_sample_count=%d %s=%d "
-        "throughput=%d/%dns publication_eligible=%s"
+        "throughput=%d/%dns publication_eligible=%s%s"
         % (
-            arguments.profile,
+            profile_name,
             RECORD_COUNT,
             WARMUP_COUNT,
             MEASURED_COUNT,
@@ -1996,6 +2925,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             profile.throughput_numerator,
             profile.throughput_denominator_ns,
             str(manifest["publication_eligible"]).lower(),
+            (
+                " publication_identity_sha256="
+                + publication_identity.hex()
+                if publication_identity is not None
+                else ""
+            ),
         )
     )
     return 0

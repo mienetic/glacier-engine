@@ -26,6 +26,53 @@ authenticate who captured the observations. Native publication additionally
 requires an addressable artifact, its source commit, a clean capture state,
 and the declared machine-state envelope.
 
+The authoritative single-file publication boundary for retained native-load
+evidence is `.glpub`. Its 56-byte fixed little-endian header contains magic
+`GF1PUB01`, publication ABI `0x4746315000000001`, exact total length, zero
+flags, canonical-manifest length, envelope length, and the fixed 128-byte
+footer length. The body is canonical compact ASCII JSON—with sorted keys,
+compact separators, and one trailing newline—followed by the exact binary
+envelope. The footer contains, in order, the raw envelope SHA-256, raw
+canonical-manifest SHA-256, a domain-separated publication identity over the
+header and both component digests, and a domain-separated seal over the
+header, both body sections, and the first three footer digests.
+
+The strict offline decoder accepts no compatibility JSON spelling: it rejects
+duplicate keys, non-finite numbers, bytes that are not the one canonical
+encoding of the decoded value, unknown flags, empty or over-bound sections,
+length disagreement, truncation, trailing bytes, digest substitution, identity
+drift, and seal mismatch. A successful decode returns the exact envelope and
+manifest bytes under one publication identity. The raw SHA-256 of the whole
+encoded bundle is a separate addressable bundle identity.
+
+The native-load publication verifier then applies the workload-specific layer
+without probing the current host. It requires the exact capture and
+publication-context schemas and cross-binds the retained profile, supported
+operating system, producer digest and size metadata, and envelope length and
+digest. It independently recomputes the machine fingerprint, challenge digest,
+domain-separated pre/post environment roots, eligibility policy and decision,
+exact report summary, claim scope, and limitations. The retained producer
+digest, machine fingerprint, challenge, system, and profile are the inputs
+supplied to the existing envelope verifier. Producer size is integrity-bound
+capture metadata and an exact manifest alias, not an offline measurement of an
+available executable. A structurally valid `.glpub` with a substituted but
+consistently resealed context therefore still fails when a field cross-bound to
+the envelope, retained environment, or derived summary no longer agrees.
+
+Before replacing a destination, the bounded writer verifies the full encoded
+bundle, writes and synchronizes a temporary file in the destination directory,
+and atomically replaces that one path. This is a single-file visibility
+boundary. The writer does not synchronize the parent directory. It is not an
+atomic protocol for the legacy envelope/manifest pair and does not prove crash
+recovery or physical power-loss durability. The digest identities establish
+integrity and exact composition, not signer authentication, trusted
+provenance, or capture truth. The codec and writer are integrated primitives;
+the manual native-load target emits `.glpub` only when
+`-Dunary-server-native-load-publication-output=PATH/report.glpub` is selected.
+Verify that retained file without a producer or current-host probe with
+`python3 bench/native_unary_server_load.py --verify-publication
+PATH/report.glpub`.
+
 The Phase F1 unary load producer embeds a complete Native Workload Report V1
 inside a profile-specific transport outer envelope. The generic W6 verifier
 validates the inner report; the dedicated native-unary verifier additionally

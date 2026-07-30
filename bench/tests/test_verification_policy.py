@@ -292,7 +292,9 @@ EXPECTED_PREPARED_TEXT_UNARY_SERVER_PROCESS_FOCUSED_PATHS = (
 EXPECTED_NATIVE_UNARY_LOAD_FOCUSED_PATHS = frozenset(
     {
         "bench/native_unary_server_load.py",
+        "bench/native_unary_server_load_publication.py",
         "bench/tests/test_native_unary_server_load.py",
+        "bench/tests/test_native_unary_server_load_publication.py",
     }
 )
 
@@ -3209,6 +3211,21 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
             "        self.assertTrue(True)\n",
             encoding="ascii",
         )
+        (
+            repository
+            / "bench"
+            / "tests"
+            / "test_native_unary_server_load_publication.py"
+        ).write_text(
+            "import unittest\n"
+            "class NativeUnaryServerLoadPublicationTests(unittest.TestCase):\n"
+            "    def test_fixture(self):\n"
+            "        self.assertTrue(True)\n",
+            encoding="ascii",
+        )
+        (
+            repository / "bench" / "native_unary_server_load_publication.py"
+        ).write_text("", encoding="ascii")
         (repository / "build.zig").write_text("", encoding="ascii")
         self.initialize_repository(repository)
         self.run_git(repository, "add", ".")
@@ -4896,7 +4913,11 @@ class VerificationShellIntegrationTests(GitRepositoryMixin, unittest.TestCase):
                 with tempfile.TemporaryDirectory() as temporary_directory:
                     root = Path(temporary_directory)
                     repository, merge_base, environment = self.make_repository(root)
-                    (repository / "bench" / "native_unary_server_load.py").write_text(
+                    (
+                        repository
+                        / "bench"
+                        / "native_unary_server_load_publication.py"
+                    ).write_text(
                         'raise SystemExit("native campaign must remain opt-in")\n',
                         encoding="ascii",
                     )

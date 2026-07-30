@@ -591,6 +591,13 @@ zig build unary-server-native-load-test \
 zig build unary-server-native-load-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j1 \
   -Dunary-server-native-load-profile=queued-receive-timeout-v1
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-publication-output=PATH/report.glpub
+
+python3 bench/native_unary_server_load.py \
+  --verify-publication PATH/report.glpub
 ```
 
 The load capture uses the optional `RequestWorkControlV1.published_fn`
@@ -618,12 +625,37 @@ compile root and is not part of the default build, `affected-fast`, ordinary
 CI, or the correctness targets above. Optional
 `-Dunary-server-native-load-output=PATH` and
 `-Dunary-server-native-load-manifest-output=PATH` retain the verified
-profile-specific envelope and its JSON capture manifest. Each requested file
-is replaced atomically only after full verification; when both are requested,
-the replacements are independent rather than one pair-atomic transaction.
-The manifest is contextual capture metadata and is not authenticated by or
-digest-bound into the binary envelope. The default all-completed profile
-retains the existing 79,780-byte envelope.
+profile-specific envelope and its JSON capture manifest. These are legacy,
+non-authoritative compatibility exports. Each requested file is replaced
+atomically only after full verification; when both are requested, the
+replacements are independent rather than one pair-atomic transaction. The
+contextual manifest is not authenticated by or digest-bound into the binary
+envelope. The default all-completed profile retains the existing 79,780-byte
+envelope.
+
+The authoritative publication format is instead one bounded `.glpub` file.
+Its fixed little-endian header declares the publication ABI, exact total
+length, zero flags, canonical-manifest length, exact envelope length, and
+fixed footer length. The body stores canonical compact ASCII JSON followed
+immediately by the exact envelope bytes. The footer stores the raw envelope
+and manifest SHA-256 values, a domain-separated identity over the header and
+both component digests, and a domain-separated seal over the complete framed
+content. The offline decoder requires canonical JSON and exact lengths, rejects
+duplicate keys, non-finite numbers, unknown flags, empty sections, truncation,
+trailing bytes, substitution, and resealing under inconsistent component
+identities, then returns the exact manifest and envelope it verified.
+
+The `.glpub` writer decodes and verifies the complete candidate before writing
+a same-directory temporary file, synchronizing it, atomically replacing one
+destination, and leaving parent-directory synchronization outside this
+primitive. This supplies a single-file visibility boundary, not a two-file
+transaction. It does not authenticate a signer or capture origin, resist an
+authorized hostile writer, provide a recovery journal, or prove persistence
+through a crash or physical power loss. The manual target emits this
+authoritative bundle only when
+`-Dunary-server-native-load-publication-output=PATH/report.glpub` is supplied.
+The separate binary-envelope and JSON-manifest build options remain legacy
+compatibility outputs.
 
 The default fixed profile runs 8 warmup and 64 measured requests in eight
 flows, with 2 transport workers and 8 pending slots. It correlates each client

@@ -8,6 +8,24 @@ before the first stable release.
 
 ### Added
 
+- Added the authoritative single-file `.glpub` publication-bundle primitive
+  for native-load evidence. A fixed little-endian header frames canonical
+  compact manifest JSON followed by the exact verified envelope. The footer
+  binds raw manifest and envelope SHA-256 values into a domain-separated
+  publication identity and whole-bundle seal, while the strict offline decoder
+  rejects unknown flags, noncanonical JSON, invalid or empty section lengths,
+  truncation, trailing bytes, digest substitution, and seal mismatch. The
+  bounded writer verifies the complete bundle, synchronizes a same-directory
+  temporary file, and replaces one destination atomically. The manual
+  native-load target can now emit this bundle through
+  `-Dunary-server-native-load-publication-output=PATH/report.glpub`, and the
+  native-load CLI can verify it offline without a producer or current-host
+  probe.
+  Its legacy optional envelope and contextual JSON remain non-authoritative,
+  independently atomic compatibility exports rather than an atomic pair.
+  Bundle digests provide integrity and exact composition, not authentication,
+  trusted capture provenance, crash recovery, or physical power-loss
+  durability.
 - Added an optional post-parse admission-rejection observer to
   the existing prepared-text unary work-control surface. It distinguishes
   service capacity from Scheduler rejection; the Service validates the current

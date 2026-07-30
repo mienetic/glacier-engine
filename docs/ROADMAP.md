@@ -2065,12 +2065,21 @@ Next slices:
   Do not infer first-token latency, fairness, completion order, parallel model
   execution, physical CPU parallelism, GPU performance, or another operating
   system's behavior from the fixed profiles.
-- [ ] Bind retained native-load context into one verifier-owned publication
-  identity: selected profile, envelope digest, producer, supported operating
-  system, pre/post environment selector, and eligibility decision. Publish the
-  envelope and context as one transactional container or pair protocol; the
-  current optional envelope and JSON files are independently atomic and the
-  contextual manifest is not authenticated by the binary envelope.
+- [x] Bind retained native-load context into one authoritative single-file
+  `.glpub` publication identity. Its canonical manifest contains a publication
+  context for the selected profile, exact envelope length and digest, producer
+  digest and size, supported operating system, machine and challenge
+  identities, pre/post environment roots, and eligibility policy and decision.
+  The strict verifier additionally recomputes the exact report summary, claim
+  scope, limitations, and compatibility aliases. The manual target emits the
+  verified bundle through
+  `-Dunary-server-native-load-publication-output=PATH/report.glpub`; the CLI
+  verifies it offline without a producer or current-host probe. The existing
+  optional binary envelope and JSON manifest remain non-authoritative
+  compatibility exports that are independently atomic, not a pair-atomic
+  protocol. Bundle digests provide integrity and composition, not
+  authentication, trusted provenance, crash recovery, or physical power-loss
+  durability.
 - define orderly-FIN policy for body-complete half-close, cancellation,
   response behavior, and outcome ownership before extending abandonment
   detection with one socket owner and exact accounting;

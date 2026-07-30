@@ -169,6 +169,17 @@ pub fn build(b: *std.Build) void {
                 "-Dunary-server-native-load-manifest-output must not be empty",
             );
     }
+    const unary_server_native_load_publication_output = b.option(
+        []const u8,
+        "unary-server-native-load-publication-output",
+        "Optional path that atomically retains the native unary load envelope and publication context",
+    );
+    if (unary_server_native_load_publication_output) |path| {
+        if (path.len == 0)
+            @panic(
+                "-Dunary-server-native-load-publication-output must not be empty",
+            );
+    }
     if (native_metal_report_output != null and
         native_metal_suite_report_output != null)
         @panic(
@@ -1216,6 +1227,11 @@ pub fn build(b: *std.Build) void {
     if (unary_server_native_load_manifest_output) |path| {
         run_unary_server_native_load.addArgs(
             &.{ "--manifest-output", path },
+        );
+    }
+    if (unary_server_native_load_publication_output) |path| {
+        run_unary_server_native_load.addArgs(
+            &.{ "--publication-output", path },
         );
     }
     const unary_server_native_load_step = b.step(

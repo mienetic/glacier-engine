@@ -1377,7 +1377,9 @@ if [ "$affected_profile" -eq 1 ] &&
     plan_has "native-unary-load-focused"; then
     if [ "$has_python" -eq 1 ]; then
         run_gate "python/native-unary-load" \
-            python3 -m unittest bench.tests.test_native_unary_server_load
+            python3 -m unittest \
+            bench.tests.test_native_unary_server_load \
+            bench.tests.test_native_unary_server_load_publication
     else
         record_skip "python/native-unary-load" \
             "requires a working python3 executable"

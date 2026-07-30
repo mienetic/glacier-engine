@@ -473,6 +473,30 @@ formats, and independent verifiers.
   latency, physical parallelism, production-model, GPU, or native foreign-OS
   evidence.
 
+  The repository now includes the bounded `.glpub` publication-bundle
+  primitive for retaining an exact load envelope and its exact canonical
+  context as one authoritative file. Its strict offline decoder requires the
+  fixed magic and ABI, zero flags, exact section lengths with no trailing
+  bytes, canonical compact JSON, the exact manifest and envelope SHA-256
+  values, a domain-separated publication identity, and a domain-separated
+  whole-bundle seal. Without consulting the current host, the native-load layer
+  cross-binds the retained profile, producer digest and size metadata, supported
+  system, and exact envelope; it independently recomputes the machine
+  fingerprint, challenge digest, pre/post environment roots, eligibility,
+  report summary, and claim scope. Producer size remains integrity-bound
+  capture metadata rather than an offline measurement of an available
+  executable. The writer validates the completed bundle semantically before
+  replacing one destination atomically. The manual target emits this bundle
+  only when `-Dunary-server-native-load-publication-output=PATH/report.glpub`
+  is supplied.
+  Verify a retained bundle without a producer or current-host probe with
+  `python3 bench/native_unary_server_load.py --verify-publication
+  PATH/report.glpub`. Its optional binary envelope and JSON manifest remain
+  non-authoritative compatibility exports that are replaced independently,
+  not as an atomic pair. Bundle hashes establish integrity and exact
+  composition, not signer identity, trusted provenance, hostile-writer
+  resistance, crash recovery, or physical power-loss durability.
+
   Phase F1 concurrent serving is explicitly unsupported on Windows today: the
   entrypoint returns
   `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it

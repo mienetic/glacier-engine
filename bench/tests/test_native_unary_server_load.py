@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 import hashlib
 import io
 import os
 import struct
 import sys
+import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -460,6 +463,242 @@ def _observation(
             for name, (availability, value) in values.items()
         ],
     }
+
+
+def _darwin_machine_descriptor() -> dict[str, object]:
+    descriptor: dict[str, object] = {
+        "system": "Darwin",
+        "release": "25.0.0",
+        "machine": "arm64",
+        "cpu_brand": "Fixture CPU",
+        "logical_cpu_count": 8,
+        "boot_session_sha256": _digest("boot-session").hex(),
+    }
+    canonical = load.json.dumps(
+        descriptor,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    descriptor["fingerprint_sha256"] = hashlib.sha256(
+        canonical
+    ).hexdigest()
+    return descriptor
+
+
+def _admitted_environment(
+    machine: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "schema": load.lane4_evidence.ENVIRONMENT_SCHEMA,
+        "captured_at_utc": "2026-01-01T00:00:00+00:00",
+        "host": copy.deepcopy(machine),
+        "power_source": "AC Power",
+        "battery_state": "charged",
+        "thermal_state": "nominal",
+        "foundation_thermal_state": "nominal",
+        "low_power_mode_enabled": False,
+        "cpu_speed_limit_percent": 100,
+        "scheduler_limit_percent": 100,
+        "available_cpus": 8,
+        "raw_pmset_battery_sha256": _digest(
+            "pmset-battery"
+        ).hex(),
+        "raw_pmset_thermal_sha256": _digest(
+            "pmset-thermal"
+        ).hex(),
+        "raw_foundation_process_info_sha256": _digest(
+            "foundation-process-info"
+        ).hex(),
+        "foundation_probe_source_sha256": (
+            load.lane4_evidence.FOUNDATION_PROBE_SOURCE_SHA256
+        ),
+        "foundation_probe_runner_sha256": _digest(
+            "foundation-runner"
+        ).hex(),
+        "measurement_admitted": True,
+        "reasons": [],
+        "claim_scope": "environment-admission-only",
+        "performance_claim": "not_evaluated",
+        "promotion_decision": "not_evaluated",
+        "measurements_publishable": False,
+    }
+
+
+def _publication_observation(
+    *,
+    phase: str,
+    busy: int,
+    external: int,
+    logical_cpu_count: int = 8,
+) -> dict[str, object]:
+    started_ns = 100 if phase == "pre_run" else 1_000
+    present_values = {
+        "host_monotonic_time": started_ns,
+        "host_logical_cpu_count": logical_cpu_count,
+        "host_cpu_busy_ppm": busy,
+        "host_external_cpu_ppm": external,
+        "host_power_source": 1,
+        "host_low_power_mode": 0,
+    }
+    metrics = []
+    for name, _, _, _, _ in load.native_observer.METRIC_SPECS:
+        provenance = (
+            load.native_observer._common.runtime_provenance(
+                load.native_observer.ADAPTER,
+                "Darwin",
+                "publication-fixture.%s" % name,
+            )
+        )
+        if name in present_values:
+            metric = load.native_observer._common.make_metric(
+                name,
+                phase,
+                "present",
+                present_values[name],
+                provenance,
+            )
+        else:
+            metric = load.native_observer._common.make_metric(
+                name,
+                phase,
+                "unsupported",
+                None,
+                provenance,
+                "fixture does not retain this metric",
+            )
+        metrics.append(metric)
+    availability_counts = {
+        availability: sum(
+            metric["availability"] == availability
+            for metric in metrics
+        )
+        for availability in load.native_observer.AVAILABILITIES
+    }
+    return {
+        "schema": load.native_observer.SCHEMA,
+        "adapter": load.native_observer.ADAPTER,
+        "phase": phase,
+        "system": "Darwin",
+        "observed_process_id": 1234,
+        "captured_at_utc": (
+            "2026-01-01T00:00:00+00:00"
+            if phase == "pre_run"
+            else "2026-01-01T00:00:01+00:00"
+        ),
+        "capture_interval": {
+            "sample_clock_domain": "host_monotonic",
+            "started_ns": started_ns,
+            "finished_ns": started_ns + 10,
+        },
+        "availability_counts": availability_counts,
+        "metrics": metrics,
+        "claim_scope": "native-observation-only",
+    }
+
+
+def _publication_fixture(
+    *,
+    publication_eligible: bool = True,
+) -> tuple[
+    load.publication.PublicationBundle,
+    load.VerifiedEnvelope,
+    bytes,
+    dict[str, object],
+]:
+    campaign = load.SUCCESSFUL_PROFILE
+    sidecars, closure, profile, _, _, _ = _profile_fixture()
+    envelope = b"native-unary-load-envelope-fixture"
+    report_sha256 = _digest("inner-report")
+    verified = load.VerifiedEnvelope(
+        inner_result=SimpleNamespace(report_sha256=report_sha256),
+        profile=profile,
+        sidecars=sidecars,
+        closure=closure,
+        outer_sha256=hashlib.sha256(envelope).digest(),
+    )
+    machine = _darwin_machine_descriptor()
+    machine_fingerprint = bytes.fromhex(
+        str(machine["fingerprint_sha256"])
+    )
+    before = _publication_observation(
+        phase="pre_run",
+        busy=300_000,
+        external=150_000,
+    )
+    after = _publication_observation(
+        phase="post_run",
+        busy=340_000,
+        external=170_000 if publication_eligible else 240_000,
+    )
+    cpu_boundary = load._validate_native_boundaries(
+        before,
+        after,
+        system="Darwin",
+    )
+    stable = [
+        _admitted_environment(machine),
+        _admitted_environment(machine),
+    ]
+    post = _admitted_environment(machine)
+    environment = {
+        "stable_pre_run_admission": stable,
+        "pre_run_native_observation": before,
+        "post_run_admission": post,
+        "post_run_native_observation": after,
+        "cpu_boundary": cpu_boundary,
+    }
+    pre_root, post_root = load._publication_environment_roots(
+        environment
+    )
+    producer = {
+        "sha256": _digest("producer").hex(),
+        "size_bytes": 1234,
+    }
+    challenge = _digest("publication-challenge")
+    eligibility = load._publication_eligibility(
+        "Darwin",
+        cpu_boundary,
+    )
+    context = {
+        "schema": load.PUBLICATION_CONTEXT_SCHEMA,
+        "profile": campaign.name,
+        "envelope": {
+            "sha256": verified.outer_sha256.hex(),
+            "bytes": len(envelope),
+        },
+        "producer": producer,
+        "system": "Darwin",
+        "machine_fingerprint_sha256": machine_fingerprint.hex(),
+        "challenge_hex": challenge.hex(),
+        "challenge_sha256": hashlib.sha256(challenge).hexdigest(),
+        "pre_environment_sha256": pre_root.hex(),
+        "post_environment_sha256": post_root.hex(),
+        "eligibility": eligibility,
+    }
+    manifest: dict[str, object] = {
+        "schema": "glacier.native-unary-server-load-capture/v1",
+        "status": "verified",
+        "profile": campaign.name,
+        "publication_eligible": publication_eligible,
+        "claim_scope": load._claim_scope(campaign),
+        "producer": producer,
+        "machine": machine,
+        "challenge_sha256": challenge.hex(),
+        "publication_context": context,
+        "report": load._report_manifest(
+            campaign,
+            envelope,
+            verified,
+        ),
+        "environment": environment,
+        "limitations": load._manifest_limitations(campaign),
+    }
+    bundle = load.publication.decode_bundle(
+        load.publication.encode_bundle(envelope, manifest)
+    )
+    return bundle, verified, challenge, manifest
 
 
 class NativeUnaryServerLoadTests(unittest.TestCase):
@@ -2109,6 +2348,607 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
             "completed_arrival_to_fifo_enqueue_sample_count=32",
             output,
         )
+
+    def test_publication_offline_verifier_uses_only_bound_context(
+        self,
+    ) -> None:
+        bundle, verified, challenge, _ = _publication_fixture()
+        context = bundle.manifest["publication_context"]
+        producer = context["producer"]
+        machine = bytes.fromhex(
+            context["machine_fingerprint_sha256"]
+        )
+        with mock.patch.object(
+            load,
+            "verify_envelope",
+            return_value=verified,
+        ) as verify, mock.patch.object(
+            load.platform,
+            "system",
+            side_effect=AssertionError("offline verifier read host system"),
+        ), mock.patch.object(
+            load,
+            "_capture_native_observation",
+            side_effect=AssertionError("offline verifier sampled host"),
+        ), mock.patch.object(
+            load.native_environment_admission,
+            "wait_for_stable_admission",
+            side_effect=AssertionError(
+                "offline verifier ran environment admission"
+            ),
+        ), mock.patch.object(
+            load.lane4_evidence,
+            "capture_environment",
+            side_effect=AssertionError(
+                "offline verifier captured environment"
+            ),
+        ):
+            self.assertIs(
+                load.verify_publication_bundle(bundle),
+                verified,
+            )
+        verify.assert_called_once_with(
+            bundle.envelope,
+            expected_build=bytes.fromhex(producer["sha256"]),
+            expected_machine=machine,
+            expected_challenge=challenge,
+            system="Darwin",
+            profile_name=load.SUCCESSFUL_PROFILE_NAME,
+        )
+
+    def test_publication_bundle_api_reconstructs_structural_identity(
+        self,
+    ) -> None:
+        bundle, _, _, _ = _publication_fixture()
+        mutations = {
+            "manifest_bytes": replace(
+                bundle,
+                manifest_bytes=bundle.manifest_bytes + b" ",
+            ),
+            "envelope_sha256": replace(
+                bundle,
+                envelope_sha256=_digest("wrong-envelope"),
+            ),
+            "manifest_sha256": replace(
+                bundle,
+                manifest_sha256=_digest("wrong-manifest"),
+            ),
+            "publication_identity_sha256": replace(
+                bundle,
+                publication_identity_sha256=_digest(
+                    "wrong-publication-identity"
+                ),
+            ),
+            "bundle_sha256": replace(
+                bundle,
+                bundle_sha256=_digest("wrong-bundle"),
+            ),
+        }
+        for field, mutated in mutations.items():
+            with self.subTest(field=field), self.assertRaisesRegex(
+                load.VerificationError,
+                field,
+            ):
+                load.verify_publication_bundle(mutated)
+
+    def test_linux_publication_environment_uses_exact_native_schema(
+        self,
+    ) -> None:
+        adapter = load.native_observer_linux.LinuxObserver(
+            reader=lambda _path, _maximum: (
+                b"MemAvailable: 1048576 kB\n"
+            )
+        )
+        with mock.patch.object(
+            load.native_observer.platform,
+            "system",
+            return_value="Linux",
+        ):
+            before = load.native_observer.capture_observation(
+                "pre_run",
+                platform_adapter=adapter,
+                logical_cpu_count=8,
+                process_id=1234,
+            )
+            after = load.native_observer.capture_observation(
+                "post_run",
+                platform_adapter=adapter,
+                logical_cpu_count=8,
+                process_id=1234,
+            )
+        machine: dict[str, object] = {
+            "system": "Linux",
+            "release": "fixture-release",
+            "machine": "x86_64",
+            "processor": "Fixture CPU",
+            "logical_cpu_count": 8,
+            "boot_session_sha256": _digest(
+                "linux-boot-session"
+            ).hex(),
+        }
+        canonical_machine = load.json.dumps(
+            machine,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+        fingerprint = hashlib.sha256(canonical_machine).digest()
+        machine["fingerprint_sha256"] = fingerprint.hex()
+        cpu_boundary = load._validate_native_boundaries(
+            before,
+            after,
+            system="Linux",
+        )
+        environment = {
+            "stable_pre_run_admission": [],
+            "pre_run_native_observation": before,
+            "post_run_admission": None,
+            "post_run_native_observation": after,
+            "cpu_boundary": cpu_boundary,
+        }
+        expected_pre, expected_post = (
+            load._publication_environment_roots(environment)
+        )
+        actual_boundary, actual_pre, actual_post = (
+            load._verify_publication_environment(
+                environment,
+                system="Linux",
+                machine_fingerprint=fingerprint,
+                machine_logical_cpu_count=8,
+            )
+        )
+        self.assertEqual(actual_boundary, cpu_boundary)
+        self.assertEqual(actual_pre, expected_pre)
+        self.assertEqual(actual_post, expected_post)
+
+    def test_run_campaign_builds_exact_publication_context(self) -> None:
+        bundle, verified, challenge, _ = _publication_fixture()
+        machine = _darwin_machine_descriptor()
+        admission = _admitted_environment(machine)
+        before = _observation(busy=300_000, external=150_000)
+        after = _observation(busy=340_000, external=170_000)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            producer = load.Path(temporary_directory) / "producer"
+            producer.write_bytes(b"fixed-producer")
+            producer_sha256 = hashlib.sha256(
+                b"fixed-producer"
+            ).digest()
+            with mock.patch.object(
+                load.platform,
+                "system",
+                return_value="Darwin",
+            ), mock.patch.object(
+                load.native_environment_admission,
+                "wait_for_stable_admission",
+                return_value=SimpleNamespace(
+                    captures=(admission, copy.deepcopy(admission))
+                ),
+            ), mock.patch.object(
+                load,
+                "_capture_native_observation",
+                side_effect=(before, after),
+            ), mock.patch.object(
+                load.secrets,
+                "token_bytes",
+                return_value=challenge,
+            ), mock.patch.object(
+                load,
+                "_run_producer",
+                return_value=bundle.envelope,
+            ), mock.patch.object(
+                load.lane4_evidence,
+                "capture_environment",
+                return_value=copy.deepcopy(admission),
+            ), mock.patch.object(
+                load,
+                "verify_envelope",
+                return_value=verified,
+            ) as verify:
+                encoded, manifest, actual_verified = (
+                    load.run_campaign(producer)
+                )
+        self.assertEqual(encoded, bundle.envelope)
+        self.assertIs(actual_verified, verified)
+        context = manifest["publication_context"]
+        self.assertEqual(
+            context["challenge_hex"],
+            challenge.hex(),
+        )
+        self.assertEqual(
+            context["challenge_sha256"],
+            hashlib.sha256(challenge).hexdigest(),
+        )
+        self.assertEqual(
+            context["producer"]["sha256"],
+            producer_sha256.hex(),
+        )
+        self.assertEqual(
+            context["machine_fingerprint_sha256"],
+            machine["fingerprint_sha256"],
+        )
+        self.assertEqual(
+            context["eligibility"],
+            {
+                "policy": load.PUBLICATION_ELIGIBILITY_POLICY,
+                "decision": "eligible",
+                "reasons": [],
+                "publishable_external_cpu_ppm": (
+                    load.PUBLISHABLE_EXTERNAL_CPU_PPM
+                ),
+            },
+        )
+        pre_root, post_root = load._publication_environment_roots(
+            manifest["environment"]
+        )
+        self.assertEqual(
+            context["pre_environment_sha256"],
+            pre_root.hex(),
+        )
+        self.assertEqual(
+            context["post_environment_sha256"],
+            post_root.hex(),
+        )
+        verify.assert_called_once_with(
+            bundle.envelope,
+            expected_build=producer_sha256,
+            expected_machine=bytes.fromhex(
+                str(machine["fingerprint_sha256"])
+            ),
+            expected_challenge=challenge,
+            system="Darwin",
+            profile_name=load.SUCCESSFUL_PROFILE_NAME,
+        )
+
+    def test_publication_rejects_coherently_resealed_context_mutations(
+        self,
+    ) -> None:
+        eligible_bundle, verified, _, _ = _publication_fixture()
+        ineligible_bundle, ineligible_verified, _, _ = (
+            _publication_fixture(publication_eligible=False)
+        )
+        mutations: list[
+            tuple[
+                str,
+                load.publication.PublicationBundle,
+                load.VerifiedEnvelope,
+                str,
+                object,
+            ]
+        ] = []
+
+        challenge_manifest = copy.deepcopy(eligible_bundle.manifest)
+        challenge_manifest["publication_context"][
+            "challenge_sha256"
+        ] = _digest("wrong-challenge-digest").hex()
+        mutations.append(
+            (
+                "challenge",
+                eligible_bundle,
+                verified,
+                "challenge digest mismatch",
+                challenge_manifest,
+            )
+        )
+
+        environment_manifest = copy.deepcopy(eligible_bundle.manifest)
+        environment_manifest["publication_context"][
+            "pre_environment_sha256"
+        ] = _digest("wrong-pre-environment").hex()
+        mutations.append(
+            (
+                "environment",
+                eligible_bundle,
+                verified,
+                "environment root mismatch",
+                environment_manifest,
+            )
+        )
+
+        eligibility_manifest = copy.deepcopy(ineligible_bundle.manifest)
+        eligibility_manifest["publication_context"]["eligibility"][
+            "reasons"
+        ] = []
+        mutations.append(
+            (
+                "eligibility",
+                ineligible_bundle,
+                ineligible_verified,
+                "eligibility context mismatch",
+                eligibility_manifest,
+            )
+        )
+
+        decision_manifest = copy.deepcopy(ineligible_bundle.manifest)
+        decision_manifest["publication_eligible"] = True
+        mutations.append(
+            (
+                "decision",
+                ineligible_bundle,
+                ineligible_verified,
+                "eligibility decision mismatch",
+                decision_manifest,
+            )
+        )
+
+        cpu_type_manifest = copy.deepcopy(eligible_bundle.manifest)
+        cpu_type_manifest["environment"]["cpu_boundary"][
+            "logical_cpu_count"
+        ] = 8.0
+        mutations.append(
+            (
+                "cpu-boundary-type",
+                eligible_bundle,
+                verified,
+                "retained CPU boundary is inconsistent",
+                cpu_type_manifest,
+            )
+        )
+
+        eligibility_type_manifest = copy.deepcopy(
+            eligible_bundle.manifest
+        )
+        eligibility_type_manifest["publication_context"][
+            "eligibility"
+        ]["publishable_external_cpu_ppm"] = float(
+            load.PUBLISHABLE_EXTERNAL_CPU_PPM
+        )
+        mutations.append(
+            (
+                "eligibility-type",
+                eligible_bundle,
+                verified,
+                "eligibility context mismatch",
+                eligibility_type_manifest,
+            )
+        )
+
+        producer_type_manifest = copy.deepcopy(
+            eligible_bundle.manifest
+        )
+        producer_type_manifest["producer"]["size_bytes"] = 1234.0
+        mutations.append(
+            (
+                "producer-alias-type",
+                eligible_bundle,
+                verified,
+                "producer alias mismatch",
+                producer_type_manifest,
+            )
+        )
+
+        report_type_manifest = copy.deepcopy(eligible_bundle.manifest)
+        report_type_manifest["report"]["bytes"] = float(
+            len(eligible_bundle.envelope)
+        )
+        mutations.append(
+            (
+                "report-type",
+                eligible_bundle,
+                verified,
+                "report summary mismatch",
+                report_type_manifest,
+            )
+        )
+
+        observation_schema_manifest = copy.deepcopy(
+            eligible_bundle.manifest
+        )
+        del observation_schema_manifest["environment"][
+            "pre_run_native_observation"
+        ]["schema"]
+        mutations.append(
+            (
+                "observation-schema",
+                eligible_bundle,
+                verified,
+                "fields are not exact",
+                observation_schema_manifest,
+            )
+        )
+
+        admission_schema_manifest = copy.deepcopy(
+            eligible_bundle.manifest
+        )
+        admission_schema_manifest["environment"][
+            "stable_pre_run_admission"
+        ][0]["unexpected"] = True
+        mutations.append(
+            (
+                "admission-schema",
+                eligible_bundle,
+                verified,
+                "fields are not exact",
+                admission_schema_manifest,
+            )
+        )
+
+        logical_cpu_manifest = copy.deepcopy(eligible_bundle.manifest)
+        logical_environment = logical_cpu_manifest["environment"]
+        logical_environment["pre_run_native_observation"] = (
+            _publication_observation(
+                phase="pre_run",
+                busy=300_000,
+                external=150_000,
+                logical_cpu_count=16,
+            )
+        )
+        logical_environment["post_run_native_observation"] = (
+            _publication_observation(
+                phase="post_run",
+                busy=340_000,
+                external=170_000,
+                logical_cpu_count=16,
+            )
+        )
+        logical_environment["cpu_boundary"] = (
+            load._validate_native_boundaries(
+                logical_environment[
+                    "pre_run_native_observation"
+                ],
+                logical_environment[
+                    "post_run_native_observation"
+                ],
+                system="Darwin",
+            )
+        )
+        logical_pre_root, logical_post_root = (
+            load._publication_environment_roots(
+                logical_environment
+            )
+        )
+        logical_cpu_manifest["publication_context"][
+            "pre_environment_sha256"
+        ] = logical_pre_root.hex()
+        logical_cpu_manifest["publication_context"][
+            "post_environment_sha256"
+        ] = logical_post_root.hex()
+        mutations.append(
+            (
+                "logical-cpu-cross-binding",
+                eligible_bundle,
+                verified,
+                "does not match the machine",
+                logical_cpu_manifest,
+            )
+        )
+
+        for (
+            label,
+            original,
+            expected_verified,
+            error,
+            mutated_manifest,
+        ) in mutations:
+            resealed = load.publication.decode_bundle(
+                load.publication.encode_bundle(
+                    original.envelope,
+                    mutated_manifest,
+                )
+            )
+            with self.subTest(label=label), mock.patch.object(
+                load,
+                "verify_envelope",
+                return_value=expected_verified,
+            ), self.assertRaisesRegex(load.VerificationError, error):
+                load.verify_publication_bundle(resealed)
+
+    def test_publication_cli_writes_one_bundle_and_verifies_offline(
+        self,
+    ) -> None:
+        bundle, verified, _, _ = _publication_fixture()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            publication_path = load.Path(
+                temporary_directory
+            ) / "capture.gf1pub"
+            stdout = io.StringIO()
+            with mock.patch.object(
+                load,
+                "run_campaign",
+                return_value=(
+                    bundle.envelope,
+                    bundle.manifest,
+                    verified,
+                ),
+            ), mock.patch.object(
+                load,
+                "verify_envelope",
+                return_value=verified,
+            ), mock.patch.object(sys, "stdout", stdout):
+                self.assertEqual(
+                    load.main(
+                        [
+                            "producer",
+                            "--publication-output",
+                            str(publication_path),
+                        ]
+                    ),
+                    0,
+                )
+            retained = load.publication.read_bundle(publication_path)
+            self.assertEqual(retained.envelope, bundle.envelope)
+            self.assertEqual(retained.manifest, bundle.manifest)
+            self.assertIn(
+                "publication_identity_sha256=",
+                stdout.getvalue(),
+            )
+
+            stdout = io.StringIO()
+            with mock.patch.object(
+                load,
+                "verify_envelope",
+                return_value=verified,
+            ), mock.patch.object(
+                load.platform,
+                "system",
+                side_effect=AssertionError(
+                    "offline CLI read host system"
+                ),
+            ), mock.patch.object(
+                load,
+                "_capture_native_observation",
+                side_effect=AssertionError(
+                    "offline CLI sampled host"
+                ),
+            ), mock.patch.object(sys, "stdout", stdout):
+                self.assertEqual(
+                    load.main(
+                        [
+                            "--verify-publication",
+                            str(publication_path),
+                        ]
+                    ),
+                    0,
+                )
+            self.assertIn(
+                retained.publication_identity_sha256.hex(),
+                stdout.getvalue(),
+            )
+
+    def test_publication_cli_preserves_predecessor_on_semantic_failure(
+        self,
+    ) -> None:
+        bundle, verified, _, _ = _publication_fixture()
+        invalid_manifest = copy.deepcopy(bundle.manifest)
+        invalid_manifest["publication_context"][
+            "challenge_sha256"
+        ] = _digest("invalid-challenge-digest").hex()
+        predecessor = load.publication.encode_bundle(
+            b"predecessor-envelope",
+            {"generation": 1},
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            publication_path = load.Path(
+                temporary_directory
+            ) / "capture.glpub"
+            publication_path.write_bytes(predecessor)
+            with mock.patch.object(
+                load,
+                "run_campaign",
+                return_value=(
+                    bundle.envelope,
+                    invalid_manifest,
+                    verified,
+                ),
+            ), mock.patch.object(
+                load,
+                "verify_envelope",
+                return_value=verified,
+            ), mock.patch.object(sys, "stderr", io.StringIO()):
+                self.assertEqual(
+                    load.main(
+                        [
+                            "producer",
+                            "--publication-output",
+                            str(publication_path),
+                        ]
+                    ),
+                    1,
+                )
+            self.assertEqual(
+                publication_path.read_bytes(),
+                predecessor,
+            )
 
     def test_closure_rejects_each_material_class(self) -> None:
         valid = _valid_closure()
