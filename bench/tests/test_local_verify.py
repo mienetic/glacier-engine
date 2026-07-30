@@ -5,6 +5,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -50,6 +51,28 @@ class LocalVerifyTests(unittest.TestCase):
             fi
             if [ "${1:-}" = "fmt" ]; then
                 exit "${VERIFY_FAKE_FORMAT_STATUS:-0}"
+            fi
+            corrupt_archive="$ZIG_LOCAL_CACHE_DIR/o/dddddddddddddddddddddddddddddddd/libcompiler_rt.a"
+            if [ "${1:-}" = "build" ]; then
+                case "${VERIFY_FAKE_CACHE_CORRUPTION_MODE:-}" in
+                    once)
+                        if [ -f "$corrupt_archive" ]; then
+                            echo "error: failed to parse archive: FileNotFound"
+                            echo "    note: while parsing .zig-cache/o/dddddddddddddddddddddddddddddddd/libcompiler_rt.a"
+                            exit 2
+                        fi
+                        ;;
+                    persistent)
+                        echo "error: failed to parse archive: FileNotFound"
+                        echo "    note: while parsing .zig-cache/o/dddddddddddddddddddddddddddddddd/libcompiler_rt.a"
+                        exit 2
+                        ;;
+                    near-match)
+                        echo "error: failed to parse archive: FileNotFound"
+                        echo "    note: while parsing .zig-cache/o/a/libcompiler_rt.a"
+                        exit 2
+                        ;;
+                esac
             fi
             if [ "${1:-}" = "build" ] \
                 && [ "${2:-}" = "host-runtime-compile" ] \
@@ -97,6 +120,10 @@ class LocalVerifyTests(unittest.TestCase):
             if [ "${1:-}" = "--version" ]; then
                 echo "Python 3.11.9"
                 exit "${VERIFY_FAKE_PYTHON_VERSION_STATUS:-0}"
+            fi
+            if [ "${1:-}" = "tools/verification_policy.py" ] \
+                && [ "${2:-}" = "reset-zig-cache" ]; then
+                exec "${VERIFY_REAL_PYTHON:?}" "$@"
             fi
             case "$*" in
                 *test_public_markdown_policy*)
@@ -149,6 +176,30 @@ class LocalVerifyTests(unittest.TestCase):
             stderr=subprocess.STDOUT,
             text=True,
         )
+
+    def prepare_ci_cache_fixture(
+        self,
+        root: Path,
+    ) -> tuple[Path, Path, Path]:
+        repository = root / "repository"
+        tools_dir = repository / "tools"
+        tools_dir.mkdir(parents=True)
+        copied_verify = tools_dir / "verify.sh"
+        shutil.copy2(VERIFY, copied_verify)
+        shutil.copy2(
+            ROOT / "tools" / "verification_policy.py",
+            tools_dir / "verification_policy.py",
+        )
+        action_cache = (repository / ".zig-cache").resolve()
+        corrupt_archive = (
+            action_cache
+            / "o"
+            / ("d" * 32)
+            / "libcompiler_rt.a"
+        )
+        corrupt_archive.parent.mkdir(parents=True)
+        corrupt_archive.write_bytes(b"incomplete archive")
+        return copied_verify, action_cache, corrupt_archive
 
     def test_quick_profile_reports_passes_skips_and_isolates_cache(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -298,6 +349,239 @@ class LocalVerifyTests(unittest.TestCase):
                 result.stdout,
             )
 
+    def test_ci_incomplete_zig_cache_is_reset_and_retried_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copied_verify, action_cache, corrupt_archive = (
+                self.prepare_ci_cache_fixture(root)
+            )
+
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                    "VERIFY_FAKE_CACHE_CORRUPTION_MODE": "once",
+                    "VERIFY_REAL_PYTHON": sys.executable,
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            self.assertTrue(action_cache.is_dir(), result.stdout)
+            self.assertFalse(corrupt_archive.exists(), result.stdout)
+            self.assertIn("PASS  cache/zig-recovery:", result.stdout)
+            log = (root / "tool.log").read_text(encoding="utf-8")
+            build_lines = [
+                line for line in log.splitlines() if line.startswith("zig|args=build ")
+            ]
+            self.assertEqual(2, len(build_lines), log)
+            self.assertEqual(
+                1,
+                log.count("tools/verification_policy.py reset-zig-cache"),
+                log,
+            )
+            log_lines = log.splitlines()
+            reset_index = next(
+                index
+                for index, line in enumerate(log_lines)
+                if "tools/verification_policy.py reset-zig-cache" in line
+            )
+            build_indices = [
+                index
+                for index, line in enumerate(log_lines)
+                if line.startswith("zig|args=build ")
+            ]
+            self.assertLess(build_indices[0], reset_index)
+            self.assertLess(reset_index, build_indices[1])
+            for build_line in build_lines:
+                self.assertIn(f"|local={action_cache}|", build_line)
+                self.assertIn(f"|global={action_cache}|", build_line)
+
+    def test_ci_cache_recovery_wraps_full_compile_frontier(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copied_verify, action_cache, corrupt_archive = (
+                self.prepare_ci_cache_fixture(root)
+            )
+
+            result = self.run_verify(
+                root,
+                profile="full",
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                    "VERIFY_FAKE_CACHE_CORRUPTION_MODE": "once",
+                    "VERIFY_REAL_PYTHON": sys.executable,
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(0, result.returncode, result.stdout)
+            self.assertFalse(corrupt_archive.exists(), result.stdout)
+            self.assertIn("PASS  compile/host-test-frontier:", result.stdout)
+            self.assertIn("PASS  cache/zig-recovery:", result.stdout)
+            log = (root / "tool.log").read_text(encoding="utf-8")
+            build_lines = [
+                line for line in log.splitlines() if line.startswith("zig|args=build ")
+            ]
+            self.assertGreaterEqual(len(build_lines), 3, log)
+            self.assertTrue(
+                build_lines[0].startswith(
+                    "zig|args=build host-runtime-compile "
+                ),
+                log,
+            )
+            self.assertTrue(
+                build_lines[1].startswith(
+                    "zig|args=build host-runtime-compile "
+                ),
+                log,
+            )
+            self.assertEqual(
+                1,
+                log.count("tools/verification_policy.py reset-zig-cache"),
+                log,
+            )
+
+    def test_ci_persistent_zig_cache_corruption_retries_only_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copied_verify, action_cache, corrupt_archive = (
+                self.prepare_ci_cache_fixture(root)
+            )
+
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                    "VERIFY_FAKE_CACHE_CORRUPTION_MODE": "persistent",
+                    "VERIFY_REAL_PYTHON": sys.executable,
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(1, result.returncode, result.stdout)
+            self.assertTrue(action_cache.is_dir(), result.stdout)
+            self.assertFalse(corrupt_archive.exists(), result.stdout)
+            self.assertEqual(
+                1,
+                result.stdout.count(
+                    "restored Zig cache is incomplete; "
+                    "resetting and retrying once"
+                ),
+                result.stdout,
+            )
+            self.assertNotIn("PASS  cache/zig-recovery:", result.stdout)
+            log = (root / "tool.log").read_text(encoding="utf-8")
+            self.assertEqual(
+                2,
+                sum(
+                    line.startswith("zig|args=build ")
+                    for line in log.splitlines()
+                ),
+                log,
+            )
+            self.assertEqual(
+                1,
+                log.count("tools/verification_policy.py reset-zig-cache"),
+                log,
+            )
+
+    def test_ci_near_match_cache_error_is_not_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copied_verify, action_cache, corrupt_archive = (
+                self.prepare_ci_cache_fixture(root)
+            )
+
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                    "VERIFY_FAKE_CACHE_CORRUPTION_MODE": "near-match",
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(1, result.returncode, result.stdout)
+            self.assertTrue(corrupt_archive.is_file(), result.stdout)
+            self.assertNotIn(
+                "restored Zig cache is incomplete",
+                result.stdout,
+            )
+            self.assertNotIn("PASS  cache/zig-recovery:", result.stdout)
+            log = (root / "tool.log").read_text(encoding="utf-8")
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith("zig|args=build ")
+                    for line in log.splitlines()
+                ),
+                log,
+            )
+            self.assertEqual(
+                0,
+                log.count("tools/verification_policy.py reset-zig-cache"),
+                log,
+            )
+
+    def test_ci_cache_reset_failure_fails_closed_without_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            copied_verify, action_cache, corrupt_archive = (
+                self.prepare_ci_cache_fixture(root)
+            )
+            outside = root / "outside-cache-data"
+            outside.mkdir()
+            retained = outside / "retained"
+            retained.write_bytes(b"keep")
+            escape = action_cache / "zz-escape"
+            escape.symlink_to(outside, target_is_directory=True)
+
+            result = self.run_verify(
+                root,
+                extra_env={
+                    "GITHUB_ACTIONS": "true",
+                    "GLACIER_VERIFY_REUSE_ZIG_CACHE": "1",
+                    "ZIG_LOCAL_CACHE_DIR": str(action_cache),
+                    "ZIG_GLOBAL_CACHE_DIR": str(action_cache),
+                    "VERIFY_FAKE_CACHE_CORRUPTION_MODE": "once",
+                    "VERIFY_REAL_PYTHON": sys.executable,
+                },
+                verify_path=copied_verify,
+            )
+
+            self.assertEqual(1, result.returncode, result.stdout)
+            self.assertTrue(corrupt_archive.is_file(), result.stdout)
+            self.assertTrue(escape.is_symlink(), result.stdout)
+            self.assertEqual(b"keep", retained.read_bytes())
+            self.assertNotIn("PASS  cache/zig-recovery:", result.stdout)
+            log = (root / "tool.log").read_text(encoding="utf-8")
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith("zig|args=build ")
+                    for line in log.splitlines()
+                ),
+                log,
+            )
+            self.assertEqual(
+                1,
+                log.count("tools/verification_policy.py reset-zig-cache"),
+                log,
+            )
+
     def test_ci_cache_is_pruned_again_after_a_gate_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -331,6 +615,20 @@ class LocalVerifyTests(unittest.TestCase):
                 ),
                 log,
             )
+            self.assertEqual(
+                0,
+                log.count("tools/verification_policy.py reset-zig-cache"),
+                log,
+            )
+            self.assertEqual(
+                1,
+                sum(
+                    line.startswith("zig|args=build ")
+                    for line in log.splitlines()
+                ),
+                log,
+            )
+            self.assertNotIn("cache/zig-recovery", result.stdout)
 
     def test_ci_cache_opt_in_fails_closed_outside_github_actions(
         self,

@@ -229,6 +229,14 @@ before the first stable release.
 
 ### Changed
 
+- Hosted affected and exhaustive verification now recovers at most once per
+  run from an incomplete restored Zig archive cache. Only the exact adjacent
+  `failed to parse archive: FileNotFound` diagnostic for
+  `.zig-cache/o/<hash>/libcompiler_rt.a` authorizes a preflighted reset of the
+  validated workspace cache and one retry of the same build. This applies to
+  focused host, exhaustive host, and retained-target gates without expanding
+  their selected roots. Other compiler failures remain final and contributor
+  caches remain ephemeral.
 - Ordinary package/text verification now compiles only the dependency it owns.
   Host execution still reuses `text-runtime-golden-path-test`, while complete
   affected verification selects its existing CLI-only

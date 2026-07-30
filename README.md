@@ -1292,7 +1292,12 @@ Hosted CI may reuse only the pinned Zig setup action's exact cache path. It
 soft-prunes affected-job caches above 900 MiB and exhaustive/Metal caches above
 1,800 MiB, before the action's 1,024/2,048 MiB hard limits. This does not enable
 a persistent local project cache: contributor runs keep their cache in the
-temporary verifier workspace and remove it on exit.
+temporary verifier workspace and remove it on exit. A hosted build that
+encounters the exact adjacent restored-archive diagnostic for
+`.zig-cache/o/<hash>/libcompiler_rt.a` preflights and resets only that validated
+cache, then retries the unchanged build once. This recovery belongs to the
+affected/exhaustive verifier jobs and is limited to one attempt across their
+run; ordinary compiler failures remain final.
 
 Build the portable CLI and run one deterministic, model-free publication demo:
 

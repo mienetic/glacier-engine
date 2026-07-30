@@ -216,6 +216,12 @@ prune_reused_zig_cache() {
         --limit-mib "$zig_cache_soft_limit_mib"
 }
 
+reset_reused_zig_cache() {
+    python3 tools/verification_policy.py reset-zig-cache \
+        --repository-root "$repository_root" \
+        --cache-root "$reused_zig_cache"
+}
+
 cleanup_verification() {
     cleanup_status=0
     if [ "$reuse_zig_cache" -eq 1 ] &&
@@ -352,8 +358,79 @@ run_gate() {
     fi
 }
 
+zig_cache_log_has_incomplete_archive() {
+    # The verifier runs from repository_root and cache reuse is accepted only
+    # for repository_root/.zig-cache, so this exact relative diagnostic is
+    # rooted in the validated action-owned cache.
+    awk '
+        function is_expected_detail(line, prefix, suffix, object_hash) {
+            prefix = "    note: while parsing .zig-cache/o/"
+            suffix = "/libcompiler_rt.a"
+            if (length(line) != length(prefix) + 32 + length(suffix)) {
+                return 0
+            }
+            if (substr(line, 1, length(prefix)) != prefix) {
+                return 0
+            }
+            if (substr(line, length(prefix) + 33) != suffix) {
+                return 0
+            }
+            object_hash = substr(line, length(prefix) + 1, 32)
+            return object_hash ~ /^[0-9a-f]+$/
+        }
+        BEGIN {
+            found = 0
+        }
+        $0 == "error: failed to parse archive: FileNotFound" {
+            detail_status = getline detail
+            if (detail_status > 0 && is_expected_detail(detail)) {
+                found = 1
+            }
+        }
+        END {
+            exit found ? 0 : 1
+        }
+    ' "$1"
+}
+
+run_cached_zig_build() {
+    if [ "$reuse_zig_cache" -eq 0 ] ||
+        [ -f "$verification_root/zig-cache-recovery-attempted" ]; then
+        zig build "$@"
+        return
+    fi
+
+    first_attempt_log=$(
+        mktemp "$verification_root/logs/zig-cache-attempt.XXXXXX"
+    ) || return 1
+    if zig build "$@" >"$first_attempt_log" 2>&1; then
+        first_attempt_status=0
+    else
+        first_attempt_status=$?
+    fi
+    cat "$first_attempt_log"
+    if [ "$first_attempt_status" -eq 0 ]; then
+        return
+    fi
+    if ! zig_cache_log_has_incomplete_archive "$first_attempt_log"; then
+        return "$first_attempt_status"
+    fi
+
+    : >"$verification_root/zig-cache-recovery-attempted"
+    echo "restored Zig cache is incomplete; resetting and retrying once"
+    if ! reset_reused_zig_cache; then
+        return 1
+    fi
+    if zig build "$@"; then
+        : >"$verification_root/zig-cache-recovered"
+        return
+    else
+        return $?
+    fi
+}
+
 run_zig_build() {
-    zig build "$@" \
+    run_cached_zig_build "$@" \
         -Doptimize="$zig_optimize" \
         -Dmetal=false \
         -j2 \
@@ -411,7 +488,7 @@ run_selected_host_build() {
 }
 
 run_zig_metal_build() {
-    zig build native-metal-suite-compile \
+    run_cached_zig_build native-metal-suite-compile \
         -Dmetal-output-dir="$verification_root/metal" \
         -Doptimize="$zig_optimize" \
         -Dmetal=true \
@@ -420,7 +497,7 @@ run_zig_metal_build() {
         --global-cache-dir "$ZIG_GLOBAL_CACHE_DIR" \
         --prefix "$verification_root/prefix-metal" ||
         return $?
-    zig build native-metal-suite-test \
+    run_cached_zig_build native-metal-suite-test \
         -Dmetal-output-dir="$verification_root/metal" \
         -Doptimize="$zig_optimize" \
         -Dmetal=true \
@@ -433,7 +510,7 @@ run_zig_metal_build() {
 run_zig_target_build() {
     target_name=$1
     shift
-    zig build "$@" \
+    run_cached_zig_build "$@" \
         -Dtarget="$target_name" \
         -Doptimize="$zig_optimize" \
         -Dmetal=false \
@@ -1820,6 +1897,11 @@ case "$profile" in
             "run the affected targets from docs/CONTRIBUTING.md"
         ;;
 esac
+
+if [ -f "$verification_root/zig-cache-recovered" ]; then
+    record_pass "cache/zig-recovery" \
+        "discarded one incomplete restored cache and rebuilt the same Zig root"
+fi
 
 if [ "$reuse_zig_cache" -eq 1 ]; then
     final_zig_cache_prune_attempted=1

@@ -467,6 +467,11 @@ retained tests and independent review.
   cross-compile only its existing CLI artifact. Independent package/raw-input
   oracle changes retain the CLI-backed comparison; test-only changes run their
   two exact unittest modules without starting a Zig build.
+- [x] Recover hosted Zig builds from one exact incomplete-restored-cache
+  diagnostic without masking compiler failures. An affected or exhaustive run
+  may validate and reset only the action-owned workspace `.zig-cache` once,
+  then retries the unchanged focused host, exhaustive host, or retained-target
+  build and leaves every other failure final.
   Prepared-session changes retain their CPU and durable consumers while
   replacing the broad host-tool leg with that CLI-only compile root.
 - [x] Read-only provider evidence outer-envelope inspector with deterministic

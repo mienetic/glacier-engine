@@ -1844,6 +1844,13 @@ class ZigCachePruneResult:
     removed_entries: Tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ZigCacheResetResult:
+    before_bytes: int
+    after_bytes: int
+    removed_entries: Tuple[str, ...]
+
+
 def _logical_tree_bytes(path: Path) -> int:
     metadata = path.lstat()
     if stat.S_ISLNK(metadata.st_mode):
@@ -1859,11 +1866,10 @@ def _logical_tree_bytes(path: Path) -> int:
     return total
 
 
-def prune_zig_cache(
+def _validated_zig_cache_paths(
     repository_root: Union[os.PathLike, str],
     cache_root: Union[os.PathLike, str],
-    limit_mib: int,
-) -> ZigCachePruneResult:
+) -> Tuple[Path, Path]:
     repository = Path(repository_root)
     cache = Path(cache_root)
     if not repository.is_absolute() or not cache.is_absolute():
@@ -1872,15 +1878,26 @@ def prune_zig_cache(
         os.path.abspath(cache)
     ):
         raise ValueError("repository and Zig cache paths must be exact")
-    if limit_mib <= 0:
-        raise ValueError("Zig cache limit must be a positive MiB count")
     if repository.is_symlink() or repository.resolve(strict=True) != repository:
         raise ValueError("repository path must be canonical and not a symlink")
+    if repository.parent == repository:
+        raise ValueError("repository path must not be the filesystem root")
     expected_cache = repository / ".zig-cache"
     if cache != expected_cache:
         raise ValueError("Zig cache path must exactly name " + str(expected_cache))
     if cache.is_symlink() or cache.resolve(strict=True) != cache:
         raise ValueError("Zig cache path must be canonical and not a symlink")
+    return repository, cache
+
+
+def prune_zig_cache(
+    repository_root: Union[os.PathLike, str],
+    cache_root: Union[os.PathLike, str],
+    limit_mib: int,
+) -> ZigCachePruneResult:
+    if limit_mib <= 0:
+        raise ValueError("Zig cache limit must be a positive MiB count")
+    _, cache = _validated_zig_cache_paths(repository_root, cache_root)
 
     object_root = cache / "o"
     before = _logical_tree_bytes(cache)
@@ -1926,6 +1943,44 @@ def prune_zig_cache(
     return ZigCachePruneResult(before, after, tuple(removed))
 
 
+def reset_zig_cache(
+    repository_root: Union[os.PathLike, str],
+    cache_root: Union[os.PathLike, str],
+) -> ZigCacheResetResult:
+    _, cache = _validated_zig_cache_paths(repository_root, cache_root)
+    before = _logical_tree_bytes(cache)
+    entries = tuple(
+        sorted(cache.iterdir(), key=lambda entry: os.fsencode(entry.name))
+    )
+    validated_entries = []
+    for entry in entries:
+        if entry.parent != cache or entry.is_symlink():
+            raise ValueError(
+                "Zig cache contains an unexpected top-level entry: " + str(entry)
+            )
+        metadata = entry.lstat()
+        if not stat.S_ISREG(metadata.st_mode) and not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError("Zig cache contains a special file: " + str(entry))
+        if entry.resolve(strict=True).parent != cache:
+            raise ValueError(
+                "Zig cache entry resolves outside the cache root: " + str(entry)
+            )
+        _ = _logical_tree_bytes(entry)
+        validated_entries.append(
+            (entry.name, entry, stat.S_ISDIR(metadata.st_mode))
+        )
+
+    removed = []
+    for name, entry, is_directory in validated_entries:
+        if is_directory:
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+        removed.append(name)
+    after = _logical_tree_bytes(cache)
+    return ZigCacheResetResult(before, after, tuple(removed))
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1954,6 +2009,10 @@ def _parser() -> argparse.ArgumentParser:
     cache_parser.add_argument("--repository-root", required=True)
     cache_parser.add_argument("--cache-root", required=True)
     cache_parser.add_argument("--limit-mib", required=True, type=int)
+
+    reset_cache_parser = subparsers.add_parser("reset-zig-cache")
+    reset_cache_parser.add_argument("--repository-root", required=True)
+    reset_cache_parser.add_argument("--cache-root", required=True)
     return parser
 
 
@@ -1985,6 +2044,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 + " bytes; evicted "
                 + str(len(result.removed_entries))
                 + " object entries"
+            )
+        elif arguments.command == "reset-zig-cache":
+            result = reset_zig_cache(
+                arguments.repository_root,
+                arguments.cache_root,
+            )
+            print(
+                "Zig cache reset: "
+                + str(result.before_bytes)
+                + " -> "
+                + str(result.after_bytes)
+                + " bytes; removed "
+                + str(len(result.removed_entries))
+                + " top-level entries"
             )
         else:
             paths = read_paths0(arguments.paths0)

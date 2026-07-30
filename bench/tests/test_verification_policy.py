@@ -384,6 +384,48 @@ class VerificationPolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exactly name"):
                 policy.prune_zig_cache(repository, outside, 1)
 
+    def test_zig_cache_reset_preflights_then_removes_only_cache_children(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve()
+            cache = repository / ".zig-cache"
+            object_entry = cache / "o" / ("a" * 32)
+            object_entry.mkdir(parents=True)
+            (object_entry / "artifact").write_bytes(b"artifact")
+            (cache / "timestamp").write_bytes(b"stamp")
+            outside = repository / "outside-sentinel"
+            outside.write_bytes(b"keep")
+
+            result = policy.reset_zig_cache(repository, cache)
+
+            self.assertEqual(("o", "timestamp"), result.removed_entries)
+            self.assertGreater(result.before_bytes, result.after_bytes)
+            self.assertTrue(cache.is_dir())
+            self.assertEqual([], list(cache.iterdir()))
+            self.assertEqual(b"keep", outside.read_bytes())
+
+    def test_zig_cache_reset_rejects_symlink_before_removing_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory).resolve()
+            cache = repository / ".zig-cache"
+            cache.mkdir()
+            retained = cache / "00-retained"
+            retained.write_bytes(b"keep")
+            outside = repository / "outside"
+            outside.mkdir()
+            (cache / "zz-escape").symlink_to(
+                outside,
+                target_is_directory=True,
+            )
+
+            with self.assertRaisesRegex(ValueError, "symlink|unexpected"):
+                policy.reset_zig_cache(repository, cache)
+
+            self.assertTrue(retained.is_file())
+            with self.assertRaisesRegex(ValueError, "exactly name"):
+                policy.reset_zig_cache(repository, outside)
+            with self.assertRaisesRegex(ValueError, "filesystem root"):
+                policy.reset_zig_cache(Path("/"), Path("/.zig-cache"))
+
     def test_documentation_only_selects_quick_gates(self):
         plan = self.assert_targets(
             [

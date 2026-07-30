@@ -343,7 +343,13 @@ and an exhaustive/Metal cache above 1,800 MiB.
 exports Zig cache variables. Its reuse opt-in is restricted to GitHub Actions
 and accepts only the action's exact physical workspace `.zig-cache` path;
 temporary logs, prefixes, module caches, and all non-Zig state are still
-removed after the run.
+removed after the run. If a Zig build reports the exact adjacent
+`failed to parse archive: FileNotFound` diagnostic for
+`.zig-cache/o/<hash>/libcompiler_rt.a`, the verifier preflights and clears only
+the validated `.zig-cache` children, then retries the same build once. At most
+one recovery is attempted across an affected or exhaustive verifier run,
+including focused host, exhaustive host, and retained-target gates. Other
+compiler failures are never retried or reclassified.
 
 The retained cross-target set is:
 
