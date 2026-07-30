@@ -65,8 +65,15 @@ Next slices:
   image, and request-profile identities. A cross-platform numerical result
   golden remains open.
 - [x] Accept raw text through one exact strict UTF-8 byte-tokenizer identity
-  without requiring callers to supply token IDs. The current result renders
-  token IDs; committed-token text rendering remains open.
+  without requiring callers to supply token IDs. Exact `output_tokens` remain
+  the canonical result.
+- [x] Close the exact committed-byte-token rendering gap with additive
+  `output_text`. It is derived only from verified committed
+  `utf8-byte-v1` token IDs after strict UTF-8 validation; invalid UTF-8 and
+  undisclosed durable output return `null`, never lossy replacement text.
+  Existing output-token and binary wire ABIs remain unchanged. The installed
+  same-host evidence reuses `text-runtime-golden-path-test`, so this item makes
+  no production-model, quality, confidentiality, or native multi-OS claim.
 - [x] Connect source conversion, `.glrt` preparation, admission, generation,
   transactional process-local token publication, terminal evidence, and zero
   logical ownership through one documented command sequence.
@@ -166,6 +173,8 @@ Next slices:
     processes must reach the uninterrupted namespace/output oracle without a
     duplicate acknowledgement or suffix, and terminal retry must not mutate
     state. This reuses `text-runtime-golden-path-test` and adds no compile root.
+  - The checked `output_text` item above closes only committed-byte-token
+    rendering. It does not complete this clean-host campaign.
 
 The existing 49-boundary development campaign now retains and independently
 revalidates one supported ordinary-profile V2 bundle through recovery. The

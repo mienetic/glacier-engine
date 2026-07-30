@@ -8,6 +8,14 @@ before the first stable release.
 
 ### Added
 
+- `text-run` reports now include additive `output_text`, a derived strict UTF-8
+  view of verified committed `utf8-byte-v1` byte-token IDs. Exact
+  `output_tokens` remain canonical and unchanged; invalid UTF-8 or undisclosed
+  durable output yields `null`, with no lossy replacement. No retained binary
+  wire ABI changes. The existing compile-once
+  `text-runtime-golden-path-test` root checks the staged installed command on
+  the same host. This is not production-model, quality, confidentiality, or
+  native multi-OS evidence.
 - The installed package-aware acknowledged durable `text-run` route now has an
   explicit experimental POSIX supervisor protocol. A trusted parent passes
   paired progress/control descriptors, grants each fixed 64-byte

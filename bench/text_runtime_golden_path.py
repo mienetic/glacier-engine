@@ -132,6 +132,7 @@ VARIABLE_TERMINAL_REPORT_KEYS = frozenset(
         "bound_plan_sha256",
         "scheduler_challenge_sha256",
         "output_tokens",
+        "output_text",
         "runtime_self_verified",
     }
 )
@@ -906,6 +907,11 @@ def _verify_durable_terminal_report(
         "challenge_sha256": view.challenge_sha256.hex(),
         "view_sha256": view.view_sha256.hex(),
         "output_tokens": [view.output_token] if output_disclosed else None,
+        "output_text": (
+            _strict_output_text((view.output_token,))
+            if output_disclosed
+            else None
+        ),
     }
     if dict(report) != expected_scalars:
         differing = sorted(
@@ -1217,12 +1223,20 @@ def _archive_container_sha256(
     return container_sha256
 
 
-def _tokens_are_utf8(tokens: Sequence[int]) -> bool:
+def _strict_output_text(tokens: Sequence[int]) -> str | None:
+    if any(
+        type(token) is not int or not 0 <= token <= 255
+        for token in tokens
+    ):
+        return None
     try:
-        bytes(tokens).decode("utf-8", "strict")
+        return bytes(tokens).decode("utf-8", "strict")
     except UnicodeDecodeError:
-        return False
-    return True
+        return None
+
+
+def _tokens_are_utf8(tokens: Sequence[int]) -> bool:
+    return _strict_output_text(tokens) is not None
 
 
 def _acknowledged_terminal_facts(
@@ -1410,6 +1424,11 @@ def _verify_acknowledged_terminal_report(
         "utf8_valid": _tokens_are_utf8(tokens),
         "output_tokens": (
             list(tokens)
+            if output_disclosed
+            else None
+        ),
+        "output_text": (
+            _strict_output_text(tokens)
             if output_disclosed
             else None
         ),
@@ -2344,11 +2363,19 @@ def _exercise_acknowledged_process_death(
     uninterrupted_wire: direct_oracle.recovery.WireFacts,
     uninterrupted_roots: Mapping[str, str],
     uninterrupted_manifest: tuple[tuple[str, int, int, str], ...],
+    ordinary_output_text: str | None,
 ) -> dict[str, object]:
     output_count = len(expected_tokens)
     if output_count != 4:
         raise GoldenPathError(
             "process-death proof is fixed to four output tokens"
+        )
+    if (
+        ordinary_output_text != _strict_output_text(expected_tokens)
+        or uninterrupted_report.get("output_text") is not None
+    ):
+        raise GoldenPathError(
+            "process-death output text oracle or hidden baseline mismatch"
         )
     challenge = _durable_acknowledged_challenge(
         request_id=DURABLE_REQUEST_ID,
@@ -2476,6 +2503,10 @@ def _exercise_acknowledged_process_death(
             advanced_target_count=target_calls,
             output_disclosed=True,
         )
+        if resume_report.get("output_text") != ordinary_output_text:
+            raise GoldenPathError(
+                f"{label}-death resume output text differs from ordinary"
+            )
         resume_target_calls.append(target_calls)
         if (
             resume_wire != uninterrupted_wire
@@ -2522,6 +2553,11 @@ def _exercise_acknowledged_process_death(
             advanced_target_count=0,
             output_disclosed=True,
         )
+        if retry_report.get("output_text") != ordinary_output_text:
+            raise GoldenPathError(
+                f"{label}-death terminal retry output text differs "
+                "from ordinary"
+            )
         if (
             retry_wire != uninterrupted_wire
             or retry_roots != dict(uninterrupted_roots)
@@ -2637,6 +2673,10 @@ def _exercise_acknowledged_process_death(
         advanced_target_count=3,
         output_disclosed=False,
     )
+    if clean_supervised.report.get("output_text") is not None:
+        raise GoldenPathError(
+            "clean supervised hidden output text was disclosed"
+        )
     if (
         clean_wire != uninterrupted_wire
         or clean_roots != dict(uninterrupted_roots)
@@ -2871,6 +2911,7 @@ def _verify_variable_terminal_report(
         "package_sha256": package_sha256,
         "representation_sha256": representation_sha256,
         "runtime_self_verified": True,
+        "output_text": _strict_output_text(expected_output),
     }
     for name, expected in expected_scalars.items():
         actual = report.get(name)
@@ -3350,6 +3391,16 @@ def _verify_report(
         )
     ):
         raise GoldenPathError("invalid output token list")
+    expected_output_text = _strict_output_text(output_tokens)
+    actual_output_text = report.get("output_text")
+    if (
+        "output_text" not in report
+        or type(actual_output_text) is not type(expected_output_text)
+        or actual_output_text != expected_output_text
+    ):
+        raise GoldenPathError(
+            "output text does not match strict UTF-8 token decoding"
+        )
 
     if (
         _report_wire(
@@ -3615,6 +3666,57 @@ def run_golden_path(
             license_bytes=license_bytes,
             image=image,
         )
+        if first.get("output_text") is not None:
+            raise GoldenPathError(
+                "invalid retained fixture output text was rendered"
+            )
+
+        visible_text_report = _run_text(
+            executable,
+            image,
+            license_path,
+            PROMPT,
+            prompt_path,
+            new_tokens=1,
+        )
+        _verify_report(
+            visible_text_report,
+            text=PROMPT,
+            license_bytes=license_bytes,
+            image=image,
+            expected_new_tokens=1,
+        )
+        if (
+            visible_text_report.get("output_tokens")
+            != first["output_tokens"][:1]
+            or type(visible_text_report.get("output_text")) is not str
+        ):
+            raise GoldenPathError(
+                "valid retained fixture output text is not visible"
+            )
+
+        escaped_text_report = _run_text(
+            executable,
+            image,
+            license_path,
+            ",",
+            prompt_path,
+            new_tokens=1,
+        )
+        _verify_report(
+            escaped_text_report,
+            text=",",
+            license_bytes=license_bytes,
+            image=image,
+            expected_new_tokens=1,
+        )
+        if (
+            escaped_text_report.get("output_tokens") != [3]
+            or escaped_text_report.get("output_text") != "\x03"
+        ):
+            raise GoldenPathError(
+                "retained fixture JSON control-byte escaping drift"
+            )
 
         conversion_retry = _run(
             (
@@ -4545,6 +4647,13 @@ def run_golden_path(
             bootstrap_disposition=None,
             output_disclosed=True,
         )
+        expected_direct_output_text = _strict_output_text(
+            ordinary_output_tokens[:1]
+        )
+        if retry_report.get("output_text") != expected_direct_output_text:
+            raise GoldenPathError(
+                "direct terminal retry output text differs from ordinary"
+            )
         if (
             retry_facts != terminal_facts
             or _durable_directory_manifest(durable_directory)
@@ -4578,9 +4687,13 @@ def run_golden_path(
             bootstrap_disposition="created",
             output_disclosed=True,
         )
-        if one_shot_facts != terminal_facts:
+        if (
+            one_shot_facts != terminal_facts
+            or one_shot_report.get("output_text")
+            != retry_report.get("output_text")
+        ):
             raise GoldenPathError(
-                "one-shot and continued durable terminal facts differ"
+                "one-shot and continued durable terminal results differ"
             )
 
         # The acknowledged route uses the same compiled CLI artifact. N=4
@@ -4615,6 +4728,13 @@ def run_golden_path(
                     "acknowledged ordinary output is absent"
                 )
             ordinary_tokens = tuple(ordinary_tokens_value)
+            ordinary_output_text = acknowledged_ordinary.get(
+                "output_text"
+            )
+            if ordinary_output_text != _strict_output_text(ordinary_tokens):
+                raise GoldenPathError(
+                    "acknowledged ordinary output text oracle mismatch"
+                )
             acknowledged_tokens[acknowledged_output_count] = (
                 ordinary_tokens
             )
@@ -4790,6 +4910,14 @@ def run_golden_path(
                 advanced_target_count=acknowledged_output_count - 1,
                 output_disclosed=acknowledged_output_count != 4,
             )
+            if (
+                acknowledged_output_count != 4
+                and acknowledged_report.get("output_text")
+                != ordinary_output_text
+            ):
+                raise GoldenPathError(
+                    "acknowledged clean output text differs from ordinary"
+                )
 
             acknowledged_terminal_manifest = (
                 _durable_directory_manifest(
@@ -4867,6 +4995,14 @@ def run_golden_path(
                     output_disclosed=True,
                 )
                 if (
+                    acknowledged_retry.get("output_text")
+                    != ordinary_output_text
+                ):
+                    raise GoldenPathError(
+                        "acknowledged terminal retry output text differs "
+                        "from ordinary"
+                    )
+                if (
                     _durable_directory_manifest(
                         acknowledged_directory
                     )
@@ -4900,6 +5036,7 @@ def run_golden_path(
                         uninterrupted_manifest=(
                             acknowledged_terminal_manifest
                         ),
+                        ordinary_output_text=ordinary_output_text,
                     )
                 )
 
@@ -5642,6 +5779,7 @@ def run_golden_path(
             "fresh_process_continuation": True,
             "checked_committed_output": True,
             "durable_output_matches_ordinary": True,
+            "checked_output_text_verified": True,
             "durable_one_shot_verified": True,
             "durable_retry_idempotent": True,
             "durable_invalid_options_rejected": True,

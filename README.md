@@ -306,6 +306,15 @@ formats, and independent verifiers.
   `SIGKILL` after source advance and first target advance, then requires exact
   fresh-process resume and immutable terminal retry. See
   [Experimental Durable CLI Supervisor Protocol](docs/EXPERIMENTAL_DURABLE_SUPERVISOR.md).
+- **Checked committed-token text view.** `text-run` keeps exact
+  `output_tokens` as the canonical output and adds `output_text` only as a
+  derived strict UTF-8 view of verified committed `utf8-byte-v1` token IDs.
+  Invalid UTF-8 and undisclosed durable output produce `null`; the command
+  never inserts lossy replacement characters. This additive JSON field changes
+  neither `output_tokens` nor any retained binary wire ABI. The existing
+  `text-runtime-golden-path-test` root exercises the staged installed command
+  on the same host; it is not production-model, quality, confidentiality, or
+  native multi-OS evidence.
 - **Read-only committed-output inspection.** The experimental R1k-b3 inspector
   and public filesystem API join one selected prepared-text checkpoint to its
   selected durable sink without taking either writer lease. They accept only
@@ -1502,6 +1511,12 @@ token-ID sink. With durable options, the command selects the sink-free
 generation-one-to-two POSIX route for count one or the acknowledged
 source/target route with capacity `N - 1` for counts `2..64`. The acknowledged
 challenge binds exact `--n`.
+All fixed and variable process-local reports, plus durable terminal reports,
+retain `output_tokens` and their existing wire evidence unchanged.
+`output_text` is an additive derived view created only after the reported
+byte-token IDs have been verified as committed and decoded as strict UTF-8.
+Invalid UTF-8 produces `null`, never replacement text. Durable output that was
+not explicitly disclosed also produces `output_text=null`.
 R1k-b3 separately adds a read-only join over an acknowledged checkpoint and
 durable sink. It accepts only aligned state or a nonterminal sink exactly one
 acknowledgement ahead, omits payload by default, and requires

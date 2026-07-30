@@ -2,7 +2,7 @@
 
 Status: **integrated experimental R1k-b1 ingress, process-local bounded
 early-EOS completion, R1k-b2 CPU/POSIX recovery, and package-aware fixed-output
-durable CLI slice**.
+durable CLI slice with a checked strict UTF-8 output view**.
 
 This path gives one supported command sequence a verifiable join from exact
 raw UTF-8 bytes to the prepared-text runtime:
@@ -65,7 +65,8 @@ as byte-token compatible. See [Ordinary Model Package](MODEL_PACKAGE.md).
 
 `text-run` requires valid nonempty UTF-8 input and `1..64` requested output
 tokens. The current command profile limits input to 4,096 bytes. It emits one
-deterministic JSON object and renders model output as token IDs.
+deterministic JSON object with exact token IDs plus a derived strict UTF-8 text
+view when those committed byte-token IDs form valid UTF-8.
 
 For process-local execution, `--eos-token ID` changes `--n` from an exact
 count to an upper bound. The token must be inside the admitted vocabulary.
@@ -144,6 +145,14 @@ is not a confidentiality boundary. The default checkpoint-set allocation bound
 is 8 MiB. `--max-set-bytes` accepts a cap in the parser range
 `1..67108864`; a cap smaller than the encoded set still fails closed.
 
+Across fixed and variable process-local reports and durable terminal reports,
+`output_tokens` remains the canonical committed result and retains its existing
+shape. The additive `output_text` field is derived only from verified committed
+`utf8-byte-v1` IDs in `0..255`, interpreted as exact bytes, and decoded with
+strict UTF-8. It is `null` for invalid UTF-8 and for durable output that was not
+disclosed. The command never substitutes a lossy replacement character.
+`output_encoding` remains `token-ids`, and no retained binary wire ABI changes.
+
 The normal command creates or recovers generation one. Count one advances it
 to sink-free terminal generation two. Counts `2..64` advance the source to
 generation two, then reconstruct one target runtime per remaining token until
@@ -175,7 +184,7 @@ The JSON schema `glacier.prepared-text-durable-run/v1` is discriminated by
 | Operation | Required fields |
 | --- | --- |
 | `bootstrap` | `profile`, `route`, `selection_before`, `bootstrap_disposition`, `durable_checkpoint`, `fresh_process_boundary_ready`, `checked_committed_output`, `terminal`, `ownership_closed`, `request_epoch`, `generation`, `publication_next_sequence`, `max_set_bytes`, request/artifact identity roots, and the selected set/selector, source-contract, and input-archive roots; the acknowledged profile also reports requested count, sink capacity, and sink identities |
-| `advance` | `profile`, `route`, `selection_before`, `disposition`, nullable bootstrap/source dispositions, `durable_checkpoint`, `fresh_process_continuation_supported`, `preexisting_generation_continuation_performed`, `checked_committed_output`, `terminal`, `ownership_closed`, `model_execution_performed`, route-specific counters and committed roots, and the three output-disclosure fields |
+| `advance` | `profile`, `route`, `selection_before`, `disposition`, nullable bootstrap/source dispositions, `durable_checkpoint`, `fresh_process_continuation_supported`, `preexisting_generation_continuation_performed`, `checked_committed_output`, `terminal`, `ownership_closed`, `model_execution_performed`, route-specific counters and committed roots, and the four output-disclosure fields |
 
 For `advance`, `preexisting_generation_continuation_performed` is true when
 the invocation starts from any preexisting nonterminal generation and performs
@@ -186,8 +195,9 @@ publisher's process identity.
 `ownership_closed` separately records closed runtime ownership on return.
 `checked_committed_output` means structural receipt, selected-wire,
 predecessor, contract, archive, and view reconciliation—not a model-quality
-oracle. `output_encoding` is `token-ids`, and `output_tokens` is `null` unless
-explicitly revealed.
+oracle. `output_encoding` is `token-ids`; `output_tokens` and `output_text` are
+both `null` unless durable output is explicitly revealed. When revealed,
+`output_text` remains `null` if the exact committed bytes are not strict UTF-8.
 
 Both operations include `request_id_sha256`, `package_sha256`,
 `representation_sha256`, and `challenge_sha256`. Direct-terminal reports keep
@@ -196,7 +206,7 @@ roots. Acknowledged reports instead expose the requested count, capacity,
 source/target transition counts, input/local-plan/tokenizer roots, selected
 checkpoint and sink roots, acknowledgement head/prefix, visible token/byte
 roots, and committed `view_sha256`. The disclosure fields remain
-`output_disclosed`, `output_encoding`, and `output_tokens`.
+`output_disclosed`, `output_encoding`, `output_tokens`, and `output_text`.
 
 The count-one state directory contains only the checkpoint lock, active
 selector, and content-addressed predecessor/successor sets. Counts `2..64`
@@ -414,7 +424,11 @@ The gate:
     verifies exact unused-quanta closure, and rejects durable EOS before
     directory mutation; and
 14. rejects incompatible durable options, unsafe directory selection,
-    oversized input, and malformed UTF-8 before model execution.
+    oversized input, and malformed UTF-8 before model execution; and
+15. checks every retained additive `output_text` value against an independent
+    strict UTF-8 decode of verified committed byte-token IDs and requires
+    undisclosed durable output to remain `null`, through the same staged
+    installed CLI and compile root.
 
 The gate neither reconstructs the boundary snapshot nor independently replays
 the internal publication proposal/acknowledgement transcript; the report states
@@ -450,11 +464,14 @@ than a fixed cross-language wire.
 
 The package-aware command carries exact tokenizer/raw-input identity through
 every retained generation and renders checked committed output only after
-runtime ownership closes. Durable variable-length or early-EOS output, general
-tokenizer text rendering, and serving integration remain open.
+runtime ownership closes. Its `output_text` field closes only the exact
+committed-byte-token rendering gap for `utf8-byte-v1`; general tokenizer text
+rendering remains open. Durable variable-length or early-EOS output and serving
+integration also remain open.
 The overall invocation still enters the idempotent writer/lease workflow before
 calling the read-only view; it is not a post-hoc read-only inspector.
 The retained durable path is CPU execution on the descriptor-relative POSIX
 adapter. GPU/device-resident recovery, production model quality, performance,
 remote delivery, hostile writers, native multi-OS durability, and physical
-power-loss persistence are not claimed.
+power-loss persistence are not claimed. Neither nullable text disclosure nor
+retained digest metadata establishes confidentiality.

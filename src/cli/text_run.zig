@@ -1269,8 +1269,10 @@ pub fn run(
         if (token_index != 0) try writer.writeByte(',');
         try writer.print("{d}", .{token});
     }
+    try writer.writeAll("],\"output_text\":");
+    try writeTokenOutputTextJsonV1(writer, output);
     try writer.print(
-        "],\"request_epoch\":{d}," ++
+        ",\"request_epoch\":{d}," ++
             "\"tokenizer_vocab_size\":{d}," ++
             "\"tokenizer_max_input_bytes\":{d}," ++
             "\"tokenizer_domain_sha256\":\"{s}\"," ++
@@ -1702,9 +1704,9 @@ fn writeVariableTerminalReportV1(
         if (index != 0) try writer.writeByte(',');
         try writer.print("{d}", .{token});
     }
-    try writer.writeAll(
-        "],\"runtime_self_verified\":true}\n",
-    );
+    try writer.writeAll("],\"output_text\":");
+    try writeTokenOutputTextJsonV1(writer, output_tokens);
+    try writer.writeAll(",\"runtime_self_verified\":true}\n");
 }
 
 fn runDurableDirectTerminalV1(
@@ -3280,9 +3282,12 @@ fn emitDurableTerminalV1(
         },
     );
     if (reveal_output) {
-        try writer.print("[{d}]}}\n", .{view.output_token});
+        const output_tokens = [1]u32{view.output_token};
+        try writer.print("[{d}],\"output_text\":", .{view.output_token});
+        try writeTokenOutputTextJsonV1(writer, &output_tokens);
+        try writer.writeAll("}\n");
     } else {
-        try writer.writeAll("null}\n");
+        try writer.writeAll("null,\"output_text\":null}\n");
     }
 }
 
@@ -3630,7 +3635,7 @@ fn emitDurableAcknowledgedTerminalV1(
         },
     );
     if (!reveal_output) {
-        return writer.writeAll("null}\n");
+        return writer.writeAll("null,\"output_text\":null}\n");
     }
     try writer.writeByte('[');
     for (0..output_count) |index| {
@@ -3640,7 +3645,13 @@ fn emitDurableAcknowledgedTerminalV1(
             .{try view.visibleToken(index)},
         );
     }
-    try writer.writeAll("]}\n");
+    try writer.writeAll("],\"output_text\":");
+    if (view.utf8_valid) {
+        try writeJsonStringV1(writer, view.visible_bytes);
+    } else {
+        try writer.writeAll("null");
+    }
+    try writer.writeAll("}\n");
 }
 
 fn durableSelectionNameV1(
@@ -3656,6 +3667,48 @@ fn durableSelectionNameV1(
 
 fn booleanNameV1(value: bool) []const u8 {
     return if (value) "true" else "false";
+}
+
+fn writeTokenOutputTextJsonV1(
+    writer: *std.Io.Writer,
+    tokens: []const u32,
+) !void {
+    var storage: [maximum_new_tokens]u8 = undefined;
+    if (tokens.len > storage.len)
+        return writer.writeAll("null");
+    for (tokens, 0..) |token, index| {
+        storage[index] = std.math.cast(u8, token) orelse
+            return writer.writeAll("null");
+    }
+    const bytes = storage[0..tokens.len];
+    if (!std.unicode.utf8ValidateSlice(bytes))
+        return writer.writeAll("null");
+    return writeJsonStringV1(writer, bytes);
+}
+
+fn writeJsonStringV1(
+    writer: *std.Io.Writer,
+    value: []const u8,
+) !void {
+    if (!std.unicode.utf8ValidateSlice(value))
+        return error.InvalidUtf8;
+    try writer.writeByte('"');
+    for (value) |byte| {
+        switch (byte) {
+            '"' => try writer.writeAll("\\\""),
+            '\\' => try writer.writeAll("\\\\"),
+            0x08 => try writer.writeAll("\\b"),
+            0x0c => try writer.writeAll("\\f"),
+            '\n' => try writer.writeAll("\\n"),
+            '\r' => try writer.writeAll("\\r"),
+            '\t' => try writer.writeAll("\\t"),
+            0x00...0x07, 0x0b, 0x0e...0x1f => {
+                try writer.print("\\u{x:0>4}", .{byte});
+            },
+            else => try writer.writeByte(byte),
+        }
+    }
+    try writer.writeByte('"');
 }
 
 fn usage(writer: *std.Io.Writer) !void {

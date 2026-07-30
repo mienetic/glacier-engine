@@ -1644,8 +1644,10 @@ This is an admission bridge, not a second producer proof. It does not rerun
 `package-model`, captured-source tensor preflight, bounded config/license
 ingress, or durable conversion publication at each death boundary.
 
-R1k-b2 does not make the standalone `text-run` command durable, provide
-committed-token text rendering, or establish a stable public ABI. The retained
+R1k-b2 by itself did not make the standalone `text-run` command durable,
+provide committed-token text rendering, or establish a stable public ABI. The
+later R1k-b5 command and its additive checked-text view close those first two
+gaps only for the retained fixed-output `utf8-byte-v1` profile. The retained
 model is synthetic, execution is CPU-only, and durable storage uses the
 descriptor-relative POSIX adapter. Production model/tokenizer quality,
 GPU-resident continuation, Win32 durability, native Linux/FreeBSD recovery
@@ -1813,6 +1815,14 @@ for the direct route or `already_terminal` for the acknowledged route without
 another model step. The default report omits token payloads; digest metadata is
 not a confidentiality boundary.
 
+An additive checked-text slice applies to fixed and variable process-local
+reports and to durable terminal reports. Exact `output_tokens` remain the
+canonical committed result. `output_text` is derived only from the verified
+committed `utf8-byte-v1` byte-token IDs after strict UTF-8 validation. Invalid
+UTF-8 yields `null` rather than lossy replacement text; undisclosed durable
+output also yields `null`. Existing output-token shapes and retained binary
+wire ABIs are unchanged.
+
 The direct count-one challenge retains its existing domain. The acknowledged
 challenge uses a separate domain and also binds the canonical fixed output
 count. Both bind request ID, package, prepared representation, license, and
@@ -1830,7 +1840,10 @@ process C proves an immutable `already_terminal` retry. One-shot `N=2` and
 `N=64` cover minimum and maximum sink capacities `1` and `63`. Independent
 Python decoding walks the complete checkpoint/input/sink lineage, reconstructs
 committed-output roots, and requires every token sequence to equal ordinary
-execution.
+execution. The same installed same-host root checks every retained derived-text
+value against an independent strict decoder and requires undisclosed durable
+output to remain `null`; no additional executable or compile root is
+introduced.
 
 `checked_committed_output=true` denotes structural and lineage reconciliation,
 not independent model-quality evidence. The command enters the idempotent
@@ -1839,10 +1852,11 @@ read-only inspector.
 
 This durable slice remains fixed-length. The separate process-local command
 supports bounded early EOS, but durable early completion and retry remain
-open. R1k-b5 does not cover package-aware per-target CLI process-death or
-cancellation campaigns, exhaustive storage faults, physical power loss,
-GPU-resident execution, remote effects, hostile writers, Win32 durable
-publication, native multi-OS evidence, or unary/streaming serving.
+open. The checked text view is not production-model, language-quality, or
+confidentiality evidence. R1k-b5 does not cover package-aware per-target CLI
+process-death or cancellation campaigns, exhaustive storage faults, physical
+power loss, GPU-resident execution, remote effects, hostile writers, Win32
+durable publication, native multi-OS evidence, or unary/streaming serving.
 
 #### R1k-b6 — Bounded process-local unary service kernel
 
@@ -2136,6 +2150,13 @@ storage-fault and power-loss matrices, serving integration, non-POSIX native
 evidence,
 broader tokenizer/model/GPU package coverage, and stable language bindings
 remain open.
+The exact committed-byte-token rendering gap is now closed for the retained
+`utf8-byte-v1` command profile: additive `output_text` is a strict derived view,
+while `output_tokens` and every retained binary wire ABI remain unchanged.
+Invalid UTF-8 or undisclosed durable output yields `null` with no lossy
+replacement. The existing installed same-host golden root checks this behavior;
+it does not satisfy the broader clean-host, production-model, quality,
+confidentiality, or native multi-OS exit requirements.
 The installed acknowledged `N=4` path now also exposes explicit paired POSIX
 progress/control descriptors to a trusted local supervisor. Fixed 64-byte
 challenge-bound checkpoints fence ready, verified source retirement, and every
