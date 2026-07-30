@@ -42,8 +42,13 @@ evidence. The plane and model-family sequence is specified in the
 | Runtime Workload Lab | W0–W4a, W4b-a through W4b-d, W5a, bounded W5b Linux-source and macOS Metal readiness implementations, the native bounded two-slot proof, W6a/W6b reports, W7a native controlled-disruption recovery, W7b-b3 cancellation-storm concurrent callers, W7b-b4 controlled in-flight process kill, W7b-a segmented soak, W7b-b1 process-kill recovery, the W7b-b2 production-publisher/reference-recovery campaign, W7b-b5 supervisor/recovery-process death, and the R1j 49-boundary prepared-text source/target campaign integrated; W4b, W5, the remaining W7b-b work, and W8 remain open | In each of 64 W7b-b3 waves, both real host threads reach the ready barrier before one shared release store. W7b-b4 validates one real registered command at a synthetic event barrier before real PID-only `SIGKILL`, then checks 20 real commands in a distinct production process. W7b-a chains 12 independently verified W7 reports across two clean worker generations; W7b-b1 kills the first quiescent worker with real `SIGKILL` and completes in a fresh GPU process; W7b-b2 separately kills production store writers or injects deterministic storage errors at all 27 publication calls and permits only an exact prepared successor. W7b-b5 adds fresh generation-six and final audits around two real control-plane PID kills and permits only exact ordinal-six resume plus `11 -> 12` roll-forward. R1j covers seven generation-one bootstrap, 23 source-transition, and 19 target-transition deaths, permits only the boundary's declared absent/predecessor/successor roots, and independently proves a three-ACK suffix joined to the four-token terminal output. The GPU gates and storage gates keep physical versus controlled provenance separate and grant no arbitrary append/resume authority | Next: remaining W4 profiles, retained native Linux and broader accelerator observer/campaign evidence, direct physical CPU/GPU adapters, W7b-b active-kernel, broader supervisor/recovery interruption, adapter, physical storage/device/driver/power campaigns, repeated/cancelled handoff evidence, and W8 native multi-OS replication |
 | Weight paging | Prototype with sealed conversion | Strict portable layout/geometry/CRC admission, bounded per-page transformation, exact conversion identities, recoverable target publication, and one explicit package profile with an exact whole-model tensor schema | Broader profile-specific tensor schemas, real generation integration without eager duplicate weights, broader source dtypes, and production evidence |
 | End-to-end user path | Ordinary-package-aware process-local and checked durable fixed-output `1..64` raw-text execution with fresh-process retry, plus an experimental serial loopback HTTP/1.1 route, retained client, and bounded managed child-process acceptance for the fixed-output process-local profile; canonical work is AI Runtime R1 | `package-model` joins supported Safetensors conversion, prepared CPU image, exact tokenizer/license identity, and an 896-byte manifest-plus-representation bundle; `text-run --package` compares the embedded receipt with the actual GLRT identity before process-local publication or durable execution; count one uses the sink-free `1/1 -> 2/1` route, counts `2..64` use the acknowledged source/target chain with capacity `N - 1`, and both render only a checked read-only view after ownership closes; `GET /v1/models` and bounded `POST /v1/chat/completions` map one strict non-streaming request onto the same process-local kernel, while the Phases A-D through Phase E2b process fixture proves clean drain/close, receive-side drain cancellation, bounded monotonic partial-header/body timeout, fenced admitted-work cancellation, reset detection between drive quanta, cancellation before and after the first response byte, an accept-origin full-request deadline with no synthesized post-deadline HTTP response, exact phase-specific counters, same-child liveness, and same-package fresh restart | Promote the managed lifecycle through bounded queue/backpressure and concurrent-transport campaigns, then load evidence; retain orderly-FIN abandonment, forced-death and durable restart evidence, streaming and early-EOS or fewer-than-admitted output, exhaustive storage-fault/power-loss and native multi-OS evidence; broaden tokenizer/model/GPU package profiles |
-| Serving interface | Experimental process-local unary kernel, bounded serial loopback HTTP/1.1 route and retained client, plus R1k-b8 Phases A-D through Phase E2b managed child-process lifecycle | Bounded model binding, shared Scheduler/Bank lifecycle, request identity, process-local idempotency replay/conflict, capacity rejection, hidden partial output, stale-handle fencing, retained fixed responses, fail-stop, strict UTF-8 response rendering, client correlation, one completion-admission drain gate, a generation/sequence/handle-fenced active-connection lease with exact `receiving_head`, `request_head_received`, `request_received`, `request_admitted`, `response_ready`, `response_writing`, and `response_written` phases, receive-side drain cancellation, a shorter monotonic pre-admission receive deadline, a separate accept-origin monotonic full-request deadline through response retirement, a sequence/full-handle-fenced admitted-work lease with exact drain and timeout cancellation, reset detection between drive quanta, response cancellation before the first byte, bounded nonblocking `1..4096`-byte send quanta with post-send and `WouldBlock` checkpoints, exact full-request signal/work/response/write-request/write-cancellation accounting, no synthesized post-deadline HTTP response, same-child liveness, serving-thread-only response write and close, malformed-peer survival, clean zero-ownership close, and same-package fresh restart | Bounded listener queue/backpressure and concurrent-serving policy, then load evidence; orderly-FIN abandonment, forced-death and durable restart campaigns, committed-token streaming, authentication, TLS, quota, and native multi-OS serving proof remain open |
+| Serving interface | Experimental process-local unary kernel, bounded loopback HTTP/1.1 route and retained client, R1k-b8 Phases A-D through Phase E2b managed child-process evidence, and the Phase F1 concurrent-transport implementation with deterministic native-loopback correctness retained | The earlier serial path retains bounded model binding, shared Scheduler/Bank lifecycle, exact request identity, process-local idempotency, cancellation, phased deadlines, bounded response writes, and zero-ownership close. Phase F1 adds fixed `1..16` transport workers, a `1..64` FIFO of already accepted connections, passive accept-side kernel-backlog pressure, one lifecycle registry and shared deadline watchdog, generation-fenced ownership handoff, exact queue/phase conservation, joined drain, and four retained native-loopback scenarios A-D. Response writes leave the request gate, but model admission/execution remain serialized; the FIFO governs dispatch only and emits no pre-parse 429/503. | Retain a separate Phase F1 real-process campaign, then run a native-load campaign reporting admission/queue delay, HTTP first-byte and terminal-response latency, throughput, and cleanup. No completion-order, fairness, parallel-model, GPU, performance, or native foreign-OS claim follows from the native-loopback result; orderly-FIN abandonment, forced-death and durable restart, committed-token streaming, authentication, TLS, and quota remain open. |
 | ABI and release governance | Experimental surfaces | Append-only retained profiles, C verifier/support query, cross-language reference implementations, package version, and an `Unreleased` changelog | Machine-readable ABI registry, compatibility automation, signed reproducible artifacts, and a published migration policy |
+
+The Phase F1 serving row is the current transport snapshot. Other rows that
+still describe a concurrent-transport “campaign” as next refer to the
+remaining real-process and native-load evidence, not to a missing runtime
+entry point or missing native-loopback correctness gate.
 
 ## P0 — Open-source usability
 
@@ -1725,9 +1730,10 @@ residency, migration, reset, or physical reclaim.
 
 ### Service lifecycle
 
-Status: **experimental process-local unary kernel, bounded serial loopback
-HTTP/1.1 route, retained client, and R1k-b8 Phases A-D through Phase E2b managed
-child-process lifecycle integrated**.
+Status: **experimental process-local unary kernel, bounded loopback HTTP/1.1
+route, retained client, R1k-b8 Phases A-D through Phase E2b managed
+child-process lifecycle integrated, and the Phase F1 concurrent-transport
+implementation with deterministic native-loopback correctness retained**.
 
 The service surface must adopt the same admission, publication, continuation,
 and evidence semantics as the local runtime. A transport wrapper cannot create
@@ -1879,11 +1885,84 @@ Next slices:
 - [x] Freeze request bounds at 8 KiB of headers, 32 KiB of body, 4,096 prompt
   bytes, `1..64` output tokens, and 8 KiB of response. Existing service-capacity
   and Scheduler rejection maps to HTTP 429 with
-  `same_request_after_backoff`; process-wide queue policy remains open.
-- define a bounded listener queue, backpressure, concurrent-serving policy,
-  and retained overload campaign;
-- add load generation after those process boundaries, separating admission
-  latency, first-token latency, throughput, fairness, and cleanup;
+  `same_request_after_backoff` only after request parsing and service
+  admission. That application response is distinct from Phase F1's passive
+  transport backpressure.
+- [x] Add the Phase F1 concurrent-transport implementation foundation.
+  `ManagedConcurrentConfigV1` fixes `1..16` workers and a `1..64` FIFO of
+  already accepted connections, for at most 80 generation-fenced registry
+  slots. `ManagedConcurrentLifecycleV1` uses the existing lifecycle mutex as
+  the one linearization point for FIFO membership, connection phases, exact
+  counters, and snapshots. One shared watchdog, rather than one timer thread
+  per connection, applies the receive and full-request deadlines to queued and
+  running slots; both timers begin at accept, so FIFO wait consumes both
+  elapsed budgets. When the accepted FIFO is full, the acceptor pauses before
+  another `accept`, leaving later peers in the kernel listen backlog. The
+  POSIX serving call temporarily makes the listener nonblocking, polls
+  readiness for at most 100 milliseconds per quantum, and revalidates
+  lifecycle state before `accept`. Every accepted socket is returned to
+  blocking mode before FIFO or worker handoff. Managed receive revalidates
+  lifecycle on every readiness-wait iteration, with each quantum capped at 100
+  milliseconds even when the configured timeout is zero, so drain and fatal
+  convergence do not depend on cross-thread `shutdown` succeeding. An
+  unexpected shutdown error advances no successful signal counter or event for
+  that connection and leaves it unclaimed, allowing failure convergence to
+  retry and take over. The transport therefore neither accepts beyond its
+  fixed ownership bound nor fabricates an HTTP 429 or 503 before parsing.
+
+  Ownership moves once from acceptor to FIFO to exactly one worker. A queued
+  timeout, drain, or failure detaches and closes that socket exactly once;
+  after dispatch, the worker remains its sole reader, response writer, and
+  closer. The HTTP request mutex still serializes model admission, execution,
+  and active-work retirement, while response callbacks and socket writes run
+  after that gate is released. This is concurrent transport, not concurrent
+  model execution.
+
+  `ManagedConcurrentSnapshotV1` exposes queue and running high-water marks,
+  enqueued/dispatched totals, pause/resume totals, queued drain/failure/receive-
+  timeout/full-request-timeout totals, and exact phase counts. Its conservation
+  rules require active = queued + running, the phase total = active,
+  accepted = completed + failed + active, and enqueued = dispatched + every
+  queued retirement cause + current queue length. Drain holds the lifecycle
+  lock across model-admission closure, runtime receipt capture, and application
+  to the exact fenced transport owner, then retires queued sockets, signals
+  running sockets, and joins all fixed workers plus the shared watchdog. The
+  POSIX serving call then restores the exact listener flags captured before
+  serving, before `stopped` may expose zero transport ownership. Fatal
+  convergence instead uses `transport_failure`, emits `running_failure` for
+  every newly claimed running lease, and retains failure-specific counters
+  without incrementing drain counters. Phase F1 concurrent serving is
+  explicitly unsupported on Windows today: the entrypoint returns
+  `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
+  cannot prove and restore the caller's original `FIONBIO` mode. Native Windows
+  serving therefore remains pending and unproven.
+- [x] Retain Phase F1 deterministic native-loopback correctness in the existing
+  HTTP root. The command continues to pass:
+  `zig build unary-http-test -Dmetal=false -Doptimize=ReleaseSafe -j2`.
+  Scenario A keeps one worker live beside a sibling partial HTTP head; B proves
+  one-worker/one-pending FIFO dispatch plus exact passive pause/resume and a
+  healthy successor; C expires the exact queued lease under its accept-origin
+  full-request timeout without an HTTP response, then serves a successor; and
+  D makes two concurrent drain calls converge over one active receive plus one
+  queued socket. Every scenario checks snapshot/event conservation, joined
+  shutdown, and final zero service/Bank ownership.
+- [ ] Retain a distinct Phase F1 real-process campaign. It must exercise the
+  production path across process control and cover queued receive as well as
+  full-request deadline expiry, drain and failure cleanup, stale-owner
+  rejection, healthy successor service, exact counter conservation, thread
+  joins, and final zero connection, service, Scheduler, and Bank ownership.
+  The existing `unary-server-process-test` stops at Phase E2b and is not Phase
+  F1 process evidence. FIFO promises only accepted-queue dispatch order; it
+  does not promise completion order, scheduler fairness, or parallel model
+  execution.
+- [ ] After the Phase F1 real-process gate, add a separate native-load
+  campaign. Measure accept/admission and queue delay, HTTP first-byte latency
+  for the current non-streaming unary profile, terminal-response latency,
+  throughput, rejection/outcome mix, and cleanup under a declared machine,
+  OS, backend, power, and thermal envelope. Do not call HTTP first-byte
+  latency “first-token latency,” and do not infer fairness, GPU performance,
+  or native foreign-OS behavior from FIFO order, compilation, or simulated
+  fixtures.
 - extend abandonment detection to orderly FIN with one socket owner and exact
   outcome accounting;
 - add forced process-death evidence for each owned lifecycle phase;

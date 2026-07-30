@@ -20,7 +20,8 @@ pub const RuntimeV1 = struct {
     service: *unary.ServiceV1,
     model_binding_sha256: protocol.Digest,
     model_id: [protocol.model_id_bytes]u8,
-    /// Preserves bounded single-request execution without blocking drain.
+    /// Serializes admission, model execution, and exact active-work
+    /// retirement. Response callbacks and socket writes run after release.
     request_mutex: std.Thread.Mutex = .{},
     /// Lock order is control -> unary service. Request driving never holds
     /// this mutex, so drain can fence and cancel the exact retained handle.
@@ -44,6 +45,18 @@ pub const WorkspaceV1 = struct {
 pub const WorkIdentityV1 = struct {
     sequence: u64,
     handle_sha256: protocol.Digest,
+};
+
+/// Opaque, transport-owned routing identity for one published work lease.
+///
+/// The HTTP runtime only retains and returns this value. It deliberately
+/// contains no native handle, so a managed transport can route a drain receipt
+/// without making process-local socket representation part of this contract.
+pub const TransportOwnerTokenV1 = struct {
+    process_generation: u64,
+    connection_sequence: u64,
+    slot_index: u8,
+    slot_generation: u64,
 };
 
 pub const WorkDispositionV1 = enum {
@@ -82,6 +95,9 @@ pub const RequestWorkControlV1 = struct {
         WorkIdentityV1,
     ) anyerror!WorkDispositionV1,
     retired_fn: *const fn (*anyopaque, WorkIdentityV1) void,
+    /// Copied into the active-work publication while `control_mutex` is held
+    /// and returned unchanged in any matching drain receipt.
+    transport_owner: ?TransportOwnerTokenV1 = null,
     checkpoint_fn: ?*const fn (
         *anyopaque,
         WorkIdentityV1,
@@ -136,6 +152,7 @@ pub const DrainCancellationOutcomeV1 = enum {
 pub const DrainReceiptV1 = struct {
     admission_was_open: bool,
     active_work: ?WorkIdentityV1 = null,
+    transport_owner: ?TransportOwnerTokenV1 = null,
     cancellation: DrainCancellationOutcomeV1 = .none,
     cancellation_winner: ?WorkCancellationCauseV1 = null,
     cancellation_was_new: bool = false,
@@ -144,6 +161,7 @@ pub const DrainReceiptV1 = struct {
 const ActiveWorkV1 = struct {
     sequence: u64,
     handle: unary.HandleV1,
+    transport_owner: ?TransportOwnerTokenV1 = null,
     stop_decision: ?WorkCancellationReceiptV1 = null,
 
     fn identity(self: ActiveWorkV1) WorkIdentityV1 {
@@ -161,6 +179,11 @@ const PublishedWorkV1 = struct {
 
 const WorkAdmissionV1 = union(enum) {
     published: PublishedWorkV1,
+    api_error: protocol.ErrorCodeV1,
+};
+
+const CompletionExecutionV1 = union(enum) {
+    response_body: []const u8,
     api_error: protocol.ErrorCodeV1,
 };
 
@@ -366,6 +389,52 @@ pub fn initV1(
 pub fn beginDrainV1(
     runtime: *RuntimeV1,
 ) unary.Error!DrainReceiptV1 {
+    return beginStopV1(
+        runtime,
+        .drain,
+        cancelHandleLockedV1,
+    );
+}
+
+/// Closes completion admission after a transport-runtime infrastructure
+/// failure and generation-fences cancellation of the exact active unary
+/// handle. The distinct cause prevents failure convergence from being
+/// reported as an operator-requested drain.
+pub fn beginTransportFailureV1(
+    runtime: *RuntimeV1,
+) unary.Error!DrainReceiptV1 {
+    return beginTransportFailureWithCancellationV1(
+        runtime,
+        cancelHandleLockedV1,
+    );
+}
+
+const CancelHandleForStopFnV1 = *const fn (
+    *RuntimeV1,
+    unary.HandleV1,
+    WorkCancellationCauseV1,
+) unary.Error!WorkCancellationReceiptV1;
+
+fn beginTransportFailureWithCancellationV1(
+    runtime: *RuntimeV1,
+    cancel_handle: CancelHandleForStopFnV1,
+) unary.Error!DrainReceiptV1 {
+    return beginStopV1(
+        runtime,
+        .transport_failure,
+        cancel_handle,
+    );
+}
+
+fn beginStopV1(
+    runtime: *RuntimeV1,
+    requested_cause: WorkCancellationCauseV1,
+    cancel_handle: CancelHandleForStopFnV1,
+) unary.Error!DrainReceiptV1 {
+    std.debug.assert(
+        requested_cause == .drain or
+            requested_cause == .transport_failure,
+    );
     runtime.control_mutex.lock();
     defer runtime.control_mutex.unlock();
     const was_accepting = runtime.accepting_completions;
@@ -378,20 +447,22 @@ pub fn beginDrainV1(
         return .{
             .admission_was_open = was_accepting,
             .active_work = identity,
+            .transport_owner = active.transport_owner,
             .cancellation = decision.outcome,
             .cancellation_winner = decision.winner,
         };
     }
 
-    const cancellation = try cancelHandleLockedV1(
+    const cancellation = try cancel_handle(
         runtime,
         active.handle,
-        .drain,
+        requested_cause,
     );
     runtime.active_work.?.stop_decision = cancellation;
     return .{
         .admission_was_open = was_accepting,
         .active_work = identity,
+        .transport_owner = active.transport_owner,
         .cancellation = cancellation.outcome,
         .cancellation_winner = cancellation.winner,
         .cancellation_was_new = cancellation.cancellation_was_new,
@@ -737,37 +808,87 @@ fn serveCompletionV1(
             );
         };
 
-    runtime.request_mutex.lock();
-    defer runtime.request_mutex.unlock();
+    const execution = blk: {
+        runtime.request_mutex.lock();
+        defer runtime.request_mutex.unlock();
+        break :blk try executeCompletionLockedV1(
+            runtime,
+            workspace,
+            .{
+                .tenant_key = decoded.request.tenant_key,
+                .idempotency_key_sha256 = idempotency_key_sha256,
+                .prompt_utf8 = decoded.request.prompt_utf8,
+                .max_new_tokens = decoded.request.max_new_tokens,
+                .deadline_tick = decoded.request.deadline_tick,
+            },
+            request_sha256,
+            work_control,
+        );
+    };
 
-    const work_admission = admitActiveWorkV1(runtime, .{
-        .tenant_key = decoded.request.tenant_key,
-        .idempotency_key_sha256 = idempotency_key_sha256,
-        .prompt_utf8 = decoded.request.prompt_utf8,
-        .max_new_tokens = decoded.request.max_new_tokens,
-        .deadline_tick = decoded.request.deadline_tick,
-    }) catch |err| {
-        return respondApiError(
+    switch (execution) {
+        .api_error => |code| try respondApiError(
             request,
             workspace,
-            mapServiceError(err),
+            code,
             request_sha256,
             response_control,
-        );
+        ),
+        .response_body => |body| try respondV1(request, body, .{
+            .status = .ok,
+            .keep_alive = false,
+            .extra_headers = &response_headers,
+        }, response_control),
+    }
+}
+
+/// Runs only the serial admission/model-execution/active-work-retirement
+/// section. The caller holds `request_mutex`. Returning from this helper runs
+/// `ActiveWorkGuardV1.retire` before that mutex is released, so no successor
+/// work lease can be published before the predecessor's exact retirement.
+/// Socket writes and response-control callbacks are intentionally absent.
+fn executeCompletionLockedV1(
+    runtime: *RuntimeV1,
+    workspace: *WorkspaceV1,
+    service_request: unary.RequestV1,
+    request_sha256: protocol.Digest,
+    work_control: ?RequestWorkControlV1,
+) !CompletionExecutionV1 {
+    const transport_owner = if (work_control) |control|
+        control.transport_owner
+    else
+        null;
+    const work_admission = admitActiveWorkV1(
+        runtime,
+        service_request,
+        transport_owner,
+    ) catch |err| {
+        return .{ .api_error = mapServiceError(err) };
     };
 
     const published = switch (work_admission) {
         .published => |value| value,
-        .api_error => |code| {
-            return respondApiError(
-                request,
-                workspace,
-                code,
-                request_sha256,
-                response_control,
-            );
-        },
+        .api_error => |code| return .{ .api_error = code },
     };
+    return executePublishedCompletionLockedV1(
+        runtime,
+        workspace,
+        published,
+        request_sha256,
+        work_control,
+    );
+}
+
+/// Completes one already-published lease while the caller retains
+/// `request_mutex`. This split keeps the terminal execution/retirement
+/// boundary directly testable without a socket.
+fn executePublishedCompletionLockedV1(
+    runtime: *RuntimeV1,
+    workspace: *WorkspaceV1,
+    published: PublishedWorkV1,
+    request_sha256: protocol.Digest,
+    work_control: ?RequestWorkControlV1,
+) !CompletionExecutionV1 {
     var work_guard: ActiveWorkGuardV1 = .{
         .runtime = runtime,
         .identity = published.identity,
@@ -803,25 +924,17 @@ fn serveCompletionV1(
                     published,
                     .drain,
                 ) catch |err| {
-                    return respondApiError(
-                        request,
-                        workspace,
-                        mapServiceError(err),
-                        request_sha256,
-                        response_control,
-                    );
+                    return .{
+                        .api_error = mapServiceError(err),
+                    };
                 };
                 if (cancellationHidesResponseV1(
                     cancellation.outcome,
                 )) {
                     work_guard.terminal = true;
-                    return respondApiError(
-                        request,
-                        workspace,
-                        .request_cancelled,
-                        request_sha256,
-                        response_control,
-                    );
+                    return .{
+                        .api_error = .request_cancelled,
+                    };
                 }
             },
             .full_request_timeout => {
@@ -852,11 +965,19 @@ fn serveCompletionV1(
             TerminalError.ExecutionFailed,
             => true,
             else => blk: {
-                const cancellation = cancelPublishedWorkV1(
-                    runtime,
-                    published,
-                    .transport_failure,
-                ) catch break :blk false;
+                const cancellation = if (work_control) |control|
+                    cancelPublishedWorkAndNotifyV1(
+                        runtime,
+                        published,
+                        control,
+                        .transport_failure,
+                    ) catch break :blk false
+                else
+                    cancelPublishedWorkV1(
+                        runtime,
+                        published,
+                        .transport_failure,
+                    ) catch break :blk false;
                 if (cancellationHidesResponseV1(
                     cancellation.outcome,
                 )) {
@@ -867,13 +988,7 @@ fn serveCompletionV1(
                 );
             },
         };
-        return respondApiError(
-            request,
-            workspace,
-            response_code,
-            request_sha256,
-            response_control,
-        );
+        return .{ .api_error = response_code };
     };
     const response = switch (awaited) {
         .response => |value| value,
@@ -894,37 +1009,19 @@ fn serveCompletionV1(
     if (output_count == 0 or
         output_count > protocol.output_max_tokens)
     {
-        return respondApiError(
-            request,
-            workspace,
-            .state_drift,
-            request_sha256,
-            response_control,
-        );
+        return .{ .api_error = .state_drift };
     }
     for (
         response.output_tokens[0..output_count],
         workspace.output[0..output_count],
     ) |token, *byte| {
         byte.* = std.math.cast(u8, token) orelse {
-            return respondApiError(
-                request,
-                workspace,
-                .non_utf8_model_output,
-                request_sha256,
-                response_control,
-            );
+            return .{ .api_error = .non_utf8_model_output };
         };
     }
     const content = workspace.output[0..output_count];
     if (!std.unicode.utf8ValidateSlice(content)) {
-        return respondApiError(
-            request,
-            workspace,
-            .non_utf8_model_output,
-            request_sha256,
-            response_control,
-        );
+        return .{ .api_error = .non_utf8_model_output };
     }
 
     const body = protocol.encodeCompletionV1(.{
@@ -940,22 +1037,15 @@ fn serveCompletionV1(
         .terminal_evidence_sha256 = response.terminal.evidence_sha256,
         .output_sha256 = response.terminal.result.output_sha256,
     }, &workspace.response) catch |err| {
-        return respondApiError(
-            request,
-            workspace,
-            if (err == protocol.Error.NonUtf8Output)
+        return .{
+            .api_error = if (err ==
+                protocol.Error.NonUtf8Output)
                 .non_utf8_model_output
             else
                 .internal_error,
-            request_sha256,
-            response_control,
-        );
+        };
     };
-    try respondV1(request, body, .{
-        .status = .ok,
-        .keep_alive = false,
-        .extra_headers = &response_headers,
-    }, response_control);
+    return .{ .response_body = body };
 }
 
 /// Admission and active-work publication are one control-plane transaction.
@@ -964,6 +1054,7 @@ fn serveCompletionV1(
 fn admitActiveWorkV1(
     runtime: *RuntimeV1,
     service_request: unary.RequestV1,
+    transport_owner: ?TransportOwnerTokenV1,
 ) unary.Error!WorkAdmissionV1 {
     runtime.control_mutex.lock();
     defer runtime.control_mutex.unlock();
@@ -1016,6 +1107,7 @@ fn admitActiveWorkV1(
     runtime.active_work = .{
         .sequence = work_sequence,
         .handle = handle,
+        .transport_owner = transport_owner,
     };
     return .{ .published = .{
         .identity = .{
@@ -1302,6 +1394,152 @@ test "active work retirement requires the exact runtime and service fences" {
     try std.testing.expect(runtime.active_work == null);
 }
 
+test "drain receipt preserves the opaque active work transport owner" {
+    const handle: unary.HandleV1 = .{
+        .service_epoch = 43,
+        .record_index = 2,
+        .record_generation = 19,
+        .intent_sha256 = [_]u8{0x35} ** 32,
+        .handle_sha256 = [_]u8{0x56} ** 32,
+    };
+    const owner: TransportOwnerTokenV1 = .{
+        .process_generation = 47,
+        .connection_sequence = 53,
+        .slot_index = 3,
+        .slot_generation = 59,
+    };
+    var runtime: RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+        .next_work_sequence = 61,
+        .active_work = .{
+            .sequence = 61,
+            .handle = handle,
+            .transport_owner = owner,
+            .stop_decision = .{
+                .requested_cause = .full_request_timeout,
+                .winner = .full_request_timeout,
+                .outcome = .cancelled,
+                .cancellation_was_new = true,
+            },
+        },
+    };
+
+    const first = try beginDrainV1(&runtime);
+    try std.testing.expect(first.admission_was_open);
+    try std.testing.expectEqualDeep(
+        runtime.active_work.?.identity(),
+        first.active_work.?,
+    );
+    try std.testing.expectEqualDeep(
+        owner,
+        first.transport_owner.?,
+    );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.full_request_timeout,
+        first.cancellation_winner.?,
+    );
+    try std.testing.expectEqual(
+        DrainCancellationOutcomeV1.cancelled,
+        first.cancellation,
+    );
+    try std.testing.expect(!first.cancellation_was_new);
+
+    const repeated = try beginDrainV1(&runtime);
+    try std.testing.expect(!repeated.admission_was_open);
+    try std.testing.expectEqualDeep(
+        first.active_work.?,
+        repeated.active_work.?,
+    );
+    try std.testing.expectEqualDeep(
+        first.transport_owner.?,
+        repeated.transport_owner.?,
+    );
+    try std.testing.expectEqual(
+        first.cancellation_winner,
+        repeated.cancellation_winner,
+    );
+}
+
+test "transport failure receipt preserves its distinct sticky winner" {
+    const FreshCancellationV1 = struct {
+        fn cancel(
+            runtime: *RuntimeV1,
+            handle: unary.HandleV1,
+            requested_cause: WorkCancellationCauseV1,
+        ) unary.Error!WorkCancellationReceiptV1 {
+            _ = runtime;
+            _ = handle;
+            return .{
+                .requested_cause = requested_cause,
+                .winner = requested_cause,
+                .outcome = .cancelled,
+                .cancellation_was_new = true,
+            };
+        }
+    };
+    const handle: unary.HandleV1 = .{
+        .service_epoch = 47,
+        .record_index = 3,
+        .record_generation = 23,
+        .intent_sha256 = [_]u8{0x37} ** 32,
+        .handle_sha256 = [_]u8{0x58} ** 32,
+    };
+    const owner: TransportOwnerTokenV1 = .{
+        .process_generation = 61,
+        .connection_sequence = 67,
+        .slot_index = 5,
+        .slot_generation = 71,
+    };
+    var runtime: RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+        .next_work_sequence = 73,
+        .active_work = .{
+            .sequence = 73,
+            .handle = handle,
+            .transport_owner = owner,
+        },
+    };
+
+    const failure = try beginTransportFailureWithCancellationV1(
+        &runtime,
+        FreshCancellationV1.cancel,
+    );
+    try std.testing.expect(failure.admission_was_open);
+    try std.testing.expectEqualDeep(
+        runtime.active_work.?.identity(),
+        failure.active_work.?,
+    );
+    try std.testing.expectEqualDeep(
+        owner,
+        failure.transport_owner.?,
+    );
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.transport_failure,
+        failure.cancellation_winner.?,
+    );
+    try std.testing.expectEqual(
+        DrainCancellationOutcomeV1.cancelled,
+        failure.cancellation,
+    );
+    try std.testing.expect(failure.cancellation_was_new);
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.transport_failure,
+        runtime.active_work.?.stop_decision.?.requested_cause,
+    );
+
+    const later_drain = try beginDrainV1(&runtime);
+    try std.testing.expect(!later_drain.admission_was_open);
+    try std.testing.expectEqual(
+        WorkCancellationCauseV1.transport_failure,
+        later_drain.cancellation_winner.?,
+    );
+    try std.testing.expect(!later_drain.cancellation_was_new);
+}
+
 const FullRequestTimeoutTestControlV1 = struct {
     proceed_checkpoints: usize = 0,
     checkpoint_calls: usize = 0,
@@ -1394,6 +1632,409 @@ fn makeFullRequestTimeoutTestHandleV1(
     hash.update(&intent_sha256);
     hash.final(&handle.handle_sha256);
     return handle;
+}
+
+const response_gate_test_timeout_ns =
+    5 * std.time.ns_per_s;
+
+fn waitForResponseGateTestEventV1(
+    event: *std.Thread.ResetEvent,
+) !void {
+    event.timedWait(response_gate_test_timeout_ns) catch
+        return error.ResponseGateTestTimedOut;
+}
+
+const WorkRetirementTestControlV1 = struct {
+    retired_reached: std.Thread.ResetEvent = .{},
+    retired_identity: ?WorkIdentityV1 = null,
+    retired: bool = false,
+
+    fn admittedOpaque(
+        context: *anyopaque,
+        identity: WorkIdentityV1,
+    ) anyerror!WorkDispositionV1 {
+        _ = context;
+        _ = identity;
+        return .proceed;
+    }
+
+    fn retiredOpaque(
+        context: *anyopaque,
+        identity: WorkIdentityV1,
+    ) void {
+        const self: *WorkRetirementTestControlV1 =
+            @ptrCast(@alignCast(context));
+        self.retired_identity = identity;
+        self.retired = true;
+        self.retired_reached.set();
+    }
+
+    fn control(
+        self: *WorkRetirementTestControlV1,
+        owner: TransportOwnerTokenV1,
+    ) RequestWorkControlV1 {
+        return .{
+            .context = self,
+            .admitted_fn = admittedOpaque,
+            .retired_fn = retiredOpaque,
+            .transport_owner = owner,
+        };
+    }
+};
+
+const ResponseGateTestControlV1 = struct {
+    work_retirement: *const WorkRetirementTestControlV1,
+    ready_reached: std.Thread.ResetEvent = .{},
+    ready_release: std.Thread.ResetEvent = .{},
+    writing_reached: std.Thread.ResetEvent = .{},
+    retired_reached: std.Thread.ResetEvent = .{},
+    outcome: ?ResponseWriteOutcomeV1 = null,
+
+    fn readyOpaque(context: *anyopaque) anyerror!void {
+        const self: *ResponseGateTestControlV1 =
+            @ptrCast(@alignCast(context));
+        if (!self.work_retirement.retired)
+            return error.WorkNotRetiredBeforeResponse;
+        self.ready_reached.set();
+        try waitForResponseGateTestEventV1(
+            &self.ready_release,
+        );
+    }
+
+    fn writingOpaque(
+        context: *anyopaque,
+    ) anyerror!ResponseWriteDispositionV1 {
+        const self: *ResponseGateTestControlV1 =
+            @ptrCast(@alignCast(context));
+        self.writing_reached.set();
+        return .proceed;
+    }
+
+    fn retiredOpaque(
+        context: *anyopaque,
+        outcome: ResponseWriteOutcomeV1,
+    ) void {
+        const self: *ResponseGateTestControlV1 =
+            @ptrCast(@alignCast(context));
+        self.outcome = outcome;
+        self.retired_reached.set();
+    }
+
+    fn control(
+        self: *ResponseGateTestControlV1,
+    ) RequestResponseControlV1 {
+        return .{
+            .context = self,
+            .ready_fn = readyOpaque,
+            .writing_fn = writingOpaque,
+            .retired_fn = retiredOpaque,
+        };
+    }
+};
+
+const FirstResponseGateThreadV1 = struct {
+    runtime: *RuntimeV1,
+    workspace: *WorkspaceV1,
+    published: PublishedWorkV1,
+    request_sha256: protocol.Digest,
+    work_control: RequestWorkControlV1,
+    response_control: RequestResponseControlV1,
+    thread_error: ?anyerror = null,
+
+    fn run(self: *FirstResponseGateThreadV1) void {
+        self.runChecked() catch |err| {
+            self.thread_error = err;
+        };
+    }
+
+    fn runChecked(self: *FirstResponseGateThreadV1) !void {
+        self.runtime.request_mutex.lock();
+        var request_locked = true;
+        defer if (request_locked)
+            self.runtime.request_mutex.unlock();
+
+        const execution =
+            try executePublishedCompletionLockedV1(
+                self.runtime,
+                self.workspace,
+                self.published,
+                self.request_sha256,
+                self.work_control,
+            );
+        switch (execution) {
+            .response_body => {},
+            .api_error => return error.UnexpectedApiError,
+        }
+        if (self.runtime.active_work != null)
+            return error.ActiveWorkNotRetired;
+
+        self.runtime.request_mutex.unlock();
+        request_locked = false;
+        try self.response_control.ready();
+        if (try self.response_control.writing() != .proceed)
+            return error.UnexpectedResponseCancellation;
+        self.response_control.retired(.write_completed);
+    }
+};
+
+const SuccessorExecutionGateThreadV1 = struct {
+    runtime: *RuntimeV1,
+    workspace: *WorkspaceV1,
+    published: PublishedWorkV1,
+    request_sha256: protocol.Digest,
+    owner: TransportOwnerTokenV1,
+    response_ready: *std.Thread.ResetEvent,
+    execution_finished: std.Thread.ResetEvent = .{},
+    thread_error: ?anyerror = null,
+
+    fn run(self: *SuccessorExecutionGateThreadV1) void {
+        self.runChecked() catch |err| {
+            self.thread_error = err;
+        };
+    }
+
+    fn runChecked(
+        self: *SuccessorExecutionGateThreadV1,
+    ) !void {
+        try waitForResponseGateTestEventV1(
+            self.response_ready,
+        );
+        self.runtime.request_mutex.lock();
+        var request_locked = true;
+        defer if (request_locked)
+            self.runtime.request_mutex.unlock();
+
+        self.runtime.control_mutex.lock();
+        if (self.runtime.active_work != null) {
+            self.runtime.control_mutex.unlock();
+            return error.PredecessorWorkStillActive;
+        }
+        self.runtime.active_work = .{
+            .sequence = self.published.identity.sequence,
+            .handle = self.published.handle,
+            .transport_owner = self.owner,
+        };
+        self.runtime.control_mutex.unlock();
+
+        const execution =
+            try executePublishedCompletionLockedV1(
+                self.runtime,
+                self.workspace,
+                self.published,
+                self.request_sha256,
+                null,
+            );
+        switch (execution) {
+            .response_body => {},
+            .api_error => return error.UnexpectedApiError,
+        }
+        if (self.runtime.active_work != null)
+            return error.SuccessorWorkNotRetired;
+        self.runtime.request_mutex.unlock();
+        request_locked = false;
+        self.execution_finished.set();
+    }
+};
+
+test "terminal work retires before a blocked response admits successor execution" {
+    const service_epoch: u64 = 97;
+    const first_intent_sha256 = [_]u8{0xb1} ** 32;
+    const successor_intent_sha256 = [_]u8{0xb2} ** 32;
+    const first_handle = makeFullRequestTimeoutTestHandleV1(
+        service_epoch,
+        0,
+        1,
+        first_intent_sha256,
+    );
+    const successor_handle =
+        makeFullRequestTimeoutTestHandleV1(
+            service_epoch,
+            1,
+            2,
+            successor_intent_sha256,
+        );
+    var first_intent: unary.IntentV1 = .{};
+    first_intent.intent_sha256 = first_intent_sha256;
+    var successor_intent: unary.IntentV1 = .{};
+    successor_intent.intent_sha256 =
+        successor_intent_sha256;
+    var first_response =
+        std.mem.zeroes(unary.ResponseV1);
+    first_response.handle = first_handle;
+    first_response.admission.prompt_receipt.token_count = 1;
+    first_response.output_count = 1;
+    first_response.output_tokens[0] = 'a';
+    first_response.response_sha256 = [_]u8{0xe1} ** 32;
+    first_response.terminal.evidence_sha256 =
+        [_]u8{0xe2} ** 32;
+    first_response.terminal.result.output_sha256 =
+        [_]u8{0xe3} ** 32;
+    var successor_response =
+        std.mem.zeroes(unary.ResponseV1);
+    successor_response.handle = successor_handle;
+    successor_response.admission.prompt_receipt.token_count = 1;
+    successor_response.output_count = 1;
+    successor_response.output_tokens[0] = 'b';
+    successor_response.response_sha256 =
+        [_]u8{0xe4} ** 32;
+    successor_response.terminal.evidence_sha256 =
+        [_]u8{0xe5} ** 32;
+    successor_response.terminal.result.output_sha256 =
+        [_]u8{0xe6} ** 32;
+    var active_slots = [_]unary.ActiveSlotV1{.{}};
+    var records = [_]unary.RecordSlotV1{
+        .{
+            .generation = first_handle.record_generation,
+            .state = .completed,
+            .intent = first_intent,
+            .handle = first_handle,
+            .response = first_response,
+        },
+        .{
+            .generation = successor_handle.record_generation,
+            .state = .completed,
+            .intent = successor_intent,
+            .handle = successor_handle,
+            .response = successor_response,
+        },
+    };
+    var service: unary.ServiceV1 = .{
+        .state = .closed,
+        .config = .{ .service_epoch = service_epoch },
+        .active_slots = &active_slots,
+        .records = &records,
+    };
+    service.self_address = @intFromPtr(&service);
+    service.active_storage_address =
+        @intFromPtr(active_slots[0..].ptr);
+    service.record_storage_address =
+        @intFromPtr(records[0..].ptr);
+
+    const first_identity: WorkIdentityV1 = .{
+        .sequence = 1,
+        .handle_sha256 = first_handle.handle_sha256,
+    };
+    const successor_identity: WorkIdentityV1 = .{
+        .sequence = 2,
+        .handle_sha256 = successor_handle.handle_sha256,
+    };
+    const first_owner: TransportOwnerTokenV1 = .{
+        .process_generation = 101,
+        .connection_sequence = 103,
+        .slot_index = 0,
+        .slot_generation = 107,
+    };
+    const successor_owner: TransportOwnerTokenV1 = .{
+        .process_generation = 101,
+        .connection_sequence = 109,
+        .slot_index = 1,
+        .slot_generation = 113,
+    };
+    const model_binding_sha256 = [_]u8{0xc1} ** 32;
+    var runtime: RuntimeV1 = .{
+        .service = &service,
+        .model_binding_sha256 = model_binding_sha256,
+        .model_id = protocol.modelIdV1(
+            model_binding_sha256,
+        ),
+        .next_work_sequence = first_identity.sequence,
+        .active_work = .{
+            .sequence = first_identity.sequence,
+            .handle = first_handle,
+            .transport_owner = first_owner,
+        },
+    };
+    var retirement_control: WorkRetirementTestControlV1 = .{};
+    const first_work_control =
+        retirement_control.control(first_owner);
+    var response_control: ResponseGateTestControlV1 = .{
+        .work_retirement = &retirement_control,
+    };
+    var first_workspace: WorkspaceV1 = undefined;
+    var successor_workspace: WorkspaceV1 = undefined;
+    var first_thread_context: FirstResponseGateThreadV1 = .{
+        .runtime = &runtime,
+        .workspace = &first_workspace,
+        .published = .{
+            .identity = first_identity,
+            .handle = first_handle,
+        },
+        .request_sha256 = [_]u8{0xd1} ** 32,
+        .work_control = first_work_control,
+        .response_control = response_control.control(),
+    };
+    var successor_thread_context: SuccessorExecutionGateThreadV1 = .{
+        .runtime = &runtime,
+        .workspace = &successor_workspace,
+        .published = .{
+            .identity = successor_identity,
+            .handle = successor_handle,
+        },
+        .request_sha256 = [_]u8{0xd2} ** 32,
+        .owner = successor_owner,
+        .response_ready = &response_control.ready_reached,
+    };
+
+    const first_thread = try std.Thread.spawn(
+        .{},
+        FirstResponseGateThreadV1.run,
+        .{&first_thread_context},
+    );
+    var first_joined = false;
+    var successor_started = false;
+    errdefer if (!successor_started) {
+        response_control.ready_release.set();
+        first_thread.join();
+    };
+    const successor_thread = try std.Thread.spawn(
+        .{},
+        SuccessorExecutionGateThreadV1.run,
+        .{&successor_thread_context},
+    );
+    successor_started = true;
+    var successor_joined = false;
+    defer {
+        response_control.ready_release.set();
+        if (!successor_joined) successor_thread.join();
+        if (!first_joined) first_thread.join();
+    }
+
+    try waitForResponseGateTestEventV1(
+        &retirement_control.retired_reached,
+    );
+    try waitForResponseGateTestEventV1(
+        &response_control.ready_reached,
+    );
+    try waitForResponseGateTestEventV1(
+        &successor_thread_context.execution_finished,
+    );
+    try std.testing.expectEqualDeep(
+        first_identity,
+        retirement_control.retired_identity.?,
+    );
+    successor_thread.join();
+    successor_joined = true;
+    try std.testing.expect(
+        successor_thread_context.thread_error == null,
+    );
+    try std.testing.expect(runtime.active_work == null);
+
+    response_control.ready_release.set();
+    try waitForResponseGateTestEventV1(
+        &response_control.writing_reached,
+    );
+    try waitForResponseGateTestEventV1(
+        &response_control.retired_reached,
+    );
+    first_thread.join();
+    first_joined = true;
+    try std.testing.expect(
+        first_thread_context.thread_error == null,
+    );
+    try std.testing.expectEqual(
+        ResponseWriteOutcomeV1.write_completed,
+        response_control.outcome.?,
+    );
 }
 
 test "full request timeout cancellation is exact sticky and observable" {

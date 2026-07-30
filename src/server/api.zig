@@ -17,6 +17,11 @@ pub const Error = error{
     FullRequestTimeoutRequiresManagedLifecycle,
     PeerResetPollRequiresManagedLifecycle,
     ResponseWriteQuantumRequiresManagedLifecycle,
+    InvalidConcurrentWorkerCount,
+    InvalidConcurrentPendingCapacity,
+    ConcurrentStopAfterRequestsUnsupported,
+    ConcurrentLifecycleConfigurationMismatch,
+    ConcurrentListenerModeUnsupported,
 };
 
 pub const minimum_receive_timeout_ns: u64 = std.time.ns_per_ms;
@@ -33,14 +38,25 @@ pub const minimum_response_write_quantum_bytes: u16 =
     cancellable_writer.minimum_max_send_bytes;
 pub const maximum_response_write_quantum_bytes: u16 =
     cancellable_writer.maximum_max_send_bytes;
+pub const minimum_managed_concurrent_workers_v1: u8 = 1;
+pub const maximum_managed_concurrent_workers_v1: u8 = 16;
+pub const minimum_managed_pending_connections_v1: u8 = 1;
+pub const maximum_managed_pending_connections_v1: u8 = 64;
+pub const maximum_managed_connection_slots_v1: u8 = 80;
+const managed_lifecycle_poll_interval_ms: i32 = 100;
 
 pub const LifecycleError = error{
     InvalidGeneration,
     InvalidTransition,
+    InvalidConnectionCapacity,
     ConnectionAlreadyActive,
     NoActiveConnection,
+    ConnectionSlotMismatch,
+    ConnectionSlotGenerationMismatch,
     ConnectionSequenceMismatch,
     ConnectionHandleMismatch,
+    MissingTransportOwner,
+    TransportOwnerMismatch,
     ConnectionPhaseMismatch,
     ConnectionInterrupted,
     ConnectionSignalFailed,
@@ -69,6 +85,72 @@ pub const ServerConfig = struct {
         maximum_response_write_quantum_bytes,
 };
 
+const ManagedConcurrentListenerModeV1 = union(enum) {
+    posix_flags: usize,
+
+    fn enable(
+        handle: std.net.Stream.Handle,
+    ) !ManagedConcurrentListenerModeV1 {
+        if (builtin.os.tag == .windows)
+            return Error.ConcurrentListenerModeUnsupported;
+
+        const original_flags = try std.posix.fcntl(
+            handle,
+            std.posix.F.GETFL,
+            0,
+        );
+        const nonblocking_mask: usize =
+            1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
+        if (original_flags & nonblocking_mask == 0) {
+            _ = try std.posix.fcntl(
+                handle,
+                std.posix.F.SETFL,
+                original_flags | nonblocking_mask,
+            );
+        }
+        return .{ .posix_flags = original_flags };
+    }
+
+    fn restore(
+        self: ManagedConcurrentListenerModeV1,
+        handle: std.net.Stream.Handle,
+    ) !void {
+        if (builtin.os.tag == .windows)
+            return Error.ConcurrentListenerModeUnsupported;
+        switch (self) {
+            .posix_flags => |original_flags| {
+                _ = try std.posix.fcntl(
+                    handle,
+                    std.posix.F.SETFL,
+                    original_flags,
+                );
+            },
+        }
+    }
+};
+
+fn setAcceptedSocketBlockingV1(
+    handle: std.net.Stream.Handle,
+) !void {
+    if (builtin.os.tag == .windows)
+        return Error.ConcurrentListenerModeUnsupported;
+
+    const current_flags = try std.posix.fcntl(
+        handle,
+        std.posix.F.GETFL,
+        0,
+    );
+    const nonblocking_mask: usize =
+        1 << @bitOffsetOf(std.posix.O, "NONBLOCK");
+    if (current_flags & nonblocking_mask != 0) {
+        _ = try std.posix.fcntl(
+            handle,
+            std.posix.F.SETFL,
+            current_flags & ~nonblocking_mask,
+        );
+    }
+}
+
 pub const ManagedStateV1 = enum(u8) {
     starting = 1,
     ready = 2,
@@ -86,6 +168,7 @@ pub const ManagedConnectionPhaseV1 = enum(u8) {
     response_ready = 5,
     response_writing = 6,
     response_written = 7,
+    queued = 8,
 };
 
 const HardStopCauseV1 = enum {
@@ -98,6 +181,7 @@ const HardStopCauseV1 = enum {
 const ResponseStopCauseV1 = enum {
     drain,
     full_request_timeout,
+    failure,
 };
 
 const ResponseWriteStopStateV1 = union(enum) {
@@ -106,13 +190,20 @@ const ResponseWriteStopStateV1 = union(enum) {
     observed: ResponseStopCauseV1,
 };
 
+const FailureSignalResultV1 = struct {
+    claimed: bool = false,
+    signal_failed: bool = false,
+};
+
 pub const ManagedSnapshotV1 = struct {
     process_generation: u64,
     state: ManagedStateV1,
+    connection_capacity: u8 = 1,
     accepted_connections: u64,
     completed_connections: u64,
     failed_connections: u64,
     active_connections: u8,
+    queued_connections: u8 = 0,
     drain_signaled_connections: u64,
     receive_timeout_signaled_connections: u64,
     full_request_timeout_signaled_connections: u64 = 0,
@@ -121,6 +212,11 @@ pub const ManagedSnapshotV1 = struct {
     full_request_timeout_requested_response_write_connections: u64 = 0,
     full_request_timeout_cancelled_response_write_connections: u64 = 0,
     drain_cancelled_work_connections: u64 = 0,
+    failure_signaled_connections: u64 = 0,
+    failure_cancelled_work_connections: u64 = 0,
+    failure_cancelled_response_connections: u64 = 0,
+    failure_requested_response_write_connections: u64 = 0,
+    failure_cancelled_response_write_connections: u64 = 0,
     peer_reset_connections: u64 = 0,
     peer_reset_cancelled_work_connections: u64 = 0,
     drain_cancelled_response_connections: u64 = 0,
@@ -136,6 +232,11 @@ pub const ManagedSnapshotV1 = struct {
     last_full_request_timeout_requested_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_full_request_timeout_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_signaled_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_cancelled_response_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_requested_response_write_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_cancelled_response_phase: ManagedConnectionPhaseV1 = .none,
@@ -143,6 +244,99 @@ pub const ManagedSnapshotV1 = struct {
     last_drain_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_response_write_transport_failed_phase: ManagedConnectionPhaseV1 = .none,
 };
+
+pub const ManagedConnectionLeaseV1 = struct {
+    process_generation: u64,
+    connection_sequence: u64,
+    slot_index: u8,
+    slot_generation: u64,
+    handle: std.net.Stream.Handle,
+};
+
+pub const ManagedConcurrentConfigV1 = struct {
+    worker_count: u8 = 2,
+    pending_connection_capacity: u8 = 8,
+};
+
+pub const ManagedConcurrentEventKindV1 = enum(u8) {
+    enqueued = 1,
+    backpressure_paused = 2,
+    backpressure_resumed = 3,
+    dispatched = 4,
+    retired = 5,
+    queued_receive_timeout = 6,
+    queued_full_request_timeout = 7,
+    queued_drain = 8,
+    queued_failure = 9,
+    running_failure = 10,
+};
+
+pub const ManagedConcurrentEventV1 = struct {
+    ordinal: u64,
+    kind: ManagedConcurrentEventKindV1,
+    lease: ?ManagedConnectionLeaseV1 = null,
+    worker_index: ?u8 = null,
+    queued_connections: u8,
+    running_connections: u8,
+};
+
+pub const ManagedConcurrentObserverV1 = struct {
+    context: *anyopaque,
+    event_fn: *const fn (
+        *anyopaque,
+        ManagedConcurrentEventV1,
+    ) void,
+
+    fn observe(
+        self: ManagedConcurrentObserverV1,
+        event: ManagedConcurrentEventV1,
+    ) void {
+        self.event_fn(self.context, event);
+    }
+};
+
+pub const ManagedConnectionPhaseCountsV1 = struct {
+    queued: u8 = 0,
+    receiving_head: u8 = 0,
+    request_head_received: u8 = 0,
+    request_received: u8 = 0,
+    request_admitted: u8 = 0,
+    response_ready: u8 = 0,
+    response_writing: u8 = 0,
+    response_written: u8 = 0,
+};
+
+pub const ManagedConcurrentSnapshotV1 = struct {
+    managed: ManagedSnapshotV1,
+    worker_count: u8,
+    pending_connection_capacity: u8,
+    running_connections: u8,
+    queue_high_watermark: u8,
+    running_high_watermark: u8,
+    queue_enqueued_connections: u64,
+    queue_dispatched_connections: u64,
+    listener_backpressure_activations: u64,
+    listener_backpressure_resumptions: u64,
+    drain_cancelled_queued_connections: u64,
+    failure_cancelled_queued_connections: u64,
+    receive_timeout_queued_connections: u64,
+    full_request_timeout_queued_connections: u64,
+    event_ordinal: u64,
+    accept_paused: bool,
+    cleanup_failed: bool,
+    phase_counts: ManagedConnectionPhaseCountsV1,
+};
+
+fn transportOwnerTokenV1(
+    lease: ManagedConnectionLeaseV1,
+) prepared_http.TransportOwnerTokenV1 {
+    return .{
+        .process_generation = lease.process_generation,
+        .connection_sequence = lease.connection_sequence,
+        .slot_index = lease.slot_index,
+        .slot_generation = lease.slot_generation,
+    };
+}
 
 const ActiveConnectionV1 = struct {
     process_generation: u64,
@@ -154,13 +348,15 @@ const ActiveConnectionV1 = struct {
     receive_timeout_signaled: bool = false,
     receive_retired: bool = false,
     receive_timeout_ns: u64 = 0,
-    full_request_timer: ?std.time.Timer = null,
+    accept_timer: ?std.time.Timer = null,
     full_request_timeout_ns: u64 = 0,
     full_request_timeout_retired: bool = true,
     full_request_timeout_signaled: bool = false,
     work_identity: ?prepared_http.WorkIdentityV1 = null,
     work_retired: bool = false,
     drain_work_cancelled: bool = false,
+    failure_signaled: bool = false,
+    failure_work_cancelled: bool = false,
     full_request_timeout_work_cancelled: bool = false,
     peer_reset_observed: bool = false,
     peer_reset_work_cancelled: bool = false,
@@ -171,11 +367,17 @@ const ActiveConnectionV1 = struct {
     response_write_progress_bytes: u64 = 0,
 };
 
+const ManagedConnectionSlotV1 = struct {
+    generation: u64 = 0,
+    active: ?ActiveConnectionV1 = null,
+};
+
 /// Process-lifetime listener state only. Request execution and retained
 /// idempotency remain exclusively owned by `prepared_text_unary_service`.
 pub const ManagedLifecycleV1 = struct {
     mutex: std.Thread.Mutex = .{},
     process_generation: u64,
+    connection_capacity: u8 = 1,
     state: ManagedStateV1 = .starting,
     accepted_connections: u64 = 0,
     completed_connections: u64 = 0,
@@ -189,6 +391,11 @@ pub const ManagedLifecycleV1 = struct {
     full_request_timeout_requested_response_write_connections: u64 = 0,
     full_request_timeout_cancelled_response_write_connections: u64 = 0,
     drain_cancelled_work_connections: u64 = 0,
+    failure_signaled_connections: u64 = 0,
+    failure_cancelled_work_connections: u64 = 0,
+    failure_cancelled_response_connections: u64 = 0,
+    failure_requested_response_write_connections: u64 = 0,
+    failure_cancelled_response_write_connections: u64 = 0,
     peer_reset_connections: u64 = 0,
     peer_reset_cancelled_work_connections: u64 = 0,
     drain_cancelled_response_connections: u64 = 0,
@@ -203,20 +410,42 @@ pub const ManagedLifecycleV1 = struct {
     last_full_request_timeout_requested_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_full_request_timeout_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_signaled_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_cancelled_response_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_requested_response_write_phase: ManagedConnectionPhaseV1 = .none,
+    last_failure_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_phase: ManagedConnectionPhaseV1 = .none,
     last_peer_reset_cancelled_work_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_cancelled_response_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_requested_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_drain_cancelled_response_write_phase: ManagedConnectionPhaseV1 = .none,
     last_response_write_transport_failed_phase: ManagedConnectionPhaseV1 = .none,
-    active_connection: ?ActiveConnectionV1 = null,
+    connection_slots: [maximum_managed_connection_slots_v1]ManagedConnectionSlotV1 =
+        [_]ManagedConnectionSlotV1{.{}} **
+        maximum_managed_connection_slots_v1,
 
     pub fn initV1(
         process_generation: u64,
     ) LifecycleError!ManagedLifecycleV1 {
+        return initWithConnectionCapacityV1(process_generation, 1);
+    }
+
+    pub fn initWithConnectionCapacityV1(
+        process_generation: u64,
+        connection_capacity: u8,
+    ) LifecycleError!ManagedLifecycleV1 {
         if (process_generation == 0)
             return LifecycleError.InvalidGeneration;
-        return .{ .process_generation = process_generation };
+        if (connection_capacity == 0 or
+            connection_capacity > maximum_managed_connection_slots_v1)
+        {
+            return LifecycleError.InvalidConnectionCapacity;
+        }
+        return .{
+            .process_generation = process_generation,
+            .connection_capacity = connection_capacity,
+        };
     }
 
     pub fn markReadyV1(
@@ -232,7 +461,7 @@ pub const ManagedLifecycleV1 = struct {
     fn beginConnectionV1(
         self: *ManagedLifecycleV1,
         handle: std.net.Stream.Handle,
-    ) LifecycleError!u64 {
+    ) LifecycleError!ManagedConnectionLeaseV1 {
         return self.beginConnectionWithFullRequestTimeoutV1(
             handle,
             0,
@@ -246,44 +475,215 @@ pub const ManagedLifecycleV1 = struct {
         handle: std.net.Stream.Handle,
         receive_timeout_ns: u64,
         full_request_timeout_ns: u64,
-        timer: ?std.time.Timer,
-    ) LifecycleError!u64 {
+        accept_timer: ?std.time.Timer,
+    ) LifecycleError!ManagedConnectionLeaseV1 {
+        return self.beginConnectionInPhaseV1(
+            handle,
+            receive_timeout_ns,
+            full_request_timeout_ns,
+            accept_timer,
+            .receiving_head,
+        );
+    }
+
+    fn beginQueuedConnectionV1(
+        self: *ManagedLifecycleV1,
+        handle: std.net.Stream.Handle,
+        receive_timeout_ns: u64,
+        full_request_timeout_ns: u64,
+        accept_timer: ?std.time.Timer,
+    ) LifecycleError!ManagedConnectionLeaseV1 {
+        return self.beginConnectionInPhaseV1(
+            handle,
+            receive_timeout_ns,
+            full_request_timeout_ns,
+            accept_timer,
+            .queued,
+        );
+    }
+
+    fn beginConnectionInPhaseV1(
+        self: *ManagedLifecycleV1,
+        handle: std.net.Stream.Handle,
+        receive_timeout_ns: u64,
+        full_request_timeout_ns: u64,
+        accept_timer: ?std.time.Timer,
+        initial_phase: ManagedConnectionPhaseV1,
+    ) LifecycleError!ManagedConnectionLeaseV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
+        return self.beginConnectionInPhaseLockedV1(
+            handle,
+            receive_timeout_ns,
+            full_request_timeout_ns,
+            accept_timer,
+            initial_phase,
+        );
+    }
+
+    fn beginConnectionInPhaseLockedV1(
+        self: *ManagedLifecycleV1,
+        handle: std.net.Stream.Handle,
+        receive_timeout_ns: u64,
+        full_request_timeout_ns: u64,
+        accept_timer: ?std.time.Timer,
+        initial_phase: ManagedConnectionPhaseV1,
+    ) LifecycleError!ManagedConnectionLeaseV1 {
         if (self.state != .ready)
             return LifecycleError.InvalidTransition;
-        if (self.active_connections != 0 or
-            self.active_connection != null)
+        if (initial_phase != .queued and
+            initial_phase != .receiving_head)
         {
-            return LifecycleError.ConnectionAlreadyActive;
+            return LifecycleError.ConnectionPhaseMismatch;
         }
+        if (self.active_connections >= self.connection_capacity)
+            return LifecycleError.ConnectionAlreadyActive;
+        const slot_index = self.findFreeConnectionSlotLockedV1() orelse
+            return LifecycleError.ConnectionAlreadyActive;
+        const slot = &self.connection_slots[slot_index];
         const sequence = std.math.add(
             u64,
             self.accepted_connections,
             1,
         ) catch return LifecycleError.CounterOverflow;
+        const slot_generation = std.math.add(
+            u64,
+            slot.generation,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        const next_active_connections = std.math.add(
+            u8,
+            self.active_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
         self.accepted_connections = sequence;
-        self.active_connections = 1;
-        self.active_connection = .{
+        self.active_connections = next_active_connections;
+        slot.generation = slot_generation;
+        slot.active = .{
             .process_generation = self.process_generation,
             .sequence = sequence,
             .handle = handle,
+            .phase = initial_phase,
             .receive_timeout_ns = receive_timeout_ns,
-            .full_request_timer = timer,
+            .accept_timer = accept_timer,
             .full_request_timeout_ns = full_request_timeout_ns,
             .full_request_timeout_retired = full_request_timeout_ns == 0,
         };
-        return sequence;
+        return .{
+            .process_generation = self.process_generation,
+            .connection_sequence = sequence,
+            .slot_index = @intCast(slot_index),
+            .slot_generation = slot_generation,
+            .handle = handle,
+        };
+    }
+
+    fn findFreeConnectionSlotLockedV1(
+        self: *ManagedLifecycleV1,
+    ) ?usize {
+        for (
+            self.connection_slots[0..self.connection_capacity],
+            0..,
+        ) |slot, index| {
+            if (slot.active == null) return index;
+        }
+        return null;
+    }
+
+    fn activeConnectionForLeaseLockedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+    ) LifecycleError!*ActiveConnectionV1 {
+        if (lease.process_generation != self.process_generation)
+            return LifecycleError.InvalidGeneration;
+        if (lease.slot_index >= self.connection_capacity)
+            return LifecycleError.ConnectionSlotMismatch;
+        const slot = &self.connection_slots[lease.slot_index];
+        if (slot.generation != lease.slot_generation)
+            return LifecycleError.ConnectionSlotGenerationMismatch;
+        const active = if (slot.active) |*connection|
+            connection
+        else
+            return LifecycleError.NoActiveConnection;
+        if (active.process_generation != lease.process_generation or
+            active.sequence != lease.connection_sequence)
+        {
+            return LifecycleError.ConnectionSequenceMismatch;
+        }
+        if (active.handle != lease.handle)
+            return LifecycleError.ConnectionHandleMismatch;
+        return active;
+    }
+
+    fn leaseForSlotLockedV1(
+        self: *ManagedLifecycleV1,
+        slot_index: usize,
+    ) LifecycleError!ManagedConnectionLeaseV1 {
+        if (slot_index >= self.connection_capacity)
+            return LifecycleError.ConnectionSlotMismatch;
+        const slot = &self.connection_slots[slot_index];
+        const active = slot.active orelse
+            return LifecycleError.NoActiveConnection;
+        return .{
+            .process_generation = active.process_generation,
+            .connection_sequence = active.sequence,
+            .slot_index = @intCast(slot_index),
+            .slot_generation = slot.generation,
+            .handle = active.handle,
+        };
+    }
+
+    fn leaseForTransportOwnerLockedV1(
+        self: *ManagedLifecycleV1,
+        owner: prepared_http.TransportOwnerTokenV1,
+    ) LifecycleError!ManagedConnectionLeaseV1 {
+        if (owner.process_generation != self.process_generation)
+            return LifecycleError.InvalidGeneration;
+        if (owner.slot_index >= self.connection_capacity)
+            return LifecycleError.ConnectionSlotMismatch;
+        const slot = &self.connection_slots[owner.slot_index];
+        if (slot.generation != owner.slot_generation)
+            return LifecycleError.ConnectionSlotGenerationMismatch;
+        const active = if (slot.active) |*connection|
+            connection
+        else
+            return LifecycleError.NoActiveConnection;
+        if (active.process_generation != owner.process_generation or
+            active.sequence != owner.connection_sequence)
+        {
+            return LifecycleError.ConnectionSequenceMismatch;
+        }
+        // The opaque owner deliberately excludes the native handle. Recover
+        // it only from the still-live, generation-fenced slot, then run the
+        // complete lease lookup before any work binding or counter mutation.
+        const lease: ManagedConnectionLeaseV1 = .{
+            .process_generation = owner.process_generation,
+            .connection_sequence = owner.connection_sequence,
+            .slot_index = owner.slot_index,
+            .slot_generation = owner.slot_generation,
+            .handle = active.handle,
+        };
+        _ = try self.activeConnectionForLeaseLockedV1(lease);
+        return lease;
+    }
+
+    fn leaseForDrainReceiptLockedV1(
+        self: *ManagedLifecycleV1,
+        owner: ?prepared_http.TransportOwnerTokenV1,
+    ) LifecycleError!ManagedConnectionLeaseV1 {
+        if (owner) |token|
+            return self.leaseForTransportOwnerLockedV1(token);
+        if (self.connection_capacity != 1)
+            return LifecycleError.MissingTransportOwner;
+        return self.leaseForSlotLockedV1(0);
     }
 
     fn markRequestHeadReceivedV1(
         self: *ManagedLifecycleV1,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) LifecycleError!void {
         return self.markRequestHeadReceivedBeforeDeadlineV1(
-            connection_sequence,
-            handle,
+            lease,
             null,
             0,
         );
@@ -291,16 +691,14 @@ pub const ManagedLifecycleV1 = struct {
 
     fn markRequestHeadReceivedBeforeDeadlineV1(
         self: *ManagedLifecycleV1,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         timer: ?*std.time.Timer,
         timeout_ns: u64,
     ) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.transitionActiveConnectionReceiveLockedV1(
-            connection_sequence,
-            handle,
+            lease,
             .receiving_head,
             .request_head_received,
             false,
@@ -311,16 +709,14 @@ pub const ManagedLifecycleV1 = struct {
 
     fn markRequestReceivedBeforeDeadlineV1(
         self: *ManagedLifecycleV1,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         timer: ?*std.time.Timer,
         timeout_ns: u64,
     ) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.transitionActiveConnectionReceiveLockedV1(
-            connection_sequence,
-            handle,
+            lease,
             .request_head_received,
             .request_received,
             true,
@@ -331,35 +727,25 @@ pub const ManagedLifecycleV1 = struct {
 
     fn markRequestAdmittedV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
     ) !prepared_http.WorkDispositionV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         if (!active.receive_retired or
             active.receive_timeout_signaled or
-            active.drain_signaled)
+            active.drain_signaled or
+            active.failure_signaled)
         {
             return LifecycleError.ConnectionInterrupted;
         }
-        try self.bindActiveWorkLockedV1(work_identity);
-        if (self.active_connection.?.hard_stop_cause ==
-            .full_request_timeout)
-        {
+        _ = try self.bindActiveWorkLockedV1(
+            lease,
+            work_identity,
+        );
+        if (active.hard_stop_cause == .full_request_timeout) {
             return .full_request_timeout;
         }
         return switch (self.state) {
@@ -371,16 +757,16 @@ pub const ManagedLifecycleV1 = struct {
 
     fn bindActiveWorkLockedV1(
         self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
-    ) LifecycleError!void {
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
+    ) LifecycleError!*ActiveConnectionV1 {
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         switch (active.phase) {
             .request_received => {
                 if (active.work_identity != null)
                     return LifecycleError.WorkIdentityMismatch;
-                self.active_connection.?.phase = .request_admitted;
-                self.active_connection.?.work_identity = work_identity;
+                active.phase = .request_admitted;
+                active.work_identity = work_identity;
             },
             .request_admitted,
             .response_ready,
@@ -394,30 +780,19 @@ pub const ManagedLifecycleV1 = struct {
             },
             else => return LifecycleError.ConnectionPhaseMismatch,
         }
+        return active;
     }
 
     fn retireActiveConnectionWorkV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
     ) LifecycleError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.state != .ready and self.state != .draining)
             return LifecycleError.InvalidTransition;
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         switch (active.phase) {
             .request_admitted,
             .response_ready,
@@ -430,16 +805,18 @@ pub const ManagedLifecycleV1 = struct {
             return LifecycleError.WorkIdentityMismatch;
         if (!std.meta.eql(existing, work_identity))
             return LifecycleError.WorkIdentityMismatch;
-        self.active_connection.?.work_retired = true;
+        active.work_retired = true;
     }
 
     fn recordDrainWorkCancellationLockedV1(
         self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
     ) LifecycleError!void {
-        try self.bindActiveWorkLockedV1(work_identity);
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
+        const active = try self.bindActiveWorkLockedV1(
+            lease,
+            work_identity,
+        );
         if (active.drain_work_cancelled) return;
         const next_cancelled = std.math.add(
             u64,
@@ -448,21 +825,37 @@ pub const ManagedLifecycleV1 = struct {
         ) catch return LifecycleError.CounterOverflow;
         self.drain_cancelled_work_connections = next_cancelled;
         self.last_drain_cancelled_work_phase = active.phase;
-        self.active_connection.?.drain_work_cancelled = true;
+        active.drain_work_cancelled = true;
+    }
+
+    fn recordFailureWorkCancellationLockedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+        work_identity: prepared_http.WorkIdentityV1,
+    ) LifecycleError!void {
+        const active = try self.bindActiveWorkLockedV1(
+            lease,
+            work_identity,
+        );
+        if (active.failure_work_cancelled) return;
+        const next_cancelled = std.math.add(
+            u64,
+            self.failure_cancelled_work_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        self.failure_cancelled_work_connections = next_cancelled;
+        self.last_failure_cancelled_work_phase = active.phase;
+        active.failure_work_cancelled = true;
     }
 
     fn recordPeerResetCancellationV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
         receipt: prepared_http.WorkCancellationReceiptV1,
     ) LifecycleError!void {
         return self.recordWorkCancellationV1(
-            process_generation,
-            connection_sequence,
-            handle,
+            lease,
             work_identity,
             receipt,
         );
@@ -470,30 +863,19 @@ pub const ManagedLifecycleV1 = struct {
 
     fn recordWorkCancellationV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
         receipt: prepared_http.WorkCancellationReceiptV1,
     ) LifecycleError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (receipt.requested_cause != .peer_reset and
-            receipt.requested_cause != .full_request_timeout)
+            receipt.requested_cause != .full_request_timeout and
+            receipt.requested_cause != .transport_failure)
         {
             return;
         }
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         if (active.phase != .request_admitted)
             return LifecycleError.ConnectionPhaseMismatch;
         const existing = active.work_identity orelse
@@ -515,8 +897,7 @@ pub const ManagedLifecycleV1 = struct {
                         ) catch return LifecycleError.CounterOverflow;
                     self.last_peer_reset_cancelled_work_phase =
                         active.phase;
-                    self.active_connection.?.peer_reset_work_cancelled =
-                        true;
+                    active.peer_reset_work_cancelled = true;
                 }
             },
             .full_request_timeout => {
@@ -532,8 +913,23 @@ pub const ManagedLifecycleV1 = struct {
                         ) catch return LifecycleError.CounterOverflow;
                     self.last_full_request_timeout_cancelled_work_phase =
                         active.phase;
-                    self.active_connection.?.full_request_timeout_work_cancelled =
-                        true;
+                    active.full_request_timeout_work_cancelled = true;
+                }
+            },
+            .transport_failure => {
+                if (receipt.cancellation_was_new and
+                    receipt.winner == .transport_failure and
+                    !active.failure_work_cancelled)
+                {
+                    self.failure_cancelled_work_connections =
+                        std.math.add(
+                            u64,
+                            self.failure_cancelled_work_connections,
+                            1,
+                        ) catch return LifecycleError.CounterOverflow;
+                    self.last_failure_cancelled_work_phase =
+                        active.phase;
+                    active.failure_work_cancelled = true;
                 }
             },
             else => unreachable,
@@ -542,34 +938,20 @@ pub const ManagedLifecycleV1 = struct {
 
     fn validateWorkCheckpointV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
     ) LifecycleError!prepared_http.WorkCheckpointDispositionV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         if (active.phase != .request_admitted)
             return LifecycleError.ConnectionPhaseMismatch;
         const existing = active.work_identity orelse
             return LifecycleError.WorkIdentityMismatch;
         if (!std.meta.eql(existing, work_identity))
             return LifecycleError.WorkIdentityMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
-        const cause =
-            self.active_connection.?.hard_stop_cause orelse
-            return .proceed;
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
+        const cause = active.hard_stop_cause orelse return .proceed;
         return switch (cause) {
             .full_request_timeout => .full_request_timeout,
             .peer_reset => .peer_reset,
@@ -579,37 +961,23 @@ pub const ManagedLifecycleV1 = struct {
 
     fn claimPeerResetV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         work_identity: prepared_http.WorkIdentityV1,
     ) LifecycleError!prepared_http.WorkCheckpointDispositionV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         if (active.phase != .request_admitted)
             return LifecycleError.ConnectionPhaseMismatch;
         const existing = active.work_identity orelse
             return LifecycleError.WorkIdentityMismatch;
         if (!std.meta.eql(existing, work_identity))
             return LifecycleError.WorkIdentityMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
-        if (self.active_connection.?.hard_stop_cause ==
-            .full_request_timeout)
-        {
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
+        if (active.hard_stop_cause == .full_request_timeout) {
             return .full_request_timeout;
         }
-        if (self.active_connection.?.hard_stop_cause) |cause| {
+        if (active.hard_stop_cause) |cause| {
             return if (cause == .peer_reset)
                 .peer_reset
             else
@@ -621,34 +989,21 @@ pub const ManagedLifecycleV1 = struct {
             1,
         ) catch return LifecycleError.CounterOverflow;
         self.last_peer_reset_phase = .request_admitted;
-        self.active_connection.?.hard_stop_cause = .peer_reset;
-        self.active_connection.?.peer_reset_observed = true;
+        active.hard_stop_cause = .peer_reset;
+        active.peer_reset_observed = true;
         return .peer_reset;
     }
 
     fn markResponseReadyV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) LifecycleError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
         if (self.state != .ready and self.state != .draining)
             return LifecycleError.InvalidTransition;
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
-        const current = self.active_connection.?;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         if (!active.receive_retired or
             active.receive_timeout_signaled or
             active.drain_signaled or
@@ -661,67 +1016,47 @@ pub const ManagedLifecycleV1 = struct {
             .request_head_received,
             .request_received,
             .request_admitted,
-            => self.active_connection.?.phase = .response_ready,
+            => active.phase = .response_ready,
             else => return LifecycleError.ConnectionPhaseMismatch,
         }
-        if (current.hard_stop_cause == .full_request_timeout)
-            try self.cancelResponseBeforeWriteForFullRequestTimeoutLockedV1();
+        if (active.failure_signaled)
+            try self.cancelResponseBeforeWriteForFailureLockedV1(
+                active,
+            )
+        else if (active.hard_stop_cause == .full_request_timeout)
+            try self.cancelResponseBeforeWriteForFullRequestTimeoutLockedV1(
+                active,
+            );
     }
 
     fn markResponseWritingV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) LifecycleError!prepared_http.ResponseWriteDispositionV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         if (active.phase != .response_ready)
             return LifecycleError.ConnectionPhaseMismatch;
-        if (self.active_connection.?.response_cancel_before_write_cause !=
-            null)
-        {
+        if (active.response_cancel_before_write_cause != null) {
             return .cancelled;
         }
-        self.active_connection.?.phase = .response_writing;
+        active.phase = .response_writing;
         return .proceed;
     }
 
     fn checkResponseWriteV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) LifecycleError!prepared_http.ResponseWriteDispositionV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         if (active.phase != .response_ready)
             return LifecycleError.ConnectionPhaseMismatch;
-        return if (self.active_connection.?.response_cancel_before_write_cause != null)
+        return if (active.response_cancel_before_write_cause != null)
             .cancelled
         else
             .proceed;
@@ -729,30 +1064,18 @@ pub const ManagedLifecycleV1 = struct {
 
     fn observeResponseWriteStopV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) LifecycleError!cancellable_writer.DispositionV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         if (active.phase != .response_writing or
             active.response_retired)
         {
             return LifecycleError.ConnectionPhaseMismatch;
         }
-        return switch (self.active_connection.?.response_write_stop_state) {
+        return switch (active.response_write_stop_state) {
             .none => .proceed,
             .requested => |cause| blk: {
                 switch (cause) {
@@ -776,9 +1099,20 @@ pub const ManagedLifecycleV1 = struct {
                         self.last_full_request_timeout_cancelled_response_write_phase =
                             .response_writing;
                     },
+                    .failure => {
+                        self.failure_cancelled_response_write_connections =
+                            std.math.add(
+                                u64,
+                                self.failure_cancelled_response_write_connections,
+                                1,
+                            ) catch return LifecycleError.CounterOverflow;
+                        self.last_failure_cancelled_response_write_phase =
+                            .response_writing;
+                    },
                 }
-                self.active_connection.?.response_write_stop_state =
-                    .{ .observed = cause };
+                active.response_write_stop_state = .{
+                    .observed = cause,
+                };
                 break :blk .cancelled;
             },
             .observed => .cancelled,
@@ -787,60 +1121,35 @@ pub const ManagedLifecycleV1 = struct {
 
     fn recordResponseWriteProgressV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         bytes_sent: usize,
     ) LifecycleError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         if (active.phase != .response_writing or
             active.response_retired or
             bytes_sent == 0)
         {
             return LifecycleError.ConnectionPhaseMismatch;
         }
-        self.active_connection.?.response_write_progress_bytes =
-            std.math.add(
-                u64,
-                active.response_write_progress_bytes,
-                @intCast(bytes_sent),
-            ) catch return LifecycleError.CounterOverflow;
+        active.response_write_progress_bytes = std.math.add(
+            u64,
+            active.response_write_progress_bytes,
+            @intCast(bytes_sent),
+        ) catch return LifecycleError.CounterOverflow;
     }
 
     fn recordResponseWriteFailureV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         failure: cancellable_writer.FailureV1,
     ) LifecycleError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         if (active.phase != .response_writing or
             active.response_retired)
         {
@@ -858,43 +1167,29 @@ pub const ManagedLifecycleV1 = struct {
         {
             return LifecycleError.ConnectionInterrupted;
         }
-        self.active_connection.?.response_write_failure =
-            failure_kind;
+        active.response_write_failure = failure_kind;
         if ((failure_kind == .connection_closed or
             failure_kind == .transport) and
-            self.active_connection.?.hard_stop_cause == null)
+            active.hard_stop_cause == null)
         {
-            self.active_connection.?.hard_stop_cause =
-                .response_transport_failure;
+            active.hard_stop_cause = .response_transport_failure;
         }
     }
 
     fn retireResponseV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         outcome: prepared_http.ResponseWriteOutcomeV1,
         writer_failure: ?cancellable_writer.FailureKindV1,
     ) LifecycleError!prepared_http.ResponseWriteOutcomeV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         if (active.response_retired)
             return LifecycleError.ConnectionInterrupted;
         if (active.response_write_failure != writer_failure)
             return LifecycleError.ConnectionInterrupted;
-        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1();
+        _ = try self.claimFullRequestTimeoutIfExpiredLockedV1(lease);
         var effective_outcome = outcome;
         switch (outcome) {
             .write_completed => {
@@ -902,7 +1197,7 @@ pub const ManagedLifecycleV1 = struct {
                     return LifecycleError.ConnectionPhaseMismatch;
                 if (writer_failure != null)
                     return LifecycleError.ConnectionInterrupted;
-                self.active_connection.?.phase = .response_written;
+                active.phase = .response_written;
             },
             .write_failed => {
                 if (active.phase != .response_ready and
@@ -947,15 +1242,14 @@ pub const ManagedLifecycleV1 = struct {
                 }
             },
         }
-        self.active_connection.?.response_retired = true;
-        self.active_connection.?.full_request_timeout_retired = true;
+        active.response_retired = true;
+        active.full_request_timeout_retired = true;
         return effective_outcome;
     }
 
     fn transitionActiveConnectionReceiveLockedV1(
         self: *ManagedLifecycleV1,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         expected_phase: ManagedConnectionPhaseV1,
         next_phase: ManagedConnectionPhaseV1,
         retire_receive: bool,
@@ -964,15 +1258,7 @@ pub const ManagedLifecycleV1 = struct {
     ) !void {
         if (self.state != .ready)
             return LifecycleError.InvalidTransition;
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != self.process_generation or
-            active.sequence != connection_sequence)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         if (active.phase != expected_phase)
             return LifecycleError.ConnectionPhaseMismatch;
         if (active.drain_signaled or
@@ -983,41 +1269,35 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (receiveDeadlineExpiredV1(timer, timeout_ns)) {
             _ = try self.signalActiveConnectionForReceiveTimeoutLockedV1(
-                self.process_generation,
-                connection_sequence,
-                handle,
+                lease,
             );
             return LifecycleError.ConnectionInterrupted;
         }
-        if (try self.claimFullRequestTimeoutIfExpiredLockedV1())
+        if (try self.claimFullRequestTimeoutIfExpiredLockedV1(lease))
             return LifecycleError.ConnectionInterrupted;
-        self.active_connection.?.phase = next_phase;
-        if (retire_receive)
-            self.active_connection.?.receive_retired = true;
+        active.phase = next_phase;
+        if (retire_receive) active.receive_retired = true;
     }
 
     fn finishConnectionV1(
         self: *ManagedLifecycleV1,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         succeeded: bool,
     ) LifecycleError!void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.active_connections != 1 or
-            self.active_connection == null)
-        {
+        return self.finishConnectionLockedV1(lease, succeeded);
+    }
+
+    fn finishConnectionLockedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+        succeeded: bool,
+    ) LifecycleError!void {
+        if (self.active_connections == 0)
             return LifecycleError.NoActiveConnection;
-        }
-        const active = self.active_connection.?;
-        if (active.process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active =
+            (try self.activeConnectionForLeaseLockedV1(lease)).*;
         if (active.work_identity != null and
             !active.work_retired)
         {
@@ -1045,8 +1325,12 @@ pub const ManagedLifecycleV1 = struct {
                 1,
             ) catch return LifecycleError.CounterOverflow;
         }
-        self.active_connections = 0;
-        self.active_connection = null;
+        self.active_connections = std.math.sub(
+            u8,
+            self.active_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        self.connection_slots[lease.slot_index].active = null;
     }
 
     fn markStoppedV1(
@@ -1056,7 +1340,7 @@ pub const ManagedLifecycleV1 = struct {
         defer self.mutex.unlock();
         if (self.state != .draining or
             self.active_connections != 0 or
-            self.active_connection != null)
+            self.hasOccupiedConnectionSlotLockedV1())
         {
             return LifecycleError.InvalidTransition;
         }
@@ -1074,13 +1358,30 @@ pub const ManagedLifecycleV1 = struct {
     ) ManagedSnapshotV1 {
         self.mutex.lock();
         defer self.mutex.unlock();
+        return self.snapshotLockedV1();
+    }
+
+    fn snapshotLockedV1(
+        self: *ManagedLifecycleV1,
+    ) ManagedSnapshotV1 {
+        var queued_connections: u8 = 0;
+        var sole_phase: ManagedConnectionPhaseV1 = .none;
+        for (self.connection_slots[0..self.connection_capacity]) |slot| {
+            const active = slot.active orelse continue;
+            if (active.phase == .queued)
+                queued_connections += 1;
+            if (self.active_connections == 1)
+                sole_phase = active.phase;
+        }
         return .{
             .process_generation = self.process_generation,
             .state = self.state,
+            .connection_capacity = self.connection_capacity,
             .accepted_connections = self.accepted_connections,
             .completed_connections = self.completed_connections,
             .failed_connections = self.failed_connections,
             .active_connections = self.active_connections,
+            .queued_connections = queued_connections,
             .drain_signaled_connections = self.drain_signaled_connections,
             .receive_timeout_signaled_connections = self.receive_timeout_signaled_connections,
             .full_request_timeout_signaled_connections = self.full_request_timeout_signaled_connections,
@@ -1089,16 +1390,18 @@ pub const ManagedLifecycleV1 = struct {
             .full_request_timeout_requested_response_write_connections = self.full_request_timeout_requested_response_write_connections,
             .full_request_timeout_cancelled_response_write_connections = self.full_request_timeout_cancelled_response_write_connections,
             .drain_cancelled_work_connections = self.drain_cancelled_work_connections,
+            .failure_signaled_connections = self.failure_signaled_connections,
+            .failure_cancelled_work_connections = self.failure_cancelled_work_connections,
+            .failure_cancelled_response_connections = self.failure_cancelled_response_connections,
+            .failure_requested_response_write_connections = self.failure_requested_response_write_connections,
+            .failure_cancelled_response_write_connections = self.failure_cancelled_response_write_connections,
             .peer_reset_connections = self.peer_reset_connections,
             .peer_reset_cancelled_work_connections = self.peer_reset_cancelled_work_connections,
             .drain_cancelled_response_connections = self.drain_cancelled_response_connections,
             .drain_requested_response_write_connections = self.drain_requested_response_write_connections,
             .drain_cancelled_response_write_connections = self.drain_cancelled_response_write_connections,
             .response_write_transport_failed_connections = self.response_write_transport_failed_connections,
-            .active_connection_phase = if (self.active_connection) |active|
-                active.phase
-            else
-                .none,
+            .active_connection_phase = sole_phase,
             .last_drain_signaled_phase = self.last_drain_signaled_phase,
             .last_receive_timeout_signaled_phase = self.last_receive_timeout_signaled_phase,
             .last_full_request_timeout_signaled_phase = self.last_full_request_timeout_signaled_phase,
@@ -1107,6 +1410,11 @@ pub const ManagedLifecycleV1 = struct {
             .last_full_request_timeout_requested_response_write_phase = self.last_full_request_timeout_requested_response_write_phase,
             .last_full_request_timeout_cancelled_response_write_phase = self.last_full_request_timeout_cancelled_response_write_phase,
             .last_drain_cancelled_work_phase = self.last_drain_cancelled_work_phase,
+            .last_failure_signaled_phase = self.last_failure_signaled_phase,
+            .last_failure_cancelled_work_phase = self.last_failure_cancelled_work_phase,
+            .last_failure_cancelled_response_phase = self.last_failure_cancelled_response_phase,
+            .last_failure_requested_response_write_phase = self.last_failure_requested_response_write_phase,
+            .last_failure_cancelled_response_write_phase = self.last_failure_cancelled_response_write_phase,
             .last_peer_reset_phase = self.last_peer_reset_phase,
             .last_peer_reset_cancelled_work_phase = self.last_peer_reset_cancelled_work_phase,
             .last_drain_cancelled_response_phase = self.last_drain_cancelled_response_phase,
@@ -1116,19 +1424,46 @@ pub const ManagedLifecycleV1 = struct {
         };
     }
 
+    fn hasOccupiedConnectionSlotLockedV1(
+        self: *ManagedLifecycleV1,
+    ) bool {
+        for (self.connection_slots[0..self.connection_capacity]) |slot| {
+            if (slot.active != null) return true;
+        }
+        return false;
+    }
+
     fn signalActiveConnectionForDrainLockedV1(
         self: *ManagedLifecycleV1,
     ) !bool {
-        const active = self.active_connection orelse return false;
-        if (active.process_generation != self.process_generation or
-            active.sequence != self.accepted_connections or
-            self.active_connections != 1)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
+        var signaled_any = false;
+        var first_error: ?anyerror = null;
+        for (self.connection_slots[0..self.connection_capacity]) |*slot| {
+            const active = if (slot.active) |*connection|
+                connection
+            else
+                continue;
+            if (active.process_generation != self.process_generation and
+                first_error == null)
+            {
+                first_error = LifecycleError.InvalidGeneration;
+            }
+            signaled_any = true;
+            self.signalConnectionForDrainLockedV1(active) catch |err| {
+                if (first_error == null) first_error = err;
+            };
         }
+        if (first_error) |err| return err;
+        return signaled_any;
+    }
+
+    fn signalConnectionForDrainLockedV1(
+        self: *ManagedLifecycleV1,
+        active: *ActiveConnectionV1,
+    ) !void {
         if (active.phase == .response_ready) {
             if (active.response_cancel_before_write_cause != null)
-                return true;
+                return;
             const next_cancelled = std.math.add(
                 u64,
                 self.drain_cancelled_response_connections,
@@ -1136,9 +1471,8 @@ pub const ManagedLifecycleV1 = struct {
             ) catch return LifecycleError.CounterOverflow;
             self.drain_cancelled_response_connections = next_cancelled;
             self.last_drain_cancelled_response_phase = active.phase;
-            self.active_connection.?.response_cancel_before_write_cause =
-                .drain;
-            return true;
+            active.response_cancel_before_write_cause = .drain;
+            return;
         }
         if (active.phase == .response_writing) {
             if (active.response_write_failure != null or
@@ -1146,7 +1480,7 @@ pub const ManagedLifecycleV1 = struct {
                     active.response_write_stop_state,
                 ) != .none)
             {
-                return true;
+                return;
             }
             const next_requested = std.math.add(
                 u64,
@@ -1157,97 +1491,184 @@ pub const ManagedLifecycleV1 = struct {
                 next_requested;
             self.last_drain_requested_response_write_phase =
                 .response_writing;
-            self.active_connection.?.response_write_stop_state =
-                .{ .requested = .drain };
-            return true;
+            active.response_write_stop_state = .{
+                .requested = .drain,
+            };
+            return;
         }
         if (active.drain_signaled or
             active.receive_timeout_signaled or
             active.receive_retired)
         {
-            return true;
+            return;
         }
         const next_signaled = std.math.add(
             u64,
             self.drain_signaled_connections,
             1,
         ) catch return LifecycleError.CounterOverflow;
-        std.posix.shutdown(active.handle, .recv) catch |err| switch (err) {
+        var signal_failed = false;
+        std.posix.shutdown(
+            active.handle,
+            if (active.phase == .queued) .both else .recv,
+        ) catch |err| switch (err) {
             error.ConnectionAborted,
             error.ConnectionResetByPeer,
             error.SocketNotConnected,
             => {},
-            else => return err,
+            else => signal_failed = true,
         };
+        if (signal_failed)
+            return LifecycleError.ConnectionSignalFailed;
         self.drain_signaled_connections = next_signaled;
         self.last_drain_signaled_phase = active.phase;
-        self.active_connection.?.drain_signaled = true;
-        self.active_connection.?.receive_retired = true;
-        return true;
+        active.drain_signaled = true;
+        active.receive_retired = true;
+    }
+
+    fn signalConnectionForFailureLockedV1(
+        self: *ManagedLifecycleV1,
+        active: *ActiveConnectionV1,
+    ) LifecycleError!FailureSignalResultV1 {
+        if (active.phase == .queued or
+            active.failure_signaled or
+            active.drain_signaled or
+            active.receive_timeout_signaled or
+            active.full_request_timeout_signaled or
+            active.hard_stop_cause != null or
+            active.response_retired)
+        {
+            return .{};
+        }
+        if (active.phase == .response_ready) {
+            if (active.response_cancel_before_write_cause != null)
+                return .{};
+            const next_cancelled = std.math.add(
+                u64,
+                self.failure_cancelled_response_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+            self.failure_cancelled_response_connections =
+                next_cancelled;
+            self.last_failure_cancelled_response_phase =
+                active.phase;
+            active.failure_signaled = true;
+            active.response_cancel_before_write_cause =
+                .failure;
+            return .{ .claimed = true };
+        }
+        if (active.phase == .response_writing) {
+            if (active.response_write_failure != null or
+                std.meta.activeTag(
+                    active.response_write_stop_state,
+                ) != .none)
+            {
+                return .{};
+            }
+            const next_requested = std.math.add(
+                u64,
+                self.failure_requested_response_write_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+            self.failure_requested_response_write_connections =
+                next_requested;
+            self.last_failure_requested_response_write_phase =
+                .response_writing;
+            active.failure_signaled = true;
+            active.response_write_stop_state = .{
+                .requested = .failure,
+            };
+            return .{ .claimed = true };
+        }
+        const next_signaled = std.math.add(
+            u64,
+            self.failure_signaled_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        var signal_failed = false;
+        std.posix.shutdown(
+            active.handle,
+            if (active.phase == .queued or
+                active.phase == .response_written)
+                .both
+            else
+                .recv,
+        ) catch |err| switch (err) {
+            error.ConnectionAborted,
+            error.ConnectionResetByPeer,
+            error.SocketNotConnected,
+            => {},
+            else => signal_failed = true,
+        };
+        if (signal_failed)
+            return .{ .signal_failed = true };
+        self.failure_signaled_connections = next_signaled;
+        self.last_failure_signaled_phase = active.phase;
+        active.failure_signaled = true;
+        active.receive_retired = true;
+        return .{
+            .claimed = true,
+            .signal_failed = signal_failed,
+        };
     }
 
     fn fullRequestDeadlineExpiredLockedV1(
         self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
     ) bool {
-        if (self.active_connection) |*active| {
-            if (active.full_request_timeout_retired or
-                active.full_request_timeout_ns == 0)
-            {
+        const active =
+            self.activeConnectionForLeaseLockedV1(lease) catch
                 return false;
-            }
-            if (active.full_request_timer) |*timer| {
-                return timer.read() >=
-                    active.full_request_timeout_ns;
-            }
+        if (active.full_request_timeout_retired or
+            active.full_request_timeout_ns == 0)
+        {
+            return false;
+        }
+        if (active.accept_timer) |*timer| {
+            return timer.read() >=
+                active.full_request_timeout_ns;
         }
         return false;
     }
 
     fn claimFullRequestTimeoutIfExpiredLockedV1(
         self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
     ) !bool {
-        if (!self.fullRequestDeadlineExpiredLockedV1())
+        if (!self.fullRequestDeadlineExpiredLockedV1(lease))
             return false;
-        const active = self.active_connection orelse return false;
-        return self.claimFullRequestTimeoutLockedV1(
-            active.process_generation,
-            active.sequence,
-            active.handle,
-        );
+        return self.claimFullRequestTimeoutLockedV1(lease);
     }
 
-    fn claimFullRequestTimeoutV1(
+    fn claimAllFullRequestTimeoutsIfExpiredLockedV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+    ) !void {
+        var slot_index: usize = 0;
+        while (slot_index < self.connection_capacity) : (slot_index += 1) {
+            if (self.connection_slots[slot_index].active == null)
+                continue;
+            const lease = try self.leaseForSlotLockedV1(slot_index);
+            _ = try self.claimFullRequestTimeoutLockedV1(lease);
+        }
+    }
+
+    pub fn claimFullRequestTimeoutV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
     ) !bool {
         self.mutex.lock();
         defer self.mutex.unlock();
-        return self.claimFullRequestTimeoutLockedV1(
-            process_generation,
-            connection_sequence,
-            handle,
-        );
+        return self.claimFullRequestTimeoutLockedV1(lease);
     }
 
     fn claimFullRequestTimeoutLockedV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) !bool {
         if (self.state != .ready) return false;
-        const active = self.active_connection orelse return false;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections or
-            active.handle != handle or
-            self.active_connections != 1)
-        {
-            return false;
-        }
+        const active =
+            self.activeConnectionForLeaseLockedV1(lease) catch
+                return false;
         if (active.full_request_timeout_retired or
             active.full_request_timeout_signaled or
             active.response_retired or
@@ -1256,19 +1677,17 @@ pub const ManagedLifecycleV1 = struct {
         {
             return false;
         }
-        if (!self.fullRequestDeadlineExpiredLockedV1())
+        if (!self.fullRequestDeadlineExpiredLockedV1(lease))
             return false;
 
         if (!active.receive_retired and
             active.receive_timeout_ns != 0)
         {
-            if (self.active_connection.?.full_request_timer) |*timer| {
+            if (active.accept_timer) |*timer| {
                 if (timer.read() >= active.receive_timeout_ns) {
                     _ = try self
                         .signalActiveConnectionForReceiveTimeoutLockedV1(
-                        process_generation,
-                        connection_sequence,
-                        handle,
+                        lease,
                     );
                     return false;
                 }
@@ -1283,8 +1702,11 @@ pub const ManagedLifecycleV1 = struct {
         var next_cancelled_response: ?u64 = null;
         var next_requested_response_write: ?u64 = null;
         switch (active.phase) {
-            .receiving_head, .request_head_received => {
-                std.posix.shutdown(active.handle, .recv) catch |err| switch (err) {
+            .queued, .receiving_head, .request_head_received => {
+                std.posix.shutdown(
+                    active.handle,
+                    if (active.phase == .queued) .both else .recv,
+                ) catch |err| switch (err) {
                     error.ConnectionAborted,
                     error.ConnectionResetByPeer,
                     error.SocketNotConnected,
@@ -1322,23 +1744,21 @@ pub const ManagedLifecycleV1 = struct {
             next_signaled;
         self.last_full_request_timeout_signaled_phase =
             active.phase;
-        self.active_connection.?.hard_stop_cause =
-            .full_request_timeout;
-        self.active_connection.?.full_request_timeout_signaled =
-            true;
-        self.active_connection.?.full_request_timeout_retired =
-            true;
-        if (active.phase == .receiving_head or
+        active.hard_stop_cause = .full_request_timeout;
+        active.full_request_timeout_signaled = true;
+        active.full_request_timeout_retired = true;
+        if (active.phase == .queued or
+            active.phase == .receiving_head or
             active.phase == .request_head_received)
         {
-            self.active_connection.?.receive_retired = true;
+            active.receive_retired = true;
         }
         if (next_cancelled_response) |next| {
             self.full_request_timeout_cancelled_response_connections =
                 next;
             self.last_full_request_timeout_cancelled_response_phase =
                 .response_ready;
-            self.active_connection.?.response_cancel_before_write_cause =
+            active.response_cancel_before_write_cause =
                 .full_request_timeout;
         }
         if (next_requested_response_write) |next| {
@@ -1346,17 +1766,17 @@ pub const ManagedLifecycleV1 = struct {
                 next;
             self.last_full_request_timeout_requested_response_write_phase =
                 .response_writing;
-            self.active_connection.?.response_write_stop_state =
-                .{ .requested = .full_request_timeout };
+            active.response_write_stop_state = .{
+                .requested = .full_request_timeout,
+            };
         }
         return true;
     }
 
     fn cancelResponseBeforeWriteForFullRequestTimeoutLockedV1(
         self: *ManagedLifecycleV1,
+        active: *ActiveConnectionV1,
     ) LifecycleError!void {
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
         if (active.response_cancel_before_write_cause != null)
             return;
         self.full_request_timeout_cancelled_response_connections =
@@ -1367,15 +1787,25 @@ pub const ManagedLifecycleV1 = struct {
             ) catch return LifecycleError.CounterOverflow;
         self.last_full_request_timeout_cancelled_response_phase =
             .response_ready;
-        self.active_connection.?.response_cancel_before_write_cause =
+        active.response_cancel_before_write_cause =
             .full_request_timeout;
+    }
+
+    fn cancelResponseBeforeWriteForFailureLockedV1(
+        self: *ManagedLifecycleV1,
+        active: *ActiveConnectionV1,
+    ) LifecycleError!void {
+        _ = self;
+        if (active.response_cancel_before_write_cause != null)
+            return;
+        active.response_cancel_before_write_cause =
+            .failure;
     }
 
     fn requestResponseWriteStopForFullRequestTimeoutLockedV1(
         self: *ManagedLifecycleV1,
+        active: *ActiveConnectionV1,
     ) LifecycleError!void {
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
         if (active.response_write_failure != null or
             std.meta.activeTag(
                 active.response_write_stop_state,
@@ -1391,42 +1821,54 @@ pub const ManagedLifecycleV1 = struct {
             ) catch return LifecycleError.CounterOverflow;
         self.last_full_request_timeout_requested_response_write_phase =
             .response_writing;
-        self.active_connection.?.response_write_stop_state =
-            .{ .requested = .full_request_timeout };
+        active.response_write_stop_state = .{
+            .requested = .full_request_timeout,
+        };
     }
 
     fn signalActiveConnectionForReceiveTimeoutV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) !bool {
         self.mutex.lock();
         defer self.mutex.unlock();
+        return self.signalActiveConnectionForReceiveTimeoutLockedV1(lease);
+    }
+
+    pub fn claimReceiveTimeoutIfExpiredV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+    ) !bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const active =
+            self.activeConnectionForLeaseLockedV1(lease) catch
+                return false;
+        if (active.receive_timeout_ns == 0 or
+            active.receive_retired or
+            active.receive_timeout_signaled)
+        {
+            return false;
+        }
+        const timer = if (active.accept_timer) |*value|
+            value
+        else
+            return false;
+        if (timer.read() < active.receive_timeout_ns)
+            return false;
         return self.signalActiveConnectionForReceiveTimeoutLockedV1(
-            process_generation,
-            connection_sequence,
-            handle,
+            lease,
         );
     }
 
     fn signalActiveConnectionForReceiveTimeoutLockedV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) !bool {
         if (self.state != .ready) return false;
-        const active = self.active_connection orelse return false;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections or
-            active.handle != handle or
-            self.active_connections != 1)
-        {
-            return false;
-        }
+        const active =
+            self.activeConnectionForLeaseLockedV1(lease) catch
+                return false;
         if (active.phase == .request_received or
             active.phase == .request_admitted or
             active.drain_signaled or
@@ -1441,83 +1883,823 @@ pub const ManagedLifecycleV1 = struct {
             self.receive_timeout_signaled_connections,
             1,
         ) catch return LifecycleError.CounterOverflow;
+        if (active.phase == .queued) {
+            std.posix.shutdown(active.handle, .both) catch |err| switch (err) {
+                error.ConnectionAborted,
+                error.ConnectionResetByPeer,
+                error.SocketNotConnected,
+                => {},
+                else => return LifecycleError.ConnectionSignalFailed,
+            };
+        }
         self.receive_timeout_signaled_connections = next_signaled;
         self.last_receive_timeout_signaled_phase = active.phase;
-        self.active_connection.?.hard_stop_cause =
-            .receive_timeout;
-        self.active_connection.?.receive_timeout_signaled = true;
-        self.active_connection.?.receive_retired = true;
+        active.hard_stop_cause = .receive_timeout;
+        active.receive_timeout_signaled = true;
+        active.receive_retired = true;
         return true;
     }
 
-    fn retireActiveConnectionReceiveV1(
+    pub fn retireActiveConnectionReceiveV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
         timer: ?*std.time.Timer,
         timeout_ns: u64,
     ) !bool {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         if (active.receive_timeout_signaled) return false;
         if (active.receive_retired) return true;
         if (active.drain_signaled or self.state != .ready) {
-            self.active_connection.?.receive_retired = true;
+            active.receive_retired = true;
             return true;
         }
         if (receiveDeadlineExpiredV1(timer, timeout_ns)) {
             _ = try self.signalActiveConnectionForReceiveTimeoutLockedV1(
-                process_generation,
-                connection_sequence,
-                handle,
+                lease,
             );
             return false;
         }
-        if (try self.claimFullRequestTimeoutIfExpiredLockedV1())
+        if (try self.claimFullRequestTimeoutIfExpiredLockedV1(lease))
             return false;
-        self.active_connection.?.receive_retired = true;
+        active.receive_retired = true;
         return true;
     }
 
-    fn retireFullRequestTimeoutV1(
+    pub fn retireFullRequestTimeoutV1(
         self: *ManagedLifecycleV1,
-        process_generation: u64,
-        connection_sequence: u64,
-        handle: std.net.Stream.Handle,
+        lease: ManagedConnectionLeaseV1,
     ) !bool {
         self.mutex.lock();
         defer self.mutex.unlock();
-        const active = self.active_connection orelse
-            return LifecycleError.NoActiveConnection;
-        if (active.process_generation != process_generation or
-            process_generation != self.process_generation or
-            active.sequence != connection_sequence or
-            connection_sequence != self.accepted_connections)
-        {
-            return LifecycleError.ConnectionSequenceMismatch;
-        }
-        if (active.handle != handle)
-            return LifecycleError.ConnectionHandleMismatch;
+        const active = try self.activeConnectionForLeaseLockedV1(lease);
         if (active.full_request_timeout_signaled)
             return false;
         if (active.full_request_timeout_retired)
             return true;
-        if (try self.claimFullRequestTimeoutIfExpiredLockedV1())
+        if (try self.claimFullRequestTimeoutIfExpiredLockedV1(lease))
             return false;
-        self.active_connection.?.full_request_timeout_retired = true;
+        active.full_request_timeout_retired = true;
         return true;
+    }
+
+    /// Emergency convergence used only after a concurrent transport worker
+    /// has returned an infrastructure error before normal retirement. Exact
+    /// lease validation still fences a reused slot; the caller owns and
+    /// closes the corresponding socket outside the lifecycle mutex.
+    fn forceFinishConnectionLockedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+    ) LifecycleError!void {
+        const active =
+            try self.activeConnectionForLeaseLockedV1(lease);
+        active.receive_retired = true;
+        active.full_request_timeout_retired = true;
+        active.work_retired = true;
+        active.response_retired = true;
+        return self.finishConnectionLockedV1(lease, false);
+    }
+};
+
+const ManagedQueuedConnectionV1 = struct {
+    connection: std.net.Server.Connection,
+    lease: ManagedConnectionLeaseV1,
+};
+
+const ManagedDispatchedConnectionV1 = struct {
+    queued: ManagedQueuedConnectionV1,
+    accept_timer: ?std.time.Timer,
+};
+
+const ManagedConcurrentPendingEventV1 = struct {
+    lifecycle: ?*ManagedConcurrentLifecycleV1 = null,
+    observer: ?ManagedConcurrentObserverV1,
+    event: ManagedConcurrentEventV1,
+
+    fn emit(self: ManagedConcurrentPendingEventV1) void {
+        if (self.observer) |observer| {
+            defer self.complete();
+            observer.observe(self.event);
+        }
+    }
+
+    fn complete(self: ManagedConcurrentPendingEventV1) void {
+        const lifecycle = self.lifecycle orelse return;
+        lifecycle.managed.mutex.lock();
+        std.debug.assert(lifecycle.observer_in_flight != 0);
+        lifecycle.observer_in_flight -= 1;
+        lifecycle.settled.broadcast();
+        lifecycle.managed.mutex.unlock();
+    }
+};
+
+const maximum_managed_concurrent_batch_events_v1: usize =
+    maximum_managed_pending_connections_v1 * 2;
+
+const ManagedConcurrentDetachedBatchV1 = struct {
+    connections: [maximum_managed_pending_connections_v1]?std.net.Server.Connection =
+        [_]?std.net.Server.Connection{null} **
+        maximum_managed_pending_connections_v1,
+    connection_count: u8 = 0,
+    events: [maximum_managed_concurrent_batch_events_v1]?ManagedConcurrentPendingEventV1 =
+        [_]?ManagedConcurrentPendingEventV1{null} **
+        maximum_managed_concurrent_batch_events_v1,
+    event_count: u8 = 0,
+
+    fn appendConnection(
+        self: *ManagedConcurrentDetachedBatchV1,
+        connection: std.net.Server.Connection,
+    ) void {
+        std.debug.assert(
+            self.connection_count <
+                maximum_managed_pending_connections_v1,
+        );
+        self.connections[self.connection_count] = connection;
+        self.connection_count += 1;
+    }
+
+    fn appendEvent(
+        self: *ManagedConcurrentDetachedBatchV1,
+        pending: ManagedConcurrentPendingEventV1,
+    ) void {
+        std.debug.assert(
+            self.event_count <
+                maximum_managed_concurrent_batch_events_v1,
+        );
+        self.events[self.event_count] = pending;
+        self.event_count += 1;
+    }
+
+    fn closeConnections(
+        self: *ManagedConcurrentDetachedBatchV1,
+    ) void {
+        var connection_index: usize = 0;
+        while (connection_index < self.connection_count) : (connection_index += 1) {
+            var connection =
+                self.connections[connection_index] orelse
+                continue;
+            connection.stream.close();
+            self.connections[connection_index] = null;
+        }
+        self.connection_count = 0;
+    }
+
+    fn emitEvents(
+        self: *ManagedConcurrentDetachedBatchV1,
+    ) void {
+        var event_index: usize = 0;
+        while (event_index < self.event_count) : (event_index += 1) {
+            const pending = self.events[event_index] orelse
+                continue;
+            pending.emit();
+            self.events[event_index] = null;
+        }
+        self.event_count = 0;
+    }
+
+    fn release(self: *ManagedConcurrentDetachedBatchV1) void {
+        self.closeConnections();
+        self.emitEvents();
+    }
+};
+
+const ManagedQueuedRetirementCauseV1 = enum {
+    drain,
+    failure,
+};
+
+/// Fixed-capacity concurrent transport registry. `managed.mutex` is the only
+/// state mutex: queue predicates, slot phases, counters, and snapshots all
+/// share one linearization point.
+pub const ManagedConcurrentLifecycleV1 = struct {
+    managed: ManagedLifecycleV1,
+    config: ManagedConcurrentConfigV1,
+    work_available: std.Thread.Condition = .{},
+    queue_capacity_available: std.Thread.Condition = .{},
+    deadline_changed: std.Thread.Condition = .{},
+    settled: std.Thread.Condition = .{},
+    queue: [maximum_managed_pending_connections_v1]?ManagedQueuedConnectionV1 =
+        [_]?ManagedQueuedConnectionV1{null} **
+        maximum_managed_pending_connections_v1,
+    queue_len: u8 = 0,
+    queue_high_watermark: u8 = 0,
+    running_high_watermark: u8 = 0,
+    queue_enqueued_connections: u64 = 0,
+    queue_dispatched_connections: u64 = 0,
+    listener_backpressure_activations: u64 = 0,
+    listener_backpressure_resumptions: u64 = 0,
+    drain_cancelled_queued_connections: u64 = 0,
+    failure_cancelled_queued_connections: u64 = 0,
+    receive_timeout_queued_connections: u64 = 0,
+    full_request_timeout_queued_connections: u64 = 0,
+    event_ordinal: u64 = 0,
+    accept_paused: bool = false,
+    serving: bool = false,
+    observer: ?ManagedConcurrentObserverV1 = null,
+    observer_in_flight: usize = 0,
+    fatal_error: ?anyerror = null,
+    cleanup_error: ?anyerror = null,
+
+    pub fn initV1(
+        process_generation: u64,
+        config: ManagedConcurrentConfigV1,
+    ) (Error || LifecycleError)!ManagedConcurrentLifecycleV1 {
+        try validateManagedConcurrentConfigV1(config);
+        const connection_capacity: u8 = @intCast(
+            @as(u16, config.worker_count) +
+                @as(u16, config.pending_connection_capacity),
+        );
+        return .{
+            .managed = try ManagedLifecycleV1
+                .initWithConnectionCapacityV1(
+                process_generation,
+                connection_capacity,
+            ),
+            .config = config,
+        };
+    }
+
+    pub fn markReadyV1(
+        self: *ManagedConcurrentLifecycleV1,
+    ) LifecycleError!void {
+        return self.managed.markReadyV1();
+    }
+
+    pub fn snapshotV1(
+        self: *ManagedConcurrentLifecycleV1,
+    ) ManagedConcurrentSnapshotV1 {
+        self.managed.mutex.lock();
+        defer self.managed.mutex.unlock();
+        return self.snapshotLockedV1();
+    }
+
+    fn snapshotLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+    ) ManagedConcurrentSnapshotV1 {
+        const managed_snapshot = self.managed.snapshotLockedV1();
+        const running_connections =
+            self.runningConnectionsLockedV1();
+        var phase_counts: ManagedConnectionPhaseCountsV1 = .{};
+        for (
+            self.managed
+                .connection_slots[0..self.managed.connection_capacity],
+        ) |slot| {
+            const active = slot.active orelse continue;
+            switch (active.phase) {
+                .queued => phase_counts.queued += 1,
+                .receiving_head => phase_counts.receiving_head += 1,
+                .request_head_received => phase_counts.request_head_received += 1,
+                .request_received => phase_counts.request_received += 1,
+                .request_admitted => phase_counts.request_admitted += 1,
+                .response_ready => phase_counts.response_ready += 1,
+                .response_writing => phase_counts.response_writing += 1,
+                .response_written => phase_counts.response_written += 1,
+                .none => unreachable,
+            }
+        }
+        const phase_total =
+            phase_counts.queued +
+            phase_counts.receiving_head +
+            phase_counts.request_head_received +
+            phase_counts.request_received +
+            phase_counts.request_admitted +
+            phase_counts.response_ready +
+            phase_counts.response_writing +
+            phase_counts.response_written;
+        std.debug.assert(
+            managed_snapshot.active_connections ==
+                self.queue_len + running_connections,
+        );
+        std.debug.assert(
+            managed_snapshot.queued_connections ==
+                self.queue_len,
+        );
+        std.debug.assert(
+            phase_total == managed_snapshot.active_connections,
+        );
+        std.debug.assert(
+            managed_snapshot.accepted_connections ==
+                managed_snapshot.completed_connections +
+                    managed_snapshot.failed_connections +
+                    managed_snapshot.active_connections,
+        );
+        std.debug.assert(
+            self.queue_enqueued_connections ==
+                managed_snapshot.accepted_connections,
+        );
+        std.debug.assert(
+            self.queue_enqueued_connections ==
+                self.queue_dispatched_connections +
+                    self.drain_cancelled_queued_connections +
+                    self.failure_cancelled_queued_connections +
+                    self.receive_timeout_queued_connections +
+                    self.full_request_timeout_queued_connections +
+                    self.queue_len,
+        );
+        std.debug.assert(
+            managed_snapshot.failure_signaled_connections +|
+                managed_snapshot.failure_cancelled_response_connections +|
+                managed_snapshot.failure_requested_response_write_connections <=
+                self.queue_dispatched_connections,
+        );
+        std.debug.assert(
+            self.queue_high_watermark <=
+                self.config.pending_connection_capacity,
+        );
+        std.debug.assert(
+            self.running_high_watermark <=
+                self.config.worker_count,
+        );
+        return .{
+            .managed = managed_snapshot,
+            .worker_count = self.config.worker_count,
+            .pending_connection_capacity = self.config.pending_connection_capacity,
+            .running_connections = running_connections,
+            .queue_high_watermark = self.queue_high_watermark,
+            .running_high_watermark = self.running_high_watermark,
+            .queue_enqueued_connections = self.queue_enqueued_connections,
+            .queue_dispatched_connections = self.queue_dispatched_connections,
+            .listener_backpressure_activations = self.listener_backpressure_activations,
+            .listener_backpressure_resumptions = self.listener_backpressure_resumptions,
+            .drain_cancelled_queued_connections = self.drain_cancelled_queued_connections,
+            .failure_cancelled_queued_connections = self.failure_cancelled_queued_connections,
+            .receive_timeout_queued_connections = self.receive_timeout_queued_connections,
+            .full_request_timeout_queued_connections = self.full_request_timeout_queued_connections,
+            .event_ordinal = self.event_ordinal,
+            .accept_paused = self.accept_paused,
+            .cleanup_failed = self.cleanup_error != null,
+            .phase_counts = phase_counts,
+        };
+    }
+
+    fn runningConnectionsLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+    ) u8 {
+        std.debug.assert(
+            self.managed.active_connections >= self.queue_len,
+        );
+        return self.managed.active_connections - self.queue_len;
+    }
+
+    fn makeEventLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        kind: ManagedConcurrentEventKindV1,
+        lease: ?ManagedConnectionLeaseV1,
+        worker_index: ?u8,
+    ) LifecycleError!ManagedConcurrentPendingEventV1 {
+        self.event_ordinal = std.math.add(
+            u64,
+            self.event_ordinal,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        return self.captureEventLockedV1(.{
+            .ordinal = self.event_ordinal,
+            .kind = kind,
+            .lease = lease,
+            .worker_index = worker_index,
+            .queued_connections = self.queue_len,
+            .running_connections = self.runningConnectionsLockedV1(),
+        });
+    }
+
+    fn captureEventLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        event: ManagedConcurrentEventV1,
+    ) ManagedConcurrentPendingEventV1 {
+        if (self.observer != null)
+            self.observer_in_flight += 1;
+        return .{
+            .lifecycle = if (self.observer != null) self else null,
+            .observer = self.observer,
+            .event = event,
+        };
+    }
+
+    fn removeQueueAtLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        index: usize,
+    ) ManagedQueuedConnectionV1 {
+        std.debug.assert(index < self.queue_len);
+        const queued = self.queue[index] orelse unreachable;
+        var cursor = index;
+        while (cursor + 1 < self.queue_len) : (cursor += 1) {
+            self.queue[cursor] = self.queue[cursor + 1];
+        }
+        self.queue[self.queue_len - 1] = null;
+        self.queue_len -= 1;
+        return queued;
+    }
+
+    fn popForWorkerLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        worker_index: u8,
+        events: *ManagedConcurrentDetachedBatchV1,
+    ) LifecycleError!ManagedDispatchedConnectionV1 {
+        const queued = self.queue[0] orelse unreachable;
+        const active =
+            try self.managed.activeConnectionForLeaseLockedV1(
+                queued.lease,
+            );
+        if (active.phase != .queued)
+            return LifecycleError.ConnectionPhaseMismatch;
+        const next_dispatched = std.math.add(
+            u64,
+            self.queue_dispatched_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        const dispatched_ordinal = std.math.add(
+            u64,
+            self.event_ordinal,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        const will_resume = self.managed.state == .ready and
+            self.accept_paused and
+            self.queue_len - 1 <
+                self.config.pending_connection_capacity;
+        const resumed_count = if (will_resume)
+            std.math.add(
+                u64,
+                self.listener_backpressure_resumptions,
+                1,
+            ) catch return LifecycleError.CounterOverflow
+        else
+            self.listener_backpressure_resumptions;
+        const resumed_ordinal = if (will_resume)
+            std.math.add(
+                u64,
+                dispatched_ordinal,
+                1,
+            ) catch return LifecycleError.CounterOverflow
+        else
+            dispatched_ordinal;
+        _ = self.removeQueueAtLockedV1(0);
+        active.phase = .receiving_head;
+        self.queue_dispatched_connections = next_dispatched;
+        const running_connections =
+            self.runningConnectionsLockedV1();
+        self.running_high_watermark = @max(
+            self.running_high_watermark,
+            running_connections,
+        );
+        self.event_ordinal = dispatched_ordinal;
+        events.appendEvent(self.captureEventLockedV1(.{
+            .ordinal = dispatched_ordinal,
+            .kind = .dispatched,
+            .lease = queued.lease,
+            .worker_index = worker_index,
+            .queued_connections = self.queue_len,
+            .running_connections = running_connections,
+        }));
+        if (will_resume) {
+            self.accept_paused = false;
+            self.listener_backpressure_resumptions =
+                resumed_count;
+            self.event_ordinal = resumed_ordinal;
+            events.appendEvent(self.captureEventLockedV1(.{
+                .ordinal = resumed_ordinal,
+                .kind = .backpressure_resumed,
+                .queued_connections = self.queue_len,
+                .running_connections = running_connections,
+            }));
+        }
+        self.queue_capacity_available.broadcast();
+        self.deadline_changed.broadcast();
+        return .{
+            .queued = queued,
+            .accept_timer = active.accept_timer,
+        };
+    }
+
+    fn detachQueuedForStopLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        cause: ManagedQueuedRetirementCauseV1,
+        batch: *ManagedConcurrentDetachedBatchV1,
+    ) !void {
+        while (self.queue_len != 0) {
+            const queued = self.queue[0] orelse unreachable;
+            const active =
+                try self.managed.activeConnectionForLeaseLockedV1(
+                    queued.lease,
+                );
+            if (active.phase != .queued)
+                return LifecycleError.ConnectionPhaseMismatch;
+            const next_drain_signaled = switch (cause) {
+                .drain => std.math.add(
+                    u64,
+                    self.managed.drain_signaled_connections,
+                    1,
+                ) catch return LifecycleError.CounterOverflow,
+                .failure => self.managed.drain_signaled_connections,
+            };
+            const next_cause_count = switch (cause) {
+                .drain => std.math.add(
+                    u64,
+                    self.drain_cancelled_queued_connections,
+                    1,
+                ) catch return LifecycleError.CounterOverflow,
+                .failure => std.math.add(
+                    u64,
+                    self.failure_cancelled_queued_connections,
+                    1,
+                ) catch return LifecycleError.CounterOverflow,
+            };
+            _ = std.math.add(
+                u64,
+                self.managed.failed_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+            const retirement_ordinal = std.math.add(
+                u64,
+                self.event_ordinal,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+            _ = self.removeQueueAtLockedV1(0);
+            batch.appendConnection(queued.connection);
+            active.receive_retired = true;
+            active.full_request_timeout_retired = true;
+            switch (cause) {
+                .drain => {
+                    std.posix.shutdown(
+                        active.handle,
+                        .both,
+                    ) catch |err| switch (err) {
+                        error.ConnectionAborted,
+                        error.ConnectionResetByPeer,
+                        error.SocketNotConnected,
+                        => {},
+                        else => {},
+                    };
+                    self.managed.drain_signaled_connections =
+                        next_drain_signaled;
+                    self.managed.last_drain_signaled_phase =
+                        .queued;
+                    active.drain_signaled = true;
+                    self.drain_cancelled_queued_connections =
+                        next_cause_count;
+                },
+                .failure => {
+                    self.failure_cancelled_queued_connections =
+                        next_cause_count;
+                },
+            }
+            try self.managed.finishConnectionLockedV1(
+                queued.lease,
+                false,
+            );
+            self.event_ordinal = retirement_ordinal;
+            batch.appendEvent(self.captureEventLockedV1(.{
+                .ordinal = retirement_ordinal,
+                .kind = switch (cause) {
+                    .drain => .queued_drain,
+                    .failure => .queued_failure,
+                },
+                .lease = queued.lease,
+                .queued_connections = self.queue_len,
+                .running_connections = self.runningConnectionsLockedV1(),
+            }));
+        }
+    }
+
+    fn expireQueuedAtLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        index: usize,
+        receive_wins: bool,
+        batch: *ManagedConcurrentDetachedBatchV1,
+    ) !void {
+        const queued = self.queue[index] orelse unreachable;
+        const active =
+            try self.managed.activeConnectionForLeaseLockedV1(
+                queued.lease,
+            );
+        if (active.phase != .queued)
+            return LifecycleError.ConnectionPhaseMismatch;
+        const next_timeout_count = if (receive_wins)
+            std.math.add(
+                u64,
+                self.receive_timeout_queued_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow
+        else
+            std.math.add(
+                u64,
+                self.full_request_timeout_queued_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+        if (receive_wins) {
+            _ = std.math.add(
+                u64,
+                self.managed.receive_timeout_signaled_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+        } else {
+            _ = std.math.add(
+                u64,
+                self.managed.full_request_timeout_signaled_connections,
+                1,
+            ) catch return LifecycleError.CounterOverflow;
+        }
+        _ = std.math.add(
+            u64,
+            self.managed.failed_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        const timeout_ordinal = std.math.add(
+            u64,
+            self.event_ordinal,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        const will_resume = self.managed.state == .ready and
+            self.accept_paused and
+            self.queue_len - 1 <
+                self.config.pending_connection_capacity;
+        const resumed_count = if (will_resume)
+            std.math.add(
+                u64,
+                self.listener_backpressure_resumptions,
+                1,
+            ) catch return LifecycleError.CounterOverflow
+        else
+            self.listener_backpressure_resumptions;
+        const resumed_ordinal = if (will_resume)
+            std.math.add(
+                u64,
+                timeout_ordinal,
+                1,
+            ) catch return LifecycleError.CounterOverflow
+        else
+            timeout_ordinal;
+        if (receive_wins) {
+            if (!try self.managed
+                .signalActiveConnectionForReceiveTimeoutLockedV1(
+                queued.lease,
+            )) return LifecycleError.ConnectionInterrupted;
+            active.full_request_timeout_retired = true;
+            self.receive_timeout_queued_connections =
+                next_timeout_count;
+        } else {
+            if (!try self.managed
+                .claimFullRequestTimeoutLockedV1(
+                queued.lease,
+            )) return LifecycleError.ConnectionInterrupted;
+            self.full_request_timeout_queued_connections =
+                next_timeout_count;
+        }
+        _ = self.removeQueueAtLockedV1(index);
+        batch.appendConnection(queued.connection);
+        try self.managed.finishConnectionLockedV1(
+            queued.lease,
+            false,
+        );
+        self.event_ordinal = timeout_ordinal;
+        batch.appendEvent(self.captureEventLockedV1(.{
+            .ordinal = timeout_ordinal,
+            .kind = if (receive_wins)
+                .queued_receive_timeout
+            else
+                .queued_full_request_timeout,
+            .lease = queued.lease,
+            .queued_connections = self.queue_len,
+            .running_connections = self.runningConnectionsLockedV1(),
+        }));
+        if (will_resume) {
+            self.accept_paused = false;
+            self.listener_backpressure_resumptions =
+                resumed_count;
+            self.event_ordinal = resumed_ordinal;
+            batch.appendEvent(self.captureEventLockedV1(.{
+                .ordinal = resumed_ordinal,
+                .kind = .backpressure_resumed,
+                .queued_connections = self.queue_len,
+                .running_connections = self.runningConnectionsLockedV1(),
+            }));
+        }
+        self.queue_capacity_available.broadcast();
+        self.deadline_changed.broadcast();
+        self.settled.broadcast();
+    }
+
+    fn signalRunningConnectionsForFailureLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        batch: *ManagedConcurrentDetachedBatchV1,
+    ) LifecycleError!void {
+        var first_error: ?LifecycleError = null;
+        var slot_index: usize = 0;
+        while (slot_index <
+            self.managed.connection_capacity) : (slot_index += 1)
+        {
+            const slot =
+                &self.managed.connection_slots[slot_index];
+            const active = if (slot.active) |*connection|
+                connection
+            else
+                continue;
+            if (active.phase == .queued) continue;
+            const lease = self.managed
+                .leaseForSlotLockedV1(slot_index) catch |err| {
+                if (first_error == null) first_error = err;
+                continue;
+            };
+            const signal_result = self.managed
+                .signalConnectionForFailureLockedV1(
+                active,
+            ) catch |err| {
+                if (first_error == null) first_error = err;
+                continue;
+            };
+            if (signal_result.signal_failed and
+                first_error == null)
+            {
+                first_error =
+                    LifecycleError.ConnectionSignalFailed;
+            }
+            if (!signal_result.claimed) continue;
+            const event = self.makeEventLockedV1(
+                .running_failure,
+                lease,
+                null,
+            ) catch |err| {
+                if (first_error == null) first_error = err;
+                continue;
+            };
+            batch.appendEvent(event);
+        }
+        if (first_error) |err| return err;
+    }
+
+    fn recordFatalLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        fatal_error: anyerror,
+    ) void {
+        if (self.fatal_error == null)
+            self.fatal_error = fatal_error;
+        if (self.managed.state != .stopped)
+            self.managed.state = .failed;
+        self.accept_paused = false;
+        self.work_available.broadcast();
+        self.queue_capacity_available.broadcast();
+        self.deadline_changed.broadcast();
+        self.settled.broadcast();
+    }
+
+    fn recordCleanupErrorLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        cleanup_error: anyerror,
+    ) void {
+        if (self.cleanup_error == null)
+            self.cleanup_error = cleanup_error;
+    }
+
+    /// Last-resort registry convergence after every worker and the watchdog
+    /// have joined. Queued entries still carry the only closeable stream
+    /// objects; remaining non-queued slots refer to worker-owned streams that
+    /// are already closed, so only their registry ownership is retired here.
+    fn forceConvergeAfterJoinLockedV1(
+        self: *ManagedConcurrentLifecycleV1,
+        batch: *ManagedConcurrentDetachedBatchV1,
+    ) void {
+        while (self.queue_len != 0) {
+            const queued = self.removeQueueAtLockedV1(0);
+            batch.appendConnection(queued.connection);
+            self.failure_cancelled_queued_connections +|= 1;
+            if (queued.lease.slot_index <
+                self.managed.connection_capacity)
+            {
+                const slot =
+                    &self.managed
+                        .connection_slots[queued.lease.slot_index];
+                if (slot.generation ==
+                    queued.lease.slot_generation)
+                {
+                    if (slot.active) |active| {
+                        if (active.process_generation ==
+                            queued.lease.process_generation and
+                            active.sequence ==
+                                queued.lease.connection_sequence and
+                            active.handle == queued.lease.handle)
+                        {
+                            self.managed.failed_connections +|= 1;
+                            self.managed.active_connections -|= 1;
+                            slot.active = null;
+                        }
+                    }
+                }
+            }
+        }
+        for (
+            self.managed
+                .connection_slots[0..self.managed.connection_capacity],
+        ) |*slot| {
+            if (slot.active == null) continue;
+            self.managed.failed_connections +|= 1;
+            self.managed.active_connections -|= 1;
+            slot.active = null;
+        }
+        self.accept_paused = false;
+        self.work_available.broadcast();
+        self.queue_capacity_available.broadcast();
+        self.deadline_changed.broadcast();
+        self.settled.broadcast();
     }
 };
 
@@ -1652,12 +2834,12 @@ pub fn serveManagedListenerWithObserversV1(
                 null
             else
                 accept_timer;
-        const sequence =
+        const lease =
             lifecycle.beginConnectionWithFullRequestTimeoutV1(
                 connection.stream.handle,
                 config.receive_timeout_ns,
                 config.full_request_timeout_ns,
-                full_request_timer,
+                accept_timer,
             ) catch |err| {
                 connection.stream.close();
                 if (err == LifecycleError.InvalidTransition) break;
@@ -1669,7 +2851,7 @@ pub fn serveManagedListenerWithObserversV1(
             connection,
             runtime,
             lifecycle,
-            sequence,
+            lease,
             config.receive_timeout_ns,
             config.full_request_timeout_ns,
             config.peer_reset_poll_timeout_ns,
@@ -1678,6 +2860,7 @@ pub fn serveManagedListenerWithObserversV1(
             full_request_timer,
             work_observer,
             response_observer,
+            .per_connection,
         ) catch |err| {
             lifecycle.markFailedV1();
             return err;
@@ -1725,7 +2908,7 @@ fn beginManagedDrainV1(
 ) !bool {
     lifecycle.mutex.lock();
     defer lifecycle.mutex.unlock();
-    _ = try lifecycle.claimFullRequestTimeoutIfExpiredLockedV1();
+    try lifecycle.claimAllFullRequestTimeoutsIfExpiredLockedV1();
     return switch (lifecycle.state) {
         .ready => blk: {
             const drain_receipt =
@@ -1762,7 +2945,7 @@ fn beginManagedDrainV1(
                 lifecycle.state = .failed;
                 return err;
             };
-            break :blk lifecycle.active_connection != null;
+            break :blk lifecycle.active_connections != 0;
         },
         else => LifecycleError.InvalidTransition,
     };
@@ -1772,17 +2955,1021 @@ fn applyDrainWorkReceiptLockedV1(
     lifecycle: *ManagedLifecycleV1,
     receipt: prepared_http.DrainReceiptV1,
 ) LifecycleError!void {
-    const work_identity = receipt.active_work orelse return;
-    try lifecycle.bindActiveWorkLockedV1(work_identity);
+    const work_identity = receipt.active_work orelse {
+        if (receipt.transport_owner != null)
+            return LifecycleError.TransportOwnerMismatch;
+        return;
+    };
+    const lease = try lifecycle.leaseForDrainReceiptLockedV1(
+        receipt.transport_owner,
+    );
+    _ = try lifecycle.bindActiveWorkLockedV1(
+        lease,
+        work_identity,
+    );
     if (receipt.cancellation == .recovery_required)
         return LifecycleError.WorkCancellationRecoveryRequired;
     if (receipt.cancellation_was_new and
         receipt.cancellation_winner == .drain)
     {
         try lifecycle.recordDrainWorkCancellationLockedV1(
+            lease,
             work_identity,
         );
     }
+}
+
+const ManagedDeadlineAuthorityV1 = enum {
+    per_connection,
+    shared_watchdog,
+};
+
+const ManagedConcurrentThreadContextV1 = struct {
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    runtime: *prepared_http.RuntimeV1,
+    config: ServerConfig,
+    worker_index: u8 = 0,
+};
+
+pub fn serveManagedConcurrentListenerV1(
+    listener: *std.net.Server,
+    config: ServerConfig,
+    runtime: *prepared_http.RuntimeV1,
+    lifecycle: *ManagedConcurrentLifecycleV1,
+) !void {
+    return serveManagedConcurrentListenerWithObserverV1(
+        listener,
+        config,
+        runtime,
+        lifecycle,
+        null,
+    );
+}
+
+/// Serves accepted loopback connections through one bounded FIFO and a fixed
+/// worker pool. Backpressure is passive: when the accepted FIFO is full the
+/// acceptor waits, leaving additional peers in the kernel listen backlog.
+///
+/// The observer is evidence-only. Its callback runs outside every lifecycle,
+/// runtime, service, and socket-control mutex and cannot change a production
+/// winner.
+pub fn serveManagedConcurrentListenerWithObserverV1(
+    listener: *std.net.Server,
+    config: ServerConfig,
+    runtime: *prepared_http.RuntimeV1,
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    observer: ?ManagedConcurrentObserverV1,
+) !void {
+    try validateConfig(config);
+    try validateManagedConcurrentConfigV1(lifecycle.config);
+    if (config.stop_after_requests != null)
+        return Error.ConcurrentStopAfterRequestsUnsupported;
+    if (!isLoopbackAddress(listener.listen_address))
+        return Error.NonLoopbackBind;
+
+    const expected_connection_capacity: u8 = @intCast(
+        @as(u16, lifecycle.config.worker_count) +
+            @as(
+                u16,
+                lifecycle.config.pending_connection_capacity,
+            ),
+    );
+    lifecycle.managed.mutex.lock();
+    if (lifecycle.managed.connection_capacity !=
+        expected_connection_capacity)
+    {
+        lifecycle.managed.mutex.unlock();
+        return Error.ConcurrentLifecycleConfigurationMismatch;
+    }
+    if (lifecycle.managed.state != .ready or
+        lifecycle.serving)
+    {
+        lifecycle.managed.mutex.unlock();
+        return LifecycleError.InvalidTransition;
+    }
+    lifecycle.serving = true;
+    lifecycle.observer = observer;
+    lifecycle.managed.mutex.unlock();
+
+    const listener_mode =
+        ManagedConcurrentListenerModeV1.enable(
+            listener.stream.handle,
+        ) catch |err| {
+            lifecycle.managed.mutex.lock();
+            lifecycle.serving = false;
+            lifecycle.observer = null;
+            lifecycle.managed.mutex.unlock();
+            return err;
+        };
+    var listener_mode_active = true;
+    defer std.debug.assert(!listener_mode_active);
+
+    var worker_contexts: [maximum_managed_concurrent_workers_v1]ManagedConcurrentThreadContextV1 = undefined;
+    var worker_threads: [maximum_managed_concurrent_workers_v1]?std.Thread =
+        [_]?std.Thread{null} **
+        maximum_managed_concurrent_workers_v1;
+    var worker_count: u8 = 0;
+    var startup_error: ?anyerror = null;
+    while (worker_count < lifecycle.config.worker_count) : (worker_count += 1) {
+        worker_contexts[worker_count] = .{
+            .lifecycle = lifecycle,
+            .runtime = runtime,
+            .config = config,
+            .worker_index = worker_count,
+        };
+        worker_threads[worker_count] = std.Thread.spawn(
+            .{},
+            managedConcurrentWorkerThreadV1,
+            .{&worker_contexts[worker_count]},
+        ) catch |err| {
+            startup_error = err;
+            break;
+        };
+    }
+
+    var watchdog_context: ManagedConcurrentThreadContextV1 = .{
+        .lifecycle = lifecycle,
+        .runtime = runtime,
+        .config = config,
+    };
+    var watchdog_thread: ?std.Thread = null;
+    if (startup_error == null) {
+        watchdog_thread = std.Thread.spawn(
+            .{},
+            managedConcurrentWatchdogThreadV1,
+            .{&watchdog_context},
+        ) catch |err| blk: {
+            startup_error = err;
+            break :blk null;
+        };
+    }
+
+    if (startup_error) |err| {
+        failManagedConcurrentV1(
+            lifecycle,
+            runtime,
+            err,
+        );
+    } else {
+        managedConcurrentAcceptLoopV1(
+            listener,
+            config,
+            runtime,
+            lifecycle,
+        ) catch |err| {
+            failManagedConcurrentV1(
+                lifecycle,
+                runtime,
+                err,
+            );
+        };
+    }
+
+    var join_index: usize = 0;
+    while (join_index < worker_count) : (join_index += 1) {
+        if (worker_threads[join_index]) |thread|
+            thread.join();
+    }
+    if (watchdog_thread) |thread| thread.join();
+
+    var listener_restore_error: ?anyerror = null;
+    listener_mode.restore(
+        listener.stream.handle,
+    ) catch |err| {
+        listener_restore_error = err;
+    };
+    listener_mode_active = false;
+
+    var final_cleanup_batch: ManagedConcurrentDetachedBatchV1 = .{};
+    lifecycle.managed.mutex.lock();
+    if (listener_restore_error) |err| {
+        lifecycle.recordCleanupErrorLockedV1(err);
+        lifecycle.recordFatalLockedV1(err);
+    }
+    if (lifecycle.managed.state == .draining) {
+        if (lifecycle.queue_len != 0 or
+            lifecycle.managed.active_connections != 0)
+        {
+            lifecycle.recordFatalLockedV1(
+                LifecycleError.InvalidTransition,
+            );
+        } else {
+            lifecycle.managed.state = .stopped;
+        }
+    } else if (lifecycle.managed.state == .ready) {
+        lifecycle.recordFatalLockedV1(
+            LifecycleError.InvalidTransition,
+        );
+    }
+    if (lifecycle.managed.state == .failed and
+        (lifecycle.queue_len != 0 or
+            lifecycle.managed.active_connections != 0))
+    {
+        lifecycle.forceConvergeAfterJoinLockedV1(
+            &final_cleanup_batch,
+        );
+    }
+    std.debug.assert(lifecycle.queue_len == 0);
+    std.debug.assert(
+        lifecycle.managed.active_connections == 0,
+    );
+    std.debug.assert(
+        !lifecycle.managed.hasOccupiedConnectionSlotLockedV1(),
+    );
+    while (lifecycle.observer_in_flight != 0) {
+        lifecycle.settled.wait(
+            &lifecycle.managed.mutex,
+        );
+    }
+    const fatal_error = lifecycle.fatal_error;
+    lifecycle.serving = false;
+    lifecycle.observer = null;
+    lifecycle.accept_paused = false;
+    lifecycle.settled.broadcast();
+    lifecycle.managed.mutex.unlock();
+    final_cleanup_batch.release();
+
+    if (fatal_error) |err| return err;
+    if (lifecycle.snapshotV1().managed.state != .stopped)
+        return LifecycleError.InvalidTransition;
+}
+
+/// Keeps listener shutdown bounded without an auxiliary wake connection. The
+/// listener is temporarily nonblocking, and the single acceptor polls in a
+/// bounded quantum before rechecking lifecycle state.
+fn waitForManagedConcurrentAcceptV1(
+    listener: *std.net.Server,
+    lifecycle: *ManagedConcurrentLifecycleV1,
+) !bool {
+    return waitForManagedConcurrentAcceptWithBarrierV1(
+        listener,
+        lifecycle,
+        null,
+    );
+}
+
+fn waitForManagedConcurrentAcceptWithBarrierV1(
+    listener: *std.net.Server,
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    wait_entered: ?*std.Thread.ResetEvent,
+) !bool {
+    while (true) {
+        lifecycle.managed.mutex.lock();
+        const ready_before_wait =
+            lifecycle.managed.state == .ready;
+        lifecycle.managed.mutex.unlock();
+        if (!ready_before_wait) return false;
+
+        if (wait_entered) |entered| entered.set();
+        if (!try ManagedDeadlineReaderV1.pollReadableOnceV1(
+            listener.stream.handle,
+            managed_lifecycle_poll_interval_ms,
+        )) {
+            continue;
+        }
+
+        lifecycle.managed.mutex.lock();
+        const ready_after_wait =
+            lifecycle.managed.state == .ready;
+        lifecycle.managed.mutex.unlock();
+        return ready_after_wait;
+    }
+}
+
+fn managedConcurrentAcceptLoopV1(
+    listener: *std.net.Server,
+    config: ServerConfig,
+    runtime: *prepared_http.RuntimeV1,
+    lifecycle: *ManagedConcurrentLifecycleV1,
+) !void {
+    _ = runtime;
+    while (true) {
+        var pause_event: ?ManagedConcurrentPendingEventV1 = null;
+        lifecycle.managed.mutex.lock();
+        if (lifecycle.managed.state != .ready) {
+            lifecycle.managed.mutex.unlock();
+            return;
+        }
+        if (lifecycle.queue_len >=
+            lifecycle.config.pending_connection_capacity)
+        {
+            if (!lifecycle.accept_paused) {
+                const next_activations = std.math.add(
+                    u64,
+                    lifecycle.listener_backpressure_activations,
+                    1,
+                ) catch {
+                    lifecycle.managed.mutex.unlock();
+                    return LifecycleError.CounterOverflow;
+                };
+                const next_ordinal = std.math.add(
+                    u64,
+                    lifecycle.event_ordinal,
+                    1,
+                ) catch {
+                    lifecycle.managed.mutex.unlock();
+                    return LifecycleError.CounterOverflow;
+                };
+                lifecycle.accept_paused = true;
+                lifecycle.listener_backpressure_activations =
+                    next_activations;
+                lifecycle.event_ordinal = next_ordinal;
+                pause_event =
+                    lifecycle.captureEventLockedV1(.{
+                        .ordinal = next_ordinal,
+                        .kind = .backpressure_paused,
+                        .queued_connections = lifecycle.queue_len,
+                        .running_connections = lifecycle
+                            .runningConnectionsLockedV1(),
+                    });
+            }
+            lifecycle.managed.mutex.unlock();
+            if (pause_event) |pending| pending.emit();
+
+            lifecycle.managed.mutex.lock();
+            while (lifecycle.managed.state == .ready and
+                lifecycle.queue_len >=
+                    lifecycle
+                        .config.pending_connection_capacity)
+            {
+                lifecycle.queue_capacity_available.wait(
+                    &lifecycle.managed.mutex,
+                );
+            }
+            lifecycle.managed.mutex.unlock();
+            continue;
+        }
+        lifecycle.managed.mutex.unlock();
+
+        if (!try waitForManagedConcurrentAcceptV1(
+            listener,
+            lifecycle,
+        )) return;
+        const connection = listener.accept() catch |err| {
+            switch (err) {
+                error.WouldBlock,
+                error.ConnectionAborted,
+                error.ConnectionResetByPeer,
+                error.ProtocolFailure,
+                => continue,
+                else => {},
+            }
+            lifecycle.managed.mutex.lock();
+            const still_ready =
+                lifecycle.managed.state == .ready;
+            lifecycle.managed.mutex.unlock();
+            if (!still_ready) return;
+            return err;
+        };
+        setAcceptedSocketBlockingV1(
+            connection.stream.handle,
+        ) catch |err| {
+            var failed_connection = connection;
+            failed_connection.stream.close();
+            return err;
+        };
+
+        const accept_timer =
+            if (config.receive_timeout_ns == 0 and
+            config.full_request_timeout_ns == 0)
+                null
+            else
+                std.time.Timer.start() catch |err| {
+                    var failed_connection = connection;
+                    failed_connection.stream.close();
+                    lifecycle.managed.mutex.lock();
+                    const still_ready =
+                        lifecycle.managed.state == .ready;
+                    lifecycle.managed.mutex.unlock();
+                    if (!still_ready) return;
+                    return err;
+                };
+
+        lifecycle.managed.mutex.lock();
+        const should_accept =
+            lifecycle.managed.state == .ready;
+        lifecycle.managed.mutex.unlock();
+        if (!should_accept) {
+            var wake_connection = connection;
+            wake_connection.stream.close();
+            return;
+        }
+
+        var enqueued = false;
+        var enqueue_error: ?anyerror = null;
+        var enqueued_event: ?ManagedConcurrentPendingEventV1 = null;
+        lifecycle.managed.mutex.lock();
+        if (lifecycle.managed.state == .ready) {
+            const next_enqueued = std.math.add(
+                u64,
+                lifecycle.queue_enqueued_connections,
+                1,
+            ) catch |err| blk: {
+                enqueue_error = err;
+                break :blk 0;
+            };
+            const next_ordinal = std.math.add(
+                u64,
+                lifecycle.event_ordinal,
+                1,
+            ) catch |err| blk: {
+                enqueue_error = err;
+                break :blk 0;
+            };
+            if (enqueue_error == null) {
+                const lease =
+                    lifecycle.managed
+                        .beginConnectionInPhaseLockedV1(
+                        connection.stream.handle,
+                        config.receive_timeout_ns,
+                        config.full_request_timeout_ns,
+                        accept_timer,
+                        .queued,
+                    ) catch |err| blk: {
+                        enqueue_error = err;
+                        break :blk null;
+                    };
+                if (lease) |accepted_lease| {
+                    lifecycle.queue[lifecycle.queue_len] = .{
+                        .connection = connection,
+                        .lease = accepted_lease,
+                    };
+                    lifecycle.queue_len += 1;
+                    lifecycle.queue_enqueued_connections =
+                        next_enqueued;
+                    lifecycle.queue_high_watermark = @max(
+                        lifecycle.queue_high_watermark,
+                        lifecycle.queue_len,
+                    );
+                    lifecycle.event_ordinal = next_ordinal;
+                    enqueued_event =
+                        lifecycle.captureEventLockedV1(.{
+                            .ordinal = next_ordinal,
+                            .kind = .enqueued,
+                            .lease = accepted_lease,
+                            .queued_connections = lifecycle.queue_len,
+                            .running_connections = lifecycle
+                                .runningConnectionsLockedV1(),
+                        });
+                    enqueued = true;
+                    lifecycle.work_available.signal();
+                    lifecycle.deadline_changed.broadcast();
+                }
+            }
+        }
+        lifecycle.managed.mutex.unlock();
+
+        if (!enqueued) {
+            var unowned_connection = connection;
+            unowned_connection.stream.close();
+        }
+        if (enqueue_error) |err| return err;
+        if (enqueued_event) |pending| pending.emit();
+        if (!enqueued) return;
+    }
+}
+
+fn managedConcurrentWorkerThreadV1(
+    context: *ManagedConcurrentThreadContextV1,
+) void {
+    managedConcurrentWorkerLoopV1(context) catch |err| {
+        failManagedConcurrentV1(
+            context.lifecycle,
+            context.runtime,
+            err,
+        );
+    };
+}
+
+fn managedConcurrentWorkerLoopV1(
+    context: *ManagedConcurrentThreadContextV1,
+) !void {
+    const lifecycle = context.lifecycle;
+    while (true) {
+        var dispatch_events: ManagedConcurrentDetachedBatchV1 = .{};
+        lifecycle.managed.mutex.lock();
+        while (lifecycle.managed.state == .ready and
+            lifecycle.queue_len == 0)
+        {
+            lifecycle.work_available.wait(
+                &lifecycle.managed.mutex,
+            );
+        }
+        if (lifecycle.managed.state != .ready) {
+            lifecycle.managed.mutex.unlock();
+            return;
+        }
+        const dispatched =
+            lifecycle.popForWorkerLockedV1(
+                context.worker_index,
+                &dispatch_events,
+            ) catch |err| {
+                lifecycle.managed.mutex.unlock();
+                dispatch_events.release();
+                return err;
+            };
+        lifecycle.managed.mutex.unlock();
+        dispatch_events.release();
+
+        const receive_timer =
+            if (context.config.receive_timeout_ns == 0)
+                null
+            else
+                dispatched.accept_timer;
+        const full_request_timer =
+            if (context.config.full_request_timeout_ns == 0)
+                null
+            else
+                dispatched.accept_timer;
+        var connection_error: ?anyerror = null;
+        const connection_succeeded = serveManagedConnectionV1(
+            dispatched.queued.connection,
+            context.runtime,
+            &lifecycle.managed,
+            dispatched.queued.lease,
+            context.config.receive_timeout_ns,
+            context.config.full_request_timeout_ns,
+            context.config.peer_reset_poll_timeout_ns,
+            context.config.response_write_quantum_bytes,
+            receive_timer,
+            full_request_timer,
+            null,
+            null,
+            .shared_watchdog,
+        ) catch |err| blk: {
+            connection_error = err;
+            break :blk false;
+        };
+        _ = connection_succeeded;
+
+        lifecycle.managed.mutex.lock();
+        if (connection_error != null) {
+            lifecycle.managed
+                .forceFinishConnectionLockedV1(
+                dispatched.queued.lease,
+            ) catch |err| switch (err) {
+                LifecycleError.NoActiveConnection,
+                LifecycleError.ConnectionSlotGenerationMismatch,
+                => {},
+                else => {
+                    lifecycle.recordCleanupErrorLockedV1(err);
+                },
+            };
+        }
+        const retired_event = lifecycle.makeEventLockedV1(
+            .retired,
+            dispatched.queued.lease,
+            context.worker_index,
+        ) catch |err| blk: {
+            if (connection_error == null)
+                connection_error = err;
+            break :blk null;
+        };
+        lifecycle.deadline_changed.broadcast();
+        lifecycle.queue_capacity_available.broadcast();
+        lifecycle.settled.broadcast();
+        lifecycle.managed.mutex.unlock();
+        if (retired_event) |pending| pending.emit();
+        if (connection_error) |err| return err;
+    }
+}
+
+fn managedConcurrentWatchdogThreadV1(
+    context: *ManagedConcurrentThreadContextV1,
+) void {
+    managedConcurrentWatchdogLoopV1(
+        context.lifecycle,
+    ) catch |err| {
+        failManagedConcurrentV1(
+            context.lifecycle,
+            context.runtime,
+            err,
+        );
+    };
+}
+
+fn managedConcurrentWatchdogLoopV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+) !void {
+    while (true) {
+        var timeout_batch: ManagedConcurrentDetachedBatchV1 = .{};
+        lifecycle.managed.mutex.lock();
+        if (lifecycle.managed.state != .ready) {
+            lifecycle.managed.mutex.unlock();
+            return;
+        }
+
+        var expired_queue_index: ?usize = null;
+        var queued_receive_wins = false;
+        var queue_index: usize = 0;
+        while (queue_index < lifecycle.queue_len) : (queue_index += 1) {
+            const queued =
+                lifecycle.queue[queue_index] orelse
+                unreachable;
+            const active = lifecycle.managed
+                .activeConnectionForLeaseLockedV1(
+                queued.lease,
+            ) catch |err| {
+                lifecycle.managed.mutex.unlock();
+                return err;
+            };
+            if (active.phase != .queued) {
+                lifecycle.managed.mutex.unlock();
+                return LifecycleError.ConnectionPhaseMismatch;
+            }
+            if (queuedDeadlineExpiredV1(active)) |receive_wins| {
+                expired_queue_index = queue_index;
+                queued_receive_wins = receive_wins;
+                break;
+            }
+        }
+        if (expired_queue_index) |index| {
+            lifecycle.expireQueuedAtLockedV1(
+                index,
+                queued_receive_wins,
+                &timeout_batch,
+            ) catch |err| {
+                lifecycle.managed.mutex.unlock();
+                timeout_batch.release();
+                return err;
+            };
+            lifecycle.managed.mutex.unlock();
+            timeout_batch.release();
+            continue;
+        }
+
+        var slot_index: usize = 0;
+        while (slot_index < lifecycle.managed.connection_capacity) : (slot_index += 1) {
+            const slot =
+                &lifecycle.managed.connection_slots[slot_index];
+            const active = if (slot.active) |*connection|
+                connection
+            else
+                continue;
+            if (active.phase == .queued) continue;
+            const lease = lifecycle.managed
+                .leaseForSlotLockedV1(slot_index) catch |err| {
+                lifecycle.managed.mutex.unlock();
+                return err;
+            };
+            if (receiveDeadlineExpiredForActiveV1(active)) {
+                _ = lifecycle.managed
+                    .signalActiveConnectionForReceiveTimeoutLockedV1(
+                    lease,
+                ) catch |err| {
+                    lifecycle.managed.mutex.unlock();
+                    return err;
+                };
+                continue;
+            }
+            if (fullRequestDeadlineExpiredForActiveV1(active)) {
+                _ = lifecycle.managed
+                    .claimFullRequestTimeoutLockedV1(lease) catch |err| {
+                    lifecycle.managed.mutex.unlock();
+                    return err;
+                };
+            }
+        }
+
+        var earliest_remaining_ns: ?u64 = null;
+        for (
+            lifecycle.managed
+                .connection_slots[0..lifecycle.managed.connection_capacity],
+        ) |*slot| {
+            const active = if (slot.active) |*connection|
+                connection
+            else
+                continue;
+            if (remainingDeadlineNsV1(active)) |remaining_ns| {
+                earliest_remaining_ns = if (earliest_remaining_ns) |current|
+                    @min(current, remaining_ns)
+                else
+                    remaining_ns;
+            }
+        }
+
+        if (earliest_remaining_ns) |remaining_ns| {
+            if (remaining_ns == 0) {
+                lifecycle.managed.mutex.unlock();
+                continue;
+            }
+            lifecycle.deadline_changed.timedWait(
+                &lifecycle.managed.mutex,
+                remaining_ns,
+            ) catch |err| switch (err) {
+                error.Timeout => {},
+            };
+        } else {
+            lifecycle.deadline_changed.wait(
+                &lifecycle.managed.mutex,
+            );
+        }
+        lifecycle.managed.mutex.unlock();
+    }
+}
+
+fn queuedDeadlineExpiredV1(
+    active: *ActiveConnectionV1,
+) ?bool {
+    if (receiveDeadlineExpiredForActiveV1(active))
+        return true;
+    if (fullRequestDeadlineExpiredForActiveV1(active))
+        return false;
+    return null;
+}
+
+fn receiveDeadlineExpiredForActiveV1(
+    active: *ActiveConnectionV1,
+) bool {
+    if (active.receive_timeout_ns == 0 or
+        active.receive_retired or
+        active.receive_timeout_signaled or
+        active.hard_stop_cause != null)
+    {
+        return false;
+    }
+    const timer = if (active.accept_timer) |*value|
+        value
+    else
+        return false;
+    return timer.read() >= active.receive_timeout_ns;
+}
+
+fn fullRequestDeadlineExpiredForActiveV1(
+    active: *ActiveConnectionV1,
+) bool {
+    if (active.full_request_timeout_ns == 0 or
+        active.full_request_timeout_retired or
+        active.full_request_timeout_signaled or
+        active.response_retired or
+        active.phase == .response_written or
+        active.hard_stop_cause != null)
+    {
+        return false;
+    }
+    const timer = if (active.accept_timer) |*value|
+        value
+    else
+        return false;
+    return timer.read() >= active.full_request_timeout_ns;
+}
+
+fn remainingDeadlineNsV1(
+    active: *ActiveConnectionV1,
+) ?u64 {
+    const timer = if (active.accept_timer) |*value|
+        value
+    else
+        return null;
+    const elapsed_ns = timer.read();
+    var remaining_ns: ?u64 = null;
+    if (active.receive_timeout_ns != 0 and
+        !active.receive_retired and
+        !active.receive_timeout_signaled and
+        active.hard_stop_cause == null)
+    {
+        remaining_ns =
+            active.receive_timeout_ns -
+            @min(active.receive_timeout_ns, elapsed_ns);
+    }
+    if (active.full_request_timeout_ns != 0 and
+        !active.full_request_timeout_retired and
+        !active.full_request_timeout_signaled and
+        !active.response_retired and
+        active.phase != .response_written and
+        active.hard_stop_cause == null)
+    {
+        const full_remaining_ns =
+            active.full_request_timeout_ns -
+            @min(
+                active.full_request_timeout_ns,
+                elapsed_ns,
+            );
+        remaining_ns = if (remaining_ns) |current|
+            @min(current, full_remaining_ns)
+        else
+            full_remaining_ns;
+    }
+    return remaining_ns;
+}
+
+/// Closes runtime admission and applies the exact active-work receipt while
+/// holding the lifecycle mutex. Runtime control never invokes a lifecycle
+/// callback while held, so this follows the existing lifecycle -> runtime ->
+/// service lock order and fences slot retirement across receipt capture.
+fn beginManagedConcurrentDrainV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    runtime: *prepared_http.RuntimeV1,
+) !void {
+    var detached_batch: ManagedConcurrentDetachedBatchV1 = .{};
+    var drain_error: ?anyerror = null;
+
+    lifecycle.managed.mutex.lock();
+    switch (lifecycle.managed.state) {
+        .ready, .draining => {},
+        .stopped => {
+            lifecycle.managed.mutex.unlock();
+            return;
+        },
+        else => {
+            lifecycle.managed.mutex.unlock();
+            return LifecycleError.InvalidTransition;
+        },
+    }
+    const drain_receipt =
+        prepared_http.beginDrainV1(runtime) catch |err| {
+            convergeManagedConcurrentFailureLockedV1(
+                lifecycle,
+                null,
+                err,
+                err,
+                &detached_batch,
+            );
+            lifecycle.managed.mutex.unlock();
+            releaseManagedConcurrentFailureV1(
+                &detached_batch,
+            );
+            return err;
+        };
+    applyConcurrentDrainWorkReceiptLockedV1(
+        lifecycle,
+        drain_receipt,
+    ) catch |err| {
+        drain_error = err;
+    };
+    if (drain_error == null) {
+        lifecycle.detachQueuedForStopLockedV1(
+            .drain,
+            &detached_batch,
+        ) catch |err| {
+            drain_error = err;
+        };
+    }
+    if (drain_error == null) {
+        _ = lifecycle.managed
+            .signalActiveConnectionForDrainLockedV1() catch |err| blk: {
+            drain_error = err;
+            break :blk false;
+        };
+    }
+    lifecycle.accept_paused = false;
+    if (drain_error) |err| {
+        lifecycle.detachQueuedForStopLockedV1(
+            .failure,
+            &detached_batch,
+        ) catch |cleanup_error| {
+            lifecycle.recordCleanupErrorLockedV1(
+                cleanup_error,
+            );
+        };
+        lifecycle.signalRunningConnectionsForFailureLockedV1(
+            &detached_batch,
+        ) catch |cleanup_error| {
+            lifecycle.recordCleanupErrorLockedV1(
+                cleanup_error,
+            );
+        };
+        lifecycle.recordFatalLockedV1(err);
+    } else {
+        lifecycle.managed.state = .draining;
+        lifecycle.work_available.broadcast();
+        lifecycle.queue_capacity_available.broadcast();
+        lifecycle.deadline_changed.broadcast();
+        lifecycle.settled.broadcast();
+    }
+    lifecycle.managed.mutex.unlock();
+    detached_batch.closeConnections();
+    detached_batch.emitEvents();
+    if (drain_error) |err| return err;
+}
+
+fn applyConcurrentDrainWorkReceiptLockedV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    receipt: prepared_http.DrainReceiptV1,
+) LifecycleError!void {
+    if (receipt.active_work == null) {
+        if (receipt.transport_owner != null)
+            return LifecycleError.TransportOwnerMismatch;
+        return;
+    }
+    const owner = receipt.transport_owner orelse
+        return LifecycleError.MissingTransportOwner;
+    _ = try lifecycle.managed
+        .leaseForTransportOwnerLockedV1(owner);
+    return applyDrainWorkReceiptLockedV1(
+        &lifecycle.managed,
+        receipt,
+    );
+}
+
+fn applyConcurrentFailureWorkReceiptLockedV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    receipt: prepared_http.DrainReceiptV1,
+) LifecycleError!void {
+    const work_identity = receipt.active_work orelse {
+        if (receipt.transport_owner != null)
+            return LifecycleError.TransportOwnerMismatch;
+        return;
+    };
+    const owner = receipt.transport_owner orelse
+        return LifecycleError.MissingTransportOwner;
+    const lease = try lifecycle.managed
+        .leaseForTransportOwnerLockedV1(owner);
+    _ = try lifecycle.managed.bindActiveWorkLockedV1(
+        lease,
+        work_identity,
+    );
+    if (receipt.cancellation == .recovery_required)
+        return LifecycleError.WorkCancellationRecoveryRequired;
+    if (receipt.cancellation_was_new and
+        receipt.cancellation_winner == .transport_failure)
+    {
+        try lifecycle.managed
+            .recordFailureWorkCancellationLockedV1(
+            lease,
+            work_identity,
+        );
+    }
+}
+
+pub fn requestManagedConcurrentDrainAndWakeV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    runtime: *prepared_http.RuntimeV1,
+    listen_address: std.net.Address,
+) !void {
+    if (!isLoopbackAddress(listen_address))
+        return Error.NonLoopbackBind;
+    return beginManagedConcurrentDrainV1(
+        lifecycle,
+        runtime,
+    );
+}
+
+fn failManagedConcurrentV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    runtime: *prepared_http.RuntimeV1,
+    fatal_error: anyerror,
+) void {
+    var detached_batch: ManagedConcurrentDetachedBatchV1 = .{};
+    lifecycle.managed.mutex.lock();
+    var runtime_stop_error: ?anyerror = null;
+    const receipt = prepared_http.beginTransportFailureV1(
+        runtime,
+    ) catch |err| blk: {
+        runtime_stop_error = err;
+        break :blk null;
+    };
+    convergeManagedConcurrentFailureLockedV1(
+        lifecycle,
+        receipt,
+        fatal_error,
+        runtime_stop_error,
+        &detached_batch,
+    );
+    lifecycle.managed.mutex.unlock();
+    releaseManagedConcurrentFailureV1(
+        &detached_batch,
+    );
+}
+
+fn convergeManagedConcurrentFailureLockedV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    receipt: ?prepared_http.DrainReceiptV1,
+    fatal_error: anyerror,
+    cleanup_error: ?anyerror,
+    detached_batch: *ManagedConcurrentDetachedBatchV1,
+) void {
+    if (lifecycle.fatal_error == null)
+        lifecycle.fatal_error = fatal_error;
+    if (cleanup_error) |err|
+        lifecycle.recordCleanupErrorLockedV1(err);
+    if (receipt) |failure_receipt| {
+        applyConcurrentFailureWorkReceiptLockedV1(
+            lifecycle,
+            failure_receipt,
+        ) catch |err| {
+            lifecycle.recordCleanupErrorLockedV1(err);
+        };
+    }
+    lifecycle.detachQueuedForStopLockedV1(
+        .failure,
+        detached_batch,
+    ) catch |err| {
+        lifecycle.recordCleanupErrorLockedV1(err);
+    };
+    lifecycle.signalRunningConnectionsForFailureLockedV1(
+        detached_batch,
+    ) catch |err| {
+        lifecycle.recordCleanupErrorLockedV1(err);
+    };
+    lifecycle.recordFatalLockedV1(fatal_error);
+}
+
+fn releaseManagedConcurrentFailureV1(
+    detached_batch: *ManagedConcurrentDetachedBatchV1,
+) void {
+    detached_batch.closeConnections();
+    detached_batch.emitEvents();
 }
 
 pub fn serveConnectionV1(
@@ -1802,9 +3989,7 @@ pub fn serveConnectionV1(
 
 const ManagedReceiveTimeoutV1 = struct {
     lifecycle: *ManagedLifecycleV1,
-    process_generation: u64,
-    connection_sequence: u64,
-    handle: std.net.Stream.Handle,
+    lease: ManagedConnectionLeaseV1,
     timeout_ns: u64,
     full_request_timeout_ns: u64,
     decision_timer: ?std.time.Timer,
@@ -1831,9 +4016,7 @@ const ManagedReceiveTimeoutV1 = struct {
         self.signaled =
             self.lifecycle
                 .signalActiveConnectionForReceiveTimeoutV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
             ) catch |signal_error| {
                 self.signal_error = signal_error;
                 return;
@@ -1845,8 +4028,7 @@ const ManagedReceiveTimeoutV1 = struct {
             @ptrCast(@alignCast(context));
         defer self.receive_stopped.set();
         try self.lifecycle.markRequestReceivedBeforeDeadlineV1(
-            self.connection_sequence,
-            self.handle,
+            self.lease,
             self.timerPointer(),
             self.timeout_ns,
         );
@@ -1861,9 +4043,7 @@ const ManagedReceiveTimeoutV1 = struct {
     fn stop(self: *ManagedReceiveTimeoutV1) !bool {
         defer self.receive_stopped.set();
         return self.lifecycle.retireActiveConnectionReceiveV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
+            self.lease,
             self.timerPointer(),
             self.timeout_ns,
         );
@@ -1871,11 +4051,26 @@ const ManagedReceiveTimeoutV1 = struct {
 
     fn markHeadReceived(self: *ManagedReceiveTimeoutV1) !void {
         try self.lifecycle.markRequestHeadReceivedBeforeDeadlineV1(
-            self.connection_sequence,
-            self.handle,
+            self.lease,
             self.timerPointer(),
             self.timeout_ns,
         );
+    }
+
+    fn interrupted(self: *ManagedReceiveTimeoutV1) bool {
+        self.lifecycle.mutex.lock();
+        defer self.lifecycle.mutex.unlock();
+        const active = self.lifecycle
+            .activeConnectionForLeaseLockedV1(
+            self.lease,
+        ) catch return true;
+        return self.lifecycle.state != .ready or
+            active.receive_retired or
+            active.drain_signaled or
+            active.failure_signaled or
+            active.receive_timeout_signaled or
+            active.full_request_timeout_signaled or
+            active.hard_stop_cause != null;
     }
 
     fn timerPointer(self: *ManagedReceiveTimeoutV1) ?*std.time.Timer {
@@ -1891,9 +4086,7 @@ const ManagedReceiveTimeoutV1 = struct {
 
 const ManagedFullRequestTimeoutV1 = struct {
     lifecycle: *ManagedLifecycleV1,
-    process_generation: u64,
-    connection_sequence: u64,
-    handle: std.net.Stream.Handle,
+    lease: ManagedConnectionLeaseV1,
     timeout_ns: u64,
     wait_timer: ?std.time.Timer,
     request_stopped: std.Thread.ResetEvent = .{},
@@ -1917,9 +4110,7 @@ const ManagedFullRequestTimeoutV1 = struct {
     fn signal(self: *ManagedFullRequestTimeoutV1) void {
         self.signaled =
             self.lifecycle.claimFullRequestTimeoutV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
             ) catch |signal_error| {
                 self.signal_error = signal_error;
                 return;
@@ -1929,17 +4120,17 @@ const ManagedFullRequestTimeoutV1 = struct {
     fn stop(self: *ManagedFullRequestTimeoutV1) !bool {
         defer self.request_stopped.set();
         return self.lifecycle.retireFullRequestTimeoutV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
+            self.lease,
         );
     }
 };
 
-/// Managed requests read only after waiting for socket readiness within the
-/// remaining monotonic budget. Recomputing that budget before every read keeps
-/// a trickling peer from turning the absolute deadline into an inactivity
-/// timeout. The serving thread remains the only socket reader and closer.
+/// Managed requests read only after bounded socket-readiness waits. Lifecycle
+/// revalidation makes drain and failure convergence independent of a
+/// successful cross-thread `shutdown`. When a monotonic budget is active,
+/// recomputing it before every read keeps a trickling peer from turning the
+/// absolute deadline into an inactivity timeout. The serving thread remains
+/// the only socket reader and closer.
 const ManagedDeadlineReaderV1 = struct {
     interface: std.Io.Reader,
     stream: std.net.Stream,
@@ -1985,27 +4176,36 @@ const ManagedDeadlineReaderV1 = struct {
     }
 
     fn waitUntilReadable(self: *ManagedDeadlineReaderV1) !void {
-        const timer =
-            self.receive_timeout.timerPointer() orelse unreachable;
         while (true) {
-            const elapsed_ns = timer.read();
-            const deadline_ns = self.receive_timeout.deadlineNs();
-            if (elapsed_ns >= deadline_ns)
-                return error.ReceiveDeadlineExceeded;
-            const remaining_ns =
-                deadline_ns - elapsed_ns;
-            const remaining_ms: i32 = @intCast(
-                std.math.divCeil(
-                    u64,
-                    remaining_ns,
-                    std.time.ns_per_ms,
-                ) catch unreachable,
-            );
+            if (self.receive_timeout.interrupted())
+                return error.ConnectionInterrupted;
+            var wait_ms =
+                managed_lifecycle_poll_interval_ms;
+            if (self.receive_timeout.timerPointer()) |timer| {
+                const elapsed_ns = timer.read();
+                const deadline_ns =
+                    self.receive_timeout.deadlineNs();
+                if (elapsed_ns >= deadline_ns)
+                    return error.ReceiveDeadlineExceeded;
+                const remaining_ns =
+                    deadline_ns - elapsed_ns;
+                const remaining_ms: i32 = @intCast(
+                    std.math.divCeil(
+                        u64,
+                        remaining_ns,
+                        std.time.ns_per_ms,
+                    ) catch unreachable,
+                );
+                wait_ms = @min(wait_ms, remaining_ms);
+            }
             if (try pollReadableOnceV1(
                 self.stream.handle,
-                remaining_ms,
-            ))
+                wait_ms,
+            )) {
+                if (self.receive_timeout.interrupted())
+                    return error.ConnectionInterrupted;
                 return;
+            }
         }
     }
 
@@ -2043,9 +4243,7 @@ const ManagedDeadlineReaderV1 = struct {
 
 const ManagedRequestWorkControlV1 = struct {
     lifecycle: *ManagedLifecycleV1,
-    process_generation: u64,
-    connection_sequence: u64,
-    handle: std.net.Stream.Handle,
+    lease: ManagedConnectionLeaseV1,
     peer_reset_poll_timeout_ms: i32,
     observer: ?prepared_http.RequestWorkControlV1,
     observer_admitted: bool = false,
@@ -2059,9 +4257,7 @@ const ManagedRequestWorkControlV1 = struct {
             @ptrCast(@alignCast(context));
         const lifecycle_disposition =
             try self.lifecycle.markRequestAdmittedV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
                 work_identity,
             );
         if (lifecycle_disposition == .draining)
@@ -2090,21 +4286,17 @@ const ManagedRequestWorkControlV1 = struct {
             @ptrCast(@alignCast(context));
         const lifecycle_disposition =
             try self.lifecycle.validateWorkCheckpointV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
                 work_identity,
             );
         if (lifecycle_disposition != .proceed)
             return lifecycle_disposition;
         if (try peerResetDetectedV1(
-            self.handle,
+            self.lease.handle,
             self.peer_reset_poll_timeout_ms,
         )) {
             return self.lifecycle.claimPeerResetV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
                 work_identity,
             );
         }
@@ -2115,9 +4307,7 @@ const ManagedRequestWorkControlV1 = struct {
                 try callback(observer.context, work_identity);
             const post_observer =
                 try self.lifecycle.validateWorkCheckpointV1(
-                    self.process_generation,
-                    self.connection_sequence,
-                    self.handle,
+                    self.lease,
                     work_identity,
                 );
             if (post_observer != .proceed)
@@ -2125,9 +4315,7 @@ const ManagedRequestWorkControlV1 = struct {
             return switch (observed) {
                 .proceed => .proceed,
                 .peer_reset => self.lifecycle.claimPeerResetV1(
-                    self.process_generation,
-                    self.connection_sequence,
-                    self.handle,
+                    self.lease,
                     work_identity,
                 ),
                 .full_request_timeout => LifecycleError.InvalidTransition,
@@ -2144,9 +4332,7 @@ const ManagedRequestWorkControlV1 = struct {
         const self: *ManagedRequestWorkControlV1 =
             @ptrCast(@alignCast(context));
         self.lifecycle.recordWorkCancellationV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
+            self.lease,
             work_identity,
             receipt,
         ) catch |err| {
@@ -2166,9 +4352,7 @@ const ManagedRequestWorkControlV1 = struct {
         const self: *ManagedRequestWorkControlV1 =
             @ptrCast(@alignCast(context));
         self.lifecycle.retireActiveConnectionWorkV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
+            self.lease,
             work_identity,
         ) catch |err| {
             self.retire_error = err;
@@ -2187,6 +4371,9 @@ const ManagedRequestWorkControlV1 = struct {
             .context = self,
             .admitted_fn = admittedOpaque,
             .retired_fn = retiredOpaque,
+            .transport_owner = transportOwnerTokenV1(
+                self.lease,
+            ),
             .checkpoint_fn = checkpointOpaque,
             .cancellation_fn = cancellationOpaque,
         };
@@ -2222,9 +4409,7 @@ fn peerResetDetectedV1(
 
 const ManagedRequestResponseControlV1 = struct {
     lifecycle: *ManagedLifecycleV1,
-    process_generation: u64,
-    connection_sequence: u64,
-    handle: std.net.Stream.Handle,
+    lease: ManagedConnectionLeaseV1,
     full_request_timeout: *ManagedFullRequestTimeoutV1,
     observer: ?prepared_http.RequestResponseControlV1,
     max_send_bytes: u16,
@@ -2236,9 +4421,7 @@ const ManagedRequestResponseControlV1 = struct {
         const self: *ManagedRequestResponseControlV1 =
             @ptrCast(@alignCast(context));
         try self.lifecycle.markResponseReadyV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
+            self.lease,
         );
         if (self.observer) |observer| {
             self.observer_ready = true;
@@ -2253,9 +4436,7 @@ const ManagedRequestResponseControlV1 = struct {
             @ptrCast(@alignCast(context));
         const lifecycle_disposition =
             try self.lifecycle.checkResponseWriteV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
             );
         if (lifecycle_disposition == .cancelled)
             return .cancelled;
@@ -2264,9 +4445,7 @@ const ManagedRequestResponseControlV1 = struct {
             if (observed == .cancelled) return .cancelled;
         }
         return self.lifecycle.markResponseWritingV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
+            self.lease,
         );
     }
 
@@ -2289,15 +4468,11 @@ const ManagedRequestResponseControlV1 = struct {
     ) !cancellable_writer.DispositionV1 {
         return switch (event) {
             .before_send => self.lifecycle.observeResponseWriteStopV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
             ),
             .progress => |bytes_sent| blk: {
                 try self.lifecycle.recordResponseWriteProgressV1(
-                    self.process_generation,
-                    self.connection_sequence,
-                    self.handle,
+                    self.lease,
                     bytes_sent,
                 );
                 if (self.observer) |observer| {
@@ -2315,9 +4490,7 @@ const ManagedRequestResponseControlV1 = struct {
                         try callback(observer.context);
                 }
                 break :blk self.lifecycle.observeResponseWriteStopV1(
-                    self.process_generation,
-                    self.connection_sequence,
-                    self.handle,
+                    self.lease,
                 );
             },
         };
@@ -2334,9 +4507,7 @@ const ManagedRequestResponseControlV1 = struct {
             return LifecycleError.ConnectionInterrupted;
         self.writer_failure = failure_kind;
         self.lifecycle.recordResponseWriteFailureV1(
-            self.process_generation,
-            self.connection_sequence,
-            self.handle,
+            self.lease,
             failure,
         ) catch |err| {
             if (self.retire_error == null)
@@ -2353,9 +4524,7 @@ const ManagedRequestResponseControlV1 = struct {
             @ptrCast(@alignCast(context));
         const effective_outcome =
             self.lifecycle.retireResponseV1(
-                self.process_generation,
-                self.connection_sequence,
-                self.handle,
+                self.lease,
                 outcome,
                 self.writer_failure,
             ) catch |err| {
@@ -2399,7 +4568,7 @@ fn serveManagedConnectionV1(
     connection: std.net.Server.Connection,
     runtime: *prepared_http.RuntimeV1,
     lifecycle: *ManagedLifecycleV1,
-    sequence: u64,
+    lease: ManagedConnectionLeaseV1,
     receive_timeout_ns: u64,
     full_request_timeout_ns: u64,
     peer_reset_poll_timeout_ns: u64,
@@ -2408,14 +4577,13 @@ fn serveManagedConnectionV1(
     full_request_timer: ?std.time.Timer,
     work_observer: ?prepared_http.RequestWorkControlV1,
     response_observer: ?prepared_http.RequestResponseControlV1,
+    deadline_authority: ManagedDeadlineAuthorityV1,
 ) !bool {
     var owned_connection = connection;
     defer owned_connection.stream.close();
     var receive_timeout: ManagedReceiveTimeoutV1 = .{
         .lifecycle = lifecycle,
-        .process_generation = lifecycle.process_generation,
-        .connection_sequence = sequence,
-        .handle = owned_connection.stream.handle,
+        .lease = lease,
         .timeout_ns = receive_timeout_ns,
         .full_request_timeout_ns = full_request_timeout_ns,
         .decision_timer = receive_timer orelse full_request_timer,
@@ -2423,17 +4591,13 @@ fn serveManagedConnectionV1(
     };
     var full_request_timeout: ManagedFullRequestTimeoutV1 = .{
         .lifecycle = lifecycle,
-        .process_generation = lifecycle.process_generation,
-        .connection_sequence = sequence,
-        .handle = owned_connection.stream.handle,
+        .lease = lease,
         .timeout_ns = full_request_timeout_ns,
         .wait_timer = full_request_timer,
     };
     var work_control: ManagedRequestWorkControlV1 = .{
         .lifecycle = lifecycle,
-        .process_generation = lifecycle.process_generation,
-        .connection_sequence = sequence,
-        .handle = owned_connection.stream.handle,
+        .lease = lease,
         .peer_reset_poll_timeout_ms = peerResetPollTimeoutMsV1(
             peer_reset_poll_timeout_ns,
         ),
@@ -2441,14 +4605,13 @@ fn serveManagedConnectionV1(
     };
     var response_control: ManagedRequestResponseControlV1 = .{
         .lifecycle = lifecycle,
-        .process_generation = lifecycle.process_generation,
-        .connection_sequence = sequence,
-        .handle = owned_connection.stream.handle,
+        .lease = lease,
         .full_request_timeout = &full_request_timeout,
         .observer = response_observer,
         .max_send_bytes = response_write_quantum_bytes,
     };
-    const receive_timeout_thread = if (receive_timer == null)
+    const receive_timeout_thread = if (deadline_authority == .shared_watchdog or
+        receive_timer == null)
         null
     else
         std.Thread.spawn(
@@ -2459,14 +4622,14 @@ fn serveManagedConnectionV1(
             _ = receive_timeout.stop() catch {};
             _ = full_request_timeout.stop() catch {};
             try lifecycle.finishConnectionV1(
-                sequence,
-                owned_connection.stream.handle,
+                lease,
                 false,
             );
             return err;
         };
     const full_request_timeout_thread =
-        if (full_request_timer == null)
+        if (deadline_authority == .shared_watchdog or
+        full_request_timer == null)
             null
         else
             std.Thread.spawn(
@@ -2479,8 +4642,7 @@ fn serveManagedConnectionV1(
                 _ = receive_timeout.stop() catch {};
                 _ = full_request_timeout.stop() catch {};
                 try lifecycle.finishConnectionV1(
-                    sequence,
-                    owned_connection.stream.handle,
+                    lease,
                     false,
                 );
                 return err;
@@ -2520,8 +4682,7 @@ fn serveManagedConnectionV1(
         work_control.retire_error == null and
         response_control.retire_error == null;
     try lifecycle.finishConnectionV1(
-        sequence,
-        owned_connection.stream.handle,
+        lease,
         connection_succeeded,
     );
     if (receive_timeout.signal_error) |err| return err;
@@ -2545,14 +4706,12 @@ fn serveOpenConnectionV1(
     var deadline_reader: ManagedDeadlineReaderV1 = undefined;
     const reader = blk: {
         if (receive_timeout) |timeout| {
-            if (timeout.timerPointer() != null) {
-                deadline_reader = ManagedDeadlineReaderV1.init(
-                    stream.*,
-                    timeout,
-                    &receive_buffer,
-                );
-                break :blk &deadline_reader.interface;
-            }
+            deadline_reader = ManagedDeadlineReaderV1.init(
+                stream.*,
+                timeout,
+                &receive_buffer,
+            );
+            break :blk &deadline_reader.interface;
         }
         break :blk connection_reader.interface();
     };
@@ -2657,6 +4816,30 @@ fn validateConfig(config: ServerConfig) Error!void {
     }
 }
 
+fn validateManagedConcurrentConfigV1(
+    config: ManagedConcurrentConfigV1,
+) Error!void {
+    if (config.worker_count <
+        minimum_managed_concurrent_workers_v1 or
+        config.worker_count >
+            maximum_managed_concurrent_workers_v1)
+    {
+        return Error.InvalidConcurrentWorkerCount;
+    }
+    if (config.pending_connection_capacity <
+        minimum_managed_pending_connections_v1 or
+        config.pending_connection_capacity >
+            maximum_managed_pending_connections_v1)
+    {
+        return Error.InvalidConcurrentPendingCapacity;
+    }
+    const total_capacity =
+        @as(u16, config.worker_count) +
+        @as(u16, config.pending_connection_capacity);
+    if (total_capacity > maximum_managed_connection_slots_v1)
+        return Error.ConcurrentLifecycleConfigurationMismatch;
+}
+
 fn peerResetPollTimeoutMsV1(timeout_ns: u64) i32 {
     if (timeout_ns == 0) return 0;
     return @intCast(std.math.divCeil(
@@ -2688,42 +4871,28 @@ fn isLoopbackAddress(address: std.net.Address) bool {
 
 fn prepareResponseWritingLifecycleForTestV1(
     lifecycle: *ManagedLifecycleV1,
-    generation: u64,
     handle: std.net.Stream.Handle,
     identity: prepared_http.WorkIdentityV1,
-) !u64 {
+) !ManagedConnectionLeaseV1 {
     try lifecycle.markReadyV1();
-    const sequence = try lifecycle.beginConnectionV1(handle);
-    try lifecycle.markRequestHeadReceivedV1(sequence, handle);
+    const lease = try lifecycle.beginConnectionV1(handle);
+    try lifecycle.markRequestHeadReceivedV1(lease);
     try lifecycle.markRequestReceivedBeforeDeadlineV1(
-        sequence,
-        handle,
+        lease,
         null,
         0,
     );
     _ = try lifecycle.markRequestAdmittedV1(
-        generation,
-        sequence,
-        handle,
+        lease,
         identity,
     );
     try lifecycle.retireActiveConnectionWorkV1(
-        generation,
-        sequence,
-        handle,
+        lease,
         identity,
     );
-    try lifecycle.markResponseReadyV1(
-        generation,
-        sequence,
-        handle,
-    );
-    _ = try lifecycle.markResponseWritingV1(
-        generation,
-        sequence,
-        handle,
-    );
-    return sequence;
+    try lifecycle.markResponseReadyV1(lease);
+    _ = try lifecycle.markResponseWritingV1(lease);
+    return lease;
 }
 
 fn waitForElapsedTimerForTestV1(
@@ -2733,6 +4902,46 @@ fn waitForElapsedTimerForTestV1(
     while (timer.read() < deadline_ns)
         std.atomic.spinLoopHint();
 }
+
+fn setConnectionPhaseForTestV1(
+    lifecycle: *ManagedLifecycleV1,
+    lease: ManagedConnectionLeaseV1,
+    phase: ManagedConnectionPhaseV1,
+    receive_retired: bool,
+) !void {
+    lifecycle.mutex.lock();
+    defer lifecycle.mutex.unlock();
+    const active =
+        try lifecycle.activeConnectionForLeaseLockedV1(lease);
+    active.phase = phase;
+    active.receive_retired = receive_retired;
+}
+
+fn applyDrainWorkReceiptForTestV1(
+    lifecycle: *ManagedLifecycleV1,
+    receipt: prepared_http.DrainReceiptV1,
+) !void {
+    lifecycle.mutex.lock();
+    defer lifecycle.mutex.unlock();
+    return applyDrainWorkReceiptLockedV1(
+        lifecycle,
+        receipt,
+    );
+}
+
+const ManagedAcceptFallbackTestContextV1 = struct {
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    wait_entered: *std.Thread.ResetEvent,
+
+    fn failAfterWaitEntered(
+        self: *ManagedAcceptFallbackTestContextV1,
+    ) void {
+        self.wait_entered.wait();
+        self.lifecycle.managed.mutex.lock();
+        self.lifecycle.managed.state = .failed;
+        self.lifecycle.managed.mutex.unlock();
+    }
+};
 
 test "server config rejects non-loopback authority" {
     try std.testing.expectError(
@@ -2887,15 +5096,19 @@ test "managed full request timeout preserves phase-specific evidence" {
     var admitted = try ManagedLifecycleV1.initV1(51);
     try admitted.markReadyV1();
     var admitted_timer = try std.time.Timer.start();
-    const admitted_sequence =
+    const admitted_lease =
         try admitted.beginConnectionWithFullRequestTimeoutV1(
             admitted_handle,
             0,
             timeout_ns,
             admitted_timer,
         );
-    admitted.active_connection.?.phase = .request_received;
-    admitted.active_connection.?.receive_retired = true;
+    try setConnectionPhaseForTestV1(
+        &admitted,
+        admitted_lease,
+        .request_received,
+        true,
+    );
     waitForElapsedTimerForTestV1(
         &admitted_timer,
         timeout_ns,
@@ -2903,16 +5116,12 @@ test "managed full request timeout preserves phase-specific evidence" {
     try std.testing.expectEqual(
         prepared_http.WorkDispositionV1.full_request_timeout,
         try admitted.markRequestAdmittedV1(
-            51,
-            admitted_sequence,
-            admitted_handle,
+            admitted_lease,
             admitted_identity,
         ),
     );
     try admitted.recordWorkCancellationV1(
-        51,
-        admitted_sequence,
-        admitted_handle,
+        admitted_lease,
         admitted_identity,
         .{
             .requested_cause = .full_request_timeout,
@@ -2922,23 +5131,15 @@ test "managed full request timeout preserves phase-specific evidence" {
         },
     );
     try admitted.retireActiveConnectionWorkV1(
-        51,
-        admitted_sequence,
-        admitted_handle,
+        admitted_lease,
         admitted_identity,
     );
     try std.testing.expect(
         !try admitted.retireFullRequestTimeoutV1(
-            51,
-            admitted_sequence,
-            admitted_handle,
+            admitted_lease,
         ),
     );
-    try admitted.finishConnectionV1(
-        admitted_sequence,
-        admitted_handle,
-        false,
-    );
+    try admitted.finishConnectionV1(admitted_lease, false);
     const admitted_snapshot = admitted.snapshotV1();
     try std.testing.expectEqual(
         @as(u64, 1),
@@ -2961,44 +5162,34 @@ test "managed full request timeout preserves phase-specific evidence" {
     var ready = try ManagedLifecycleV1.initV1(52);
     try ready.markReadyV1();
     var ready_timer = try std.time.Timer.start();
-    const ready_sequence =
+    const ready_lease =
         try ready.beginConnectionWithFullRequestTimeoutV1(
             ready_handle,
             0,
             timeout_ns,
             ready_timer,
         );
-    ready.active_connection.?.phase = .request_received;
-    ready.active_connection.?.receive_retired = true;
-    waitForElapsedTimerForTestV1(&ready_timer, timeout_ns);
-    try ready.markResponseReadyV1(
-        52,
-        ready_sequence,
-        ready_handle,
+    try setConnectionPhaseForTestV1(
+        &ready,
+        ready_lease,
+        .request_received,
+        true,
     );
+    waitForElapsedTimerForTestV1(&ready_timer, timeout_ns);
+    try ready.markResponseReadyV1(ready_lease);
     try std.testing.expectEqual(
         prepared_http.ResponseWriteDispositionV1.cancelled,
-        try ready.checkResponseWriteV1(
-            52,
-            ready_sequence,
-            ready_handle,
-        ),
+        try ready.checkResponseWriteV1(ready_lease),
     );
     try std.testing.expectEqual(
         prepared_http.ResponseWriteOutcomeV1.cancelled_before_write,
         try ready.retireResponseV1(
-            52,
-            ready_sequence,
-            ready_handle,
+            ready_lease,
             .cancelled_before_write,
             null,
         ),
     );
-    try ready.finishConnectionV1(
-        ready_sequence,
-        ready_handle,
-        false,
-    );
+    try ready.finishConnectionV1(ready_lease, false);
     const ready_snapshot = ready.snapshotV1();
     try std.testing.expectEqual(
         @as(u64, 1),
@@ -3015,22 +5206,22 @@ test "managed full request timeout preserves phase-specific evidence" {
     var writing_timer = try std.time.Timer.start();
     const writing_timeout_ns =
         100 * std.time.ns_per_ms;
-    const writing_sequence =
+    const writing_lease =
         try writing.beginConnectionWithFullRequestTimeoutV1(
             writing_handle,
             0,
             writing_timeout_ns,
             writing_timer,
         );
-    writing.active_connection.?.phase = .response_ready;
-    writing.active_connection.?.receive_retired = true;
+    try setConnectionPhaseForTestV1(
+        &writing,
+        writing_lease,
+        .response_ready,
+        true,
+    );
     try std.testing.expectEqual(
         prepared_http.ResponseWriteDispositionV1.proceed,
-        try writing.markResponseWritingV1(
-            53,
-            writing_sequence,
-            writing_handle,
-        ),
+        try writing.markResponseWritingV1(writing_lease),
     );
     waitForElapsedTimerForTestV1(
         &writing_timer,
@@ -3038,33 +5229,21 @@ test "managed full request timeout preserves phase-specific evidence" {
     );
     try std.testing.expectEqual(
         cancellable_writer.DispositionV1.cancelled,
-        try writing.observeResponseWriteStopV1(
-            53,
-            writing_sequence,
-            writing_handle,
-        ),
+        try writing.observeResponseWriteStopV1(writing_lease),
     );
     try writing.recordResponseWriteFailureV1(
-        53,
-        writing_sequence,
-        writing_handle,
+        writing_lease,
         .{ .cancelled = .{ .before_send = .{} } },
     );
     try std.testing.expectEqual(
         prepared_http.ResponseWriteOutcomeV1.cancelled_during_write,
         try writing.retireResponseV1(
-            53,
-            writing_sequence,
-            writing_handle,
+            writing_lease,
             .write_failed,
             .cancelled,
         ),
     );
-    try writing.finishConnectionV1(
-        writing_sequence,
-        writing_handle,
-        false,
-    );
+    try writing.finishConnectionV1(writing_lease, false);
     const writing_snapshot = writing.snapshotV1();
     try std.testing.expectEqual(
         @as(u64, 1),
@@ -3083,45 +5262,37 @@ test "managed full request timeout preserves phase-specific evidence" {
     var completed = try ManagedLifecycleV1.initV1(54);
     try completed.markReadyV1();
     const completed_timer = try std.time.Timer.start();
-    const completed_sequence =
+    const completed_lease =
         try completed.beginConnectionWithFullRequestTimeoutV1(
             completed_handle,
             0,
             maximum_full_request_timeout_ns,
             completed_timer,
         );
-    completed.active_connection.?.phase = .response_ready;
-    completed.active_connection.?.receive_retired = true;
+    try setConnectionPhaseForTestV1(
+        &completed,
+        completed_lease,
+        .response_ready,
+        true,
+    );
     try std.testing.expectEqual(
         prepared_http.ResponseWriteDispositionV1.proceed,
-        try completed.markResponseWritingV1(
-            54,
-            completed_sequence,
-            completed_handle,
-        ),
+        try completed.markResponseWritingV1(completed_lease),
     );
     try std.testing.expectEqual(
         prepared_http.ResponseWriteOutcomeV1.write_completed,
         try completed.retireResponseV1(
-            54,
-            completed_sequence,
-            completed_handle,
+            completed_lease,
             .write_completed,
             null,
         ),
     );
     try std.testing.expect(
         try completed.retireFullRequestTimeoutV1(
-            54,
-            completed_sequence,
-            completed_handle,
+            completed_lease,
         ),
     );
-    try completed.finishConnectionV1(
-        completed_sequence,
-        completed_handle,
-        true,
-    );
+    try completed.finishConnectionV1(completed_lease, true);
     try std.testing.expectEqual(
         @as(u64, 0),
         completed.snapshotV1()
@@ -3137,17 +5308,14 @@ test "managed response write drain records its exact winner" {
     };
 
     var cancelled = try ManagedLifecycleV1.initV1(41);
-    const cancelled_sequence =
+    const cancelled_lease =
         try prepareResponseWritingLifecycleForTestV1(
             &cancelled,
-            41,
             handle,
             identity,
         );
     try cancelled.recordResponseWriteProgressV1(
-        41,
-        cancelled_sequence,
-        handle,
+        cancelled_lease,
         1,
     );
     cancelled.mutex.lock();
@@ -3167,31 +5335,23 @@ test "managed response write drain records its exact winner" {
     try std.testing.expectEqual(
         cancellable_writer.DispositionV1.cancelled,
         try cancelled.observeResponseWriteStopV1(
-            41,
-            cancelled_sequence,
-            handle,
+            cancelled_lease,
         ),
     );
     try std.testing.expectEqual(
         cancellable_writer.DispositionV1.cancelled,
         try cancelled.observeResponseWriteStopV1(
-            41,
-            cancelled_sequence,
-            handle,
+            cancelled_lease,
         ),
     );
     try cancelled.recordResponseWriteFailureV1(
-        41,
-        cancelled_sequence,
-        handle,
+        cancelled_lease,
         .{ .cancelled = .{ .before_send = .{} } },
     );
     try std.testing.expectEqual(
         prepared_http.ResponseWriteOutcomeV1.cancelled_during_write,
         try cancelled.retireResponseV1(
-            41,
-            cancelled_sequence,
-            handle,
+            cancelled_lease,
             .write_failed,
             .cancelled,
         ),
@@ -3217,17 +5377,12 @@ test "managed response write drain records its exact winner" {
         ManagedConnectionPhaseV1.response_writing,
         cancelled_snapshot.last_drain_cancelled_response_write_phase,
     );
-    try cancelled.finishConnectionV1(
-        cancelled_sequence,
-        handle,
-        false,
-    );
+    try cancelled.finishConnectionV1(cancelled_lease, false);
 
     var completed = try ManagedLifecycleV1.initV1(42);
-    const completed_sequence =
+    const completed_lease =
         try prepareResponseWritingLifecycleForTestV1(
             &completed,
-            42,
             handle,
             identity,
         );
@@ -3242,9 +5397,7 @@ test "managed response write drain records its exact winner" {
     try std.testing.expectEqual(
         prepared_http.ResponseWriteOutcomeV1.write_completed,
         try completed.retireResponseV1(
-            42,
-            completed_sequence,
-            handle,
+            completed_lease,
             .write_completed,
             null,
         ),
@@ -3262,24 +5415,17 @@ test "managed response write drain records its exact winner" {
         ManagedConnectionPhaseV1.response_written,
         completed_snapshot.active_connection_phase,
     );
-    try completed.finishConnectionV1(
-        completed_sequence,
-        handle,
-        true,
-    );
+    try completed.finishConnectionV1(completed_lease, true);
 
     var transport = try ManagedLifecycleV1.initV1(43);
-    const transport_sequence =
+    const transport_lease =
         try prepareResponseWritingLifecycleForTestV1(
             &transport,
-            43,
             handle,
             identity,
         );
     try transport.recordResponseWriteFailureV1(
-        43,
-        transport_sequence,
-        handle,
+        transport_lease,
         .{ .transport = .send },
     );
     transport.mutex.lock();
@@ -3293,9 +5439,7 @@ test "managed response write drain records its exact winner" {
     try std.testing.expectEqual(
         prepared_http.ResponseWriteOutcomeV1.write_failed,
         try transport.retireResponseV1(
-            43,
-            transport_sequence,
-            handle,
+            transport_lease,
             .write_failed,
             .transport,
         ),
@@ -3313,11 +5457,7 @@ test "managed response write drain records its exact winner" {
         ManagedConnectionPhaseV1.response_writing,
         transport_snapshot.last_response_write_transport_failed_phase,
     );
-    try transport.finishConnectionV1(
-        transport_sequence,
-        handle,
-        false,
-    );
+    try transport.finishConnectionV1(transport_lease, false);
 }
 
 test "managed lifecycle has one drain linearization point" {
@@ -3345,13 +5485,10 @@ test "managed lifecycle has one drain linearization point" {
         .model_id = undefined,
     };
     try lifecycle.markReadyV1();
-    const sequence = try lifecycle.beginConnectionV1(
+    const lease = try lifecycle.beginConnectionV1(
         connection.stream.handle,
     );
-    try lifecycle.markRequestHeadReceivedV1(
-        sequence,
-        connection.stream.handle,
-    );
+    try lifecycle.markRequestHeadReceivedV1(lease);
     try std.testing.expect(
         try beginManagedDrainV1(&lifecycle, &runtime),
     );
@@ -3378,11 +5515,7 @@ test "managed lifecycle has one drain linearization point" {
         },
         lifecycle.snapshotV1(),
     );
-    try lifecycle.finishConnectionV1(
-        sequence,
-        connection.stream.handle,
-        false,
-    );
+    try lifecycle.finishConnectionV1(lease, false);
     try lifecycle.markStoppedV1();
     try std.testing.expectEqualDeep(
         ManagedSnapshotV1{
@@ -3436,15 +5569,11 @@ test "managed admitted work is connection fenced and counted once" {
     const stale_handle: std.net.Stream.Handle = @intCast(92);
     var lifecycle = try ManagedLifecycleV1.initV1(29);
     try lifecycle.markReadyV1();
-    const connection_sequence =
+    const connection_lease =
         try lifecycle.beginConnectionV1(handle);
-    try lifecycle.markRequestHeadReceivedV1(
-        connection_sequence,
-        handle,
-    );
+    try lifecycle.markRequestHeadReceivedV1(connection_lease);
     try lifecycle.markRequestReceivedBeforeDeadlineV1(
-        connection_sequence,
-        handle,
+        connection_lease,
         null,
         0,
     );
@@ -3453,39 +5582,37 @@ test "managed admitted work is connection fenced and counted once" {
         .sequence = 7,
         .handle_sha256 = [_]u8{0x71} ** 32,
     };
+    var wrong_process_generation = connection_lease;
+    wrong_process_generation.process_generation += 1;
     try std.testing.expectError(
-        LifecycleError.ConnectionSequenceMismatch,
+        LifecycleError.InvalidGeneration,
         lifecycle.markRequestAdmittedV1(
-            30,
-            connection_sequence,
-            handle,
+            wrong_process_generation,
             identity,
         ),
     );
+    var wrong_sequence = connection_lease;
+    wrong_sequence.connection_sequence += 1;
     try std.testing.expectError(
         LifecycleError.ConnectionSequenceMismatch,
         lifecycle.markRequestAdmittedV1(
-            29,
-            connection_sequence + 1,
-            handle,
+            wrong_sequence,
             identity,
         ),
     );
+    var wrong_handle = connection_lease;
+    wrong_handle.handle = stale_handle;
     try std.testing.expectError(
         LifecycleError.ConnectionHandleMismatch,
         lifecycle.markRequestAdmittedV1(
-            29,
-            connection_sequence,
-            stale_handle,
+            wrong_handle,
             identity,
         ),
     );
     try std.testing.expectEqual(
         prepared_http.WorkDispositionV1.proceed,
         try lifecycle.markRequestAdmittedV1(
-            29,
-            connection_sequence,
-            handle,
+            connection_lease,
             identity,
         ),
     );
@@ -3499,30 +5626,28 @@ test "managed admitted work is connection fenced and counted once" {
     try std.testing.expectError(
         LifecycleError.WorkIdentityMismatch,
         lifecycle.markRequestAdmittedV1(
-            29,
-            connection_sequence,
-            handle,
+            connection_lease,
             stale_identity,
         ),
     );
     try std.testing.expectError(
         LifecycleError.WorkIdentityMismatch,
         lifecycle.retireActiveConnectionWorkV1(
-            29,
-            connection_sequence,
-            handle,
+            connection_lease,
             stale_identity,
         ),
     );
 
     lifecycle.mutex.lock();
     lifecycle.recordDrainWorkCancellationLockedV1(
+        connection_lease,
         identity,
     ) catch |err| {
         lifecycle.mutex.unlock();
         return err;
     };
     lifecycle.recordDrainWorkCancellationLockedV1(
+        connection_lease,
         identity,
     ) catch |err| {
         lifecycle.mutex.unlock();
@@ -3540,28 +5665,18 @@ test "managed admitted work is connection fenced and counted once" {
     );
 
     try lifecycle.retireActiveConnectionWorkV1(
-        29,
-        connection_sequence,
-        handle,
+        connection_lease,
         identity,
     );
-    try lifecycle.finishConnectionV1(
-        connection_sequence,
-        handle,
-        true,
-    );
+    try lifecycle.finishConnectionV1(connection_lease, true);
 
     var recovery = try ManagedLifecycleV1.initV1(31);
     try recovery.markReadyV1();
-    const recovery_sequence =
+    const recovery_lease =
         try recovery.beginConnectionV1(handle);
-    try recovery.markRequestHeadReceivedV1(
-        recovery_sequence,
-        handle,
-    );
+    try recovery.markRequestHeadReceivedV1(recovery_lease);
     try recovery.markRequestReceivedBeforeDeadlineV1(
-        recovery_sequence,
-        handle,
+        recovery_lease,
         null,
         0,
     );
@@ -3586,8 +5701,7 @@ test "managed admitted work is connection fenced and counted once" {
     try std.testing.expectError(
         LifecycleError.ConnectionInterrupted,
         recovery.finishConnectionV1(
-            recovery_sequence,
-            handle,
+            recovery_lease,
             false,
         ),
     );
@@ -3595,6 +5709,220 @@ test "managed admitted work is connection fenced and counted once" {
         @as(u8, 1),
         recovery.snapshotV1().active_connections,
     );
+}
+
+test "managed drain routes work to the exact published transport owner" {
+    var lifecycle =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(32, 2);
+    try lifecycle.markReadyV1();
+    const first_lease =
+        try lifecycle.beginConnectionV1(@intCast(101));
+    const second_lease =
+        try lifecycle.beginConnectionV1(@intCast(102));
+    try lifecycle.markRequestHeadReceivedV1(first_lease);
+    try lifecycle.markRequestReceivedBeforeDeadlineV1(
+        first_lease,
+        null,
+        0,
+    );
+    try lifecycle.markRequestHeadReceivedV1(second_lease);
+    try lifecycle.markRequestReceivedBeforeDeadlineV1(
+        second_lease,
+        null,
+        0,
+    );
+
+    var work_control: ManagedRequestWorkControlV1 = .{
+        .lifecycle = &lifecycle,
+        .lease = second_lease,
+        .peer_reset_poll_timeout_ms = 0,
+        .observer = null,
+    };
+    const published_control = work_control.control();
+    try std.testing.expectEqualDeep(
+        transportOwnerTokenV1(second_lease),
+        published_control.transport_owner.?,
+    );
+
+    const identity: prepared_http.WorkIdentityV1 = .{
+        .sequence = 17,
+        .handle_sha256 = [_]u8{0x91} ** 32,
+    };
+    const receipt: prepared_http.DrainReceiptV1 = .{
+        .admission_was_open = true,
+        .active_work = identity,
+        .transport_owner = published_control.transport_owner,
+        .cancellation = .cancelled,
+        .cancellation_winner = .drain,
+        .cancellation_was_new = true,
+    };
+    try applyDrainWorkReceiptForTestV1(
+        &lifecycle,
+        receipt,
+    );
+    try applyDrainWorkReceiptForTestV1(
+        &lifecycle,
+        receipt,
+    );
+
+    lifecycle.mutex.lock();
+    const routed_exactly = blk: {
+        const first =
+            lifecycle.activeConnectionForLeaseLockedV1(first_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        const second =
+            lifecycle.activeConnectionForLeaseLockedV1(second_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        break :blk first.phase == .request_received and
+            first.work_identity == null and
+            !first.drain_work_cancelled and
+            second.phase == .request_admitted and
+            second.work_identity != null and
+            std.meta.eql(second.work_identity.?, identity) and
+            second.drain_work_cancelled;
+    };
+    lifecycle.mutex.unlock();
+    try std.testing.expect(routed_exactly);
+
+    const snapshot = lifecycle.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        snapshot.drain_cancelled_work_connections,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_admitted,
+        snapshot.last_drain_cancelled_work_phase,
+    );
+
+    try lifecycle.retireActiveConnectionWorkV1(
+        second_lease,
+        identity,
+    );
+    try lifecycle.finishConnectionV1(first_lease, false);
+    try lifecycle.finishConnectionV1(second_lease, false);
+}
+
+test "managed drain rejects stale or missing transport owners before mutation" {
+    var lifecycle =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(33, 2);
+    try lifecycle.markReadyV1();
+    const first_lease =
+        try lifecycle.beginConnectionV1(@intCast(111));
+    const second_lease =
+        try lifecycle.beginConnectionV1(@intCast(112));
+    try lifecycle.markRequestHeadReceivedV1(first_lease);
+    try lifecycle.markRequestReceivedBeforeDeadlineV1(
+        first_lease,
+        null,
+        0,
+    );
+    try lifecycle.markRequestHeadReceivedV1(second_lease);
+    try lifecycle.markRequestReceivedBeforeDeadlineV1(
+        second_lease,
+        null,
+        0,
+    );
+
+    const identity: prepared_http.WorkIdentityV1 = .{
+        .sequence = 19,
+        .handle_sha256 = [_]u8{0x93} ** 32,
+    };
+    const owner = transportOwnerTokenV1(second_lease);
+
+    try std.testing.expectError(
+        LifecycleError.MissingTransportOwner,
+        applyDrainWorkReceiptForTestV1(
+            &lifecycle,
+            .{
+                .admission_was_open = true,
+                .active_work = identity,
+            },
+        ),
+    );
+
+    var wrong_process_generation = owner;
+    wrong_process_generation.process_generation += 1;
+    try std.testing.expectError(
+        LifecycleError.InvalidGeneration,
+        applyDrainWorkReceiptForTestV1(
+            &lifecycle,
+            .{
+                .admission_was_open = true,
+                .active_work = identity,
+                .transport_owner = wrong_process_generation,
+            },
+        ),
+    );
+
+    var wrong_slot_generation = owner;
+    wrong_slot_generation.slot_generation += 1;
+    try std.testing.expectError(
+        LifecycleError.ConnectionSlotGenerationMismatch,
+        applyDrainWorkReceiptForTestV1(
+            &lifecycle,
+            .{
+                .admission_was_open = true,
+                .active_work = identity,
+                .transport_owner = wrong_slot_generation,
+            },
+        ),
+    );
+
+    var wrong_connection_sequence = owner;
+    wrong_connection_sequence.connection_sequence += 1;
+    try std.testing.expectError(
+        LifecycleError.ConnectionSequenceMismatch,
+        applyDrainWorkReceiptForTestV1(
+            &lifecycle,
+            .{
+                .admission_was_open = true,
+                .active_work = identity,
+                .transport_owner = wrong_connection_sequence,
+            },
+        ),
+    );
+
+    try std.testing.expectError(
+        LifecycleError.TransportOwnerMismatch,
+        applyDrainWorkReceiptForTestV1(
+            &lifecycle,
+            .{
+                .admission_was_open = true,
+                .transport_owner = owner,
+            },
+        ),
+    );
+
+    lifecycle.mutex.lock();
+    const remained_unbound = blk: {
+        const first =
+            lifecycle.activeConnectionForLeaseLockedV1(first_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        const second =
+            lifecycle.activeConnectionForLeaseLockedV1(second_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        break :blk first.phase == .request_received and
+            first.work_identity == null and
+            second.phase == .request_received and
+            second.work_identity == null;
+    };
+    lifecycle.mutex.unlock();
+    try std.testing.expect(remained_unbound);
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        lifecycle.snapshotV1().drain_cancelled_work_connections,
+    );
+
+    try lifecycle.finishConnectionV1(first_lease, false);
+    try lifecycle.finishConnectionV1(second_lease, false);
 }
 
 test "managed receive timeout is fenced and drain has one winner" {
@@ -3625,46 +5953,39 @@ test "managed receive timeout is fenced and drain has one winner" {
         .model_id = undefined,
     };
     try lifecycle.markReadyV1();
-    const sequence = try lifecycle.beginConnectionV1(
+    const lease = try lifecycle.beginConnectionV1(
         connection.stream.handle,
     );
+    var wrong_process_generation = lease;
+    wrong_process_generation.process_generation += 1;
     try std.testing.expect(
         !(try lifecycle.signalActiveConnectionForReceiveTimeoutV1(
-            20,
-            sequence,
-            connection.stream.handle,
+            wrong_process_generation,
         )),
     );
+    var wrong_sequence = lease;
+    wrong_sequence.connection_sequence += 1;
     try std.testing.expect(
         !(try lifecycle.signalActiveConnectionForReceiveTimeoutV1(
-            19,
-            sequence + 1,
-            connection.stream.handle,
+            wrong_sequence,
         )),
     );
+    var wrong_handle = lease;
+    wrong_handle.handle = stale_connection.stream.handle;
     try std.testing.expect(
         !(try lifecycle.signalActiveConnectionForReceiveTimeoutV1(
-            19,
-            sequence,
-            stale_connection.stream.handle,
+            wrong_handle,
         )),
     );
-    try lifecycle.markRequestHeadReceivedV1(
-        sequence,
-        connection.stream.handle,
-    );
+    try lifecycle.markRequestHeadReceivedV1(lease);
     try std.testing.expect(
         try lifecycle.signalActiveConnectionForReceiveTimeoutV1(
-            19,
-            sequence,
-            connection.stream.handle,
+            lease,
         ),
     );
     try std.testing.expect(
         !(try lifecycle.signalActiveConnectionForReceiveTimeoutV1(
-            19,
-            sequence,
-            connection.stream.handle,
+            lease,
         )),
     );
     try std.testing.expect(
@@ -3686,40 +6007,26 @@ test "managed receive timeout is fenced and drain has one winner" {
         },
         lifecycle.snapshotV1(),
     );
-    try lifecycle.finishConnectionV1(
-        sequence,
-        connection.stream.handle,
-        false,
-    );
+    try lifecycle.finishConnectionV1(lease, false);
     try lifecycle.markStoppedV1();
 
     var completed = try ManagedLifecycleV1.initV1(21);
     try completed.markReadyV1();
-    const completed_sequence = try completed.beginConnectionV1(
+    const completed_lease = try completed.beginConnectionV1(
         connection.stream.handle,
     );
-    try completed.markRequestHeadReceivedV1(
-        completed_sequence,
-        connection.stream.handle,
-    );
+    try completed.markRequestHeadReceivedV1(completed_lease);
     try completed.markRequestReceivedBeforeDeadlineV1(
-        completed_sequence,
-        connection.stream.handle,
+        completed_lease,
         null,
         0,
     );
     try std.testing.expect(
         !(try completed.signalActiveConnectionForReceiveTimeoutV1(
-            21,
-            completed_sequence,
-            connection.stream.handle,
+            completed_lease,
         )),
     );
-    try completed.finishConnectionV1(
-        completed_sequence,
-        connection.stream.handle,
-        true,
-    );
+    try completed.finishConnectionV1(completed_lease, true);
     const completed_snapshot = completed.snapshotV1();
     try std.testing.expectEqual(
         @as(u64, 1),
@@ -3737,13 +6044,10 @@ test "managed receive timeout is fenced and drain has one winner" {
         .model_id = undefined,
     };
     try drain_first.markReadyV1();
-    const drain_first_sequence = try drain_first.beginConnectionV1(
+    const drain_first_lease = try drain_first.beginConnectionV1(
         stale_connection.stream.handle,
     );
-    try drain_first.markRequestHeadReceivedV1(
-        drain_first_sequence,
-        stale_connection.stream.handle,
-    );
+    try drain_first.markRequestHeadReceivedV1(drain_first_lease);
     try std.testing.expect(
         try beginManagedDrainV1(
             &drain_first,
@@ -3752,9 +6056,7 @@ test "managed receive timeout is fenced and drain has one winner" {
     );
     try std.testing.expect(
         !(try drain_first.signalActiveConnectionForReceiveTimeoutV1(
-            22,
-            drain_first_sequence,
-            stale_connection.stream.handle,
+            drain_first_lease,
         )),
     );
     const drain_first_snapshot = drain_first.snapshotV1();
@@ -3770,11 +6072,7 @@ test "managed receive timeout is fenced and drain has one winner" {
         ManagedConnectionPhaseV1.none,
         drain_first_snapshot.last_receive_timeout_signaled_phase,
     );
-    try drain_first.finishConnectionV1(
-        drain_first_sequence,
-        stale_connection.stream.handle,
-        false,
-    );
+    try drain_first.finishConnectionV1(drain_first_lease, false);
     try drain_first.markStoppedV1();
 }
 
@@ -3797,14 +6095,13 @@ test "managed receive deadline is absolute across the HTTP head" {
     std.Thread.sleep(2 * minimum_receive_timeout_ns);
     var head_lifecycle = try ManagedLifecycleV1.initV1(23);
     try head_lifecycle.markReadyV1();
-    const head_sequence = try head_lifecycle.beginConnectionV1(
+    const head_lease = try head_lifecycle.beginConnectionV1(
         head_connection.stream.handle,
     );
     try std.testing.expectError(
         LifecycleError.ConnectionInterrupted,
         head_lifecycle.markRequestHeadReceivedBeforeDeadlineV1(
-            head_sequence,
-            head_connection.stream.handle,
+            head_lease,
             &head_timer,
             minimum_receive_timeout_ns,
         ),
@@ -3818,11 +6115,7 @@ test "managed receive deadline is absolute across the HTTP head" {
         ManagedConnectionPhaseV1.receiving_head,
         head_snapshot.last_receive_timeout_signaled_phase,
     );
-    try head_lifecycle.finishConnectionV1(
-        head_sequence,
-        head_connection.stream.handle,
-        false,
-    );
+    try head_lifecycle.finishConnectionV1(head_lease, false);
 
     const body_peer = try std.net.tcpConnectToAddress(
         listener.listen_address,
@@ -3837,13 +6130,12 @@ test "managed receive deadline is absolute across the HTTP head" {
     var body_timer = try std.time.Timer.start();
     var body_lifecycle = try ManagedLifecycleV1.initV1(24);
     try body_lifecycle.markReadyV1();
-    const body_sequence = try body_lifecycle.beginConnectionV1(
+    const body_lease = try body_lifecycle.beginConnectionV1(
         body_connection.stream.handle,
     );
     std.Thread.sleep(before_head_ns);
     try body_lifecycle.markRequestHeadReceivedBeforeDeadlineV1(
-        body_sequence,
-        body_connection.stream.handle,
+        body_lease,
         &body_timer,
         body_timeout_ns,
     );
@@ -3851,8 +6143,7 @@ test "managed receive deadline is absolute across the HTTP head" {
     try std.testing.expectError(
         LifecycleError.ConnectionInterrupted,
         body_lifecycle.markRequestReceivedBeforeDeadlineV1(
-            body_sequence,
-            body_connection.stream.handle,
+            body_lease,
             &body_timer,
             body_timeout_ns,
         ),
@@ -3866,11 +6157,7 @@ test "managed receive deadline is absolute across the HTTP head" {
         ManagedConnectionPhaseV1.request_head_received,
         body_snapshot.last_receive_timeout_signaled_phase,
     );
-    try body_lifecycle.finishConnectionV1(
-        body_sequence,
-        body_connection.stream.handle,
-        false,
-    );
+    try body_lifecycle.finishConnectionV1(body_lease, false);
 
     const retired_peer = try std.net.tcpConnectToAddress(
         listener.listen_address,
@@ -3882,14 +6169,12 @@ test "managed receive deadline is absolute across the HTTP head" {
     var retired_timer = try std.time.Timer.start();
     var retired_lifecycle = try ManagedLifecycleV1.initV1(25);
     try retired_lifecycle.markReadyV1();
-    const retired_sequence = try retired_lifecycle.beginConnectionV1(
+    const retired_lease = try retired_lifecycle.beginConnectionV1(
         retired_connection.stream.handle,
     );
     try std.testing.expect(
         try retired_lifecycle.retireActiveConnectionReceiveV1(
-            25,
-            retired_sequence,
-            retired_connection.stream.handle,
+            retired_lease,
             &retired_timer,
             maximum_receive_timeout_ns,
         ),
@@ -3907,9 +6192,7 @@ test "managed receive deadline is absolute across the HTTP head" {
     );
     try std.testing.expect(
         !(try retired_lifecycle.signalActiveConnectionForReceiveTimeoutV1(
-            25,
-            retired_sequence,
-            retired_connection.stream.handle,
+            retired_lease,
         )),
     );
     try std.testing.expectEqual(
@@ -3920,11 +6203,7 @@ test "managed receive deadline is absolute across the HTTP head" {
         @as(u64, 0),
         retired_lifecycle.snapshotV1().drain_signaled_connections,
     );
-    try retired_lifecycle.finishConnectionV1(
-        retired_sequence,
-        retired_connection.stream.handle,
-        false,
-    );
+    try retired_lifecycle.finishConnectionV1(retired_lease, false);
     try retired_lifecycle.markStoppedV1();
 
     const expired_peer = try std.net.tcpConnectToAddress(
@@ -3938,41 +6217,623 @@ test "managed receive deadline is absolute across the HTTP head" {
     std.Thread.sleep(2 * minimum_receive_timeout_ns);
     var expired_lifecycle = try ManagedLifecycleV1.initV1(26);
     try expired_lifecycle.markReadyV1();
-    const expired_sequence = try expired_lifecycle.beginConnectionV1(
+    const expired_lease = try expired_lifecycle.beginConnectionV1(
         expired_connection.stream.handle,
     );
     try std.testing.expect(
         !(try expired_lifecycle.retireActiveConnectionReceiveV1(
-            26,
-            expired_sequence,
-            expired_connection.stream.handle,
+            expired_lease,
             &expired_timer,
             minimum_receive_timeout_ns,
         )),
     );
     try std.testing.expect(
         !(try expired_lifecycle.retireActiveConnectionReceiveV1(
-            26,
-            expired_sequence,
-            expired_connection.stream.handle,
+            expired_lease,
             &expired_timer,
             minimum_receive_timeout_ns,
         )),
     );
     try std.testing.expect(
         !(try expired_lifecycle.signalActiveConnectionForReceiveTimeoutV1(
-            26,
-            expired_sequence,
-            expired_connection.stream.handle,
+            expired_lease,
         )),
     );
     try std.testing.expectEqual(
         @as(u64, 1),
         expired_lifecycle.snapshotV1().receive_timeout_signaled_connections,
     );
-    try expired_lifecycle.finishConnectionV1(
-        expired_sequence,
-        expired_connection.stream.handle,
+    try expired_lifecycle.finishConnectionV1(expired_lease, false);
+}
+
+test "managed lifecycle tracks two live connection slots independently" {
+    try std.testing.expectEqual(
+        @as(u8, 8),
+        @intFromEnum(ManagedConnectionPhaseV1.queued),
+    );
+
+    var lifecycle =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(51, 2);
+    try lifecycle.markReadyV1();
+    const first_lease =
+        try lifecycle.beginConnectionV1(@intCast(201));
+    const second_lease =
+        try lifecycle.beginConnectionV1(@intCast(202));
+
+    try std.testing.expect(
+        first_lease.slot_index != second_lease.slot_index,
+    );
+    try lifecycle.markRequestHeadReceivedV1(first_lease);
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        second_lease,
+        .queued,
         false,
+    );
+
+    const live_snapshot = lifecycle.snapshotV1();
+    try std.testing.expectEqual(@as(u8, 2), live_snapshot.connection_capacity);
+    try std.testing.expectEqual(@as(u64, 2), live_snapshot.accepted_connections);
+    try std.testing.expectEqual(@as(u8, 2), live_snapshot.active_connections);
+    try std.testing.expectEqual(@as(u8, 1), live_snapshot.queued_connections);
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.none,
+        live_snapshot.active_connection_phase,
+    );
+
+    lifecycle.mutex.lock();
+    const first_phase = blk: {
+        const first =
+            lifecycle.activeConnectionForLeaseLockedV1(first_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        break :blk first.phase;
+    };
+    const second_phase = blk: {
+        const second =
+            lifecycle.activeConnectionForLeaseLockedV1(second_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        break :blk second.phase;
+    };
+    lifecycle.mutex.unlock();
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_head_received,
+        first_phase,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.queued,
+        second_phase,
+    );
+
+    try lifecycle.finishConnectionV1(first_lease, true);
+    try lifecycle.finishConnectionV1(second_lease, false);
+    const retired_snapshot = lifecycle.snapshotV1();
+    try std.testing.expectEqual(@as(u8, 0), retired_snapshot.active_connections);
+    try std.testing.expectEqual(@as(u64, 1), retired_snapshot.completed_connections);
+    try std.testing.expectEqual(@as(u64, 1), retired_snapshot.failed_connections);
+}
+
+test "managed lifecycle enforces configured fixed slot capacity" {
+    try std.testing.expectError(
+        LifecycleError.InvalidConnectionCapacity,
+        ManagedLifecycleV1.initWithConnectionCapacityV1(52, 0),
+    );
+    try std.testing.expectError(
+        LifecycleError.InvalidConnectionCapacity,
+        ManagedLifecycleV1.initWithConnectionCapacityV1(
+            52,
+            maximum_managed_connection_slots_v1 + 1,
+        ),
+    );
+    var maximum =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(
+            52,
+            maximum_managed_connection_slots_v1,
+        );
+    try std.testing.expectEqual(
+        maximum_managed_connection_slots_v1,
+        maximum.snapshotV1().connection_capacity,
+    );
+
+    var lifecycle =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(53, 2);
+    try lifecycle.markReadyV1();
+    const first_lease =
+        try lifecycle.beginConnectionV1(@intCast(211));
+    const second_lease =
+        try lifecycle.beginConnectionV1(@intCast(212));
+    try std.testing.expectError(
+        LifecycleError.ConnectionAlreadyActive,
+        lifecycle.beginConnectionV1(@intCast(213)),
+    );
+
+    try lifecycle.finishConnectionV1(first_lease, false);
+    const replacement_lease =
+        try lifecycle.beginConnectionV1(@intCast(213));
+    try std.testing.expectEqual(
+        first_lease.slot_index,
+        replacement_lease.slot_index,
+    );
+    try std.testing.expect(
+        replacement_lease.slot_generation >
+            first_lease.slot_generation,
+    );
+    try lifecycle.finishConnectionV1(second_lease, false);
+    try lifecycle.finishConnectionV1(replacement_lease, false);
+}
+
+test "managed lifecycle rejects a stale lease after slot reuse" {
+    const reused_handle: std.net.Stream.Handle = @intCast(221);
+    var lifecycle =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(54, 1);
+    try lifecycle.markReadyV1();
+    const stale_lease =
+        try lifecycle.beginConnectionV1(reused_handle);
+    try lifecycle.finishConnectionV1(stale_lease, false);
+
+    const current_lease =
+        try lifecycle.beginConnectionV1(reused_handle);
+    try std.testing.expectEqual(
+        stale_lease.slot_index,
+        current_lease.slot_index,
+    );
+    try std.testing.expectError(
+        LifecycleError.ConnectionSlotGenerationMismatch,
+        lifecycle.retireFullRequestTimeoutV1(stale_lease),
+    );
+    try std.testing.expectError(
+        LifecycleError.ConnectionSlotGenerationMismatch,
+        lifecycle.finishConnectionV1(stale_lease, false),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        lifecycle.snapshotV1().active_connections,
+    );
+    try lifecycle.finishConnectionV1(current_lease, true);
+}
+
+test "managed drain signals every occupied connection slot" {
+    const bind_address =
+        try std.net.Address.parseIp("127.0.0.1", 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+
+    const first_peer = try std.net.tcpConnectToAddress(
+        listener.listen_address,
+    );
+    defer first_peer.close();
+    const first_connection = try listener.accept();
+    defer first_connection.stream.close();
+
+    const second_peer = try std.net.tcpConnectToAddress(
+        listener.listen_address,
+    );
+    defer second_peer.close();
+    const second_connection = try listener.accept();
+    defer second_connection.stream.close();
+
+    var lifecycle =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(55, 2);
+    var runtime: prepared_http.RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+    };
+    try lifecycle.markReadyV1();
+    const first_lease = try lifecycle.beginConnectionV1(
+        first_connection.stream.handle,
+    );
+    const second_lease = try lifecycle.beginConnectionV1(
+        second_connection.stream.handle,
+    );
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        second_lease,
+        .queued,
+        false,
+    );
+
+    try std.testing.expect(
+        try beginManagedDrainV1(&lifecycle, &runtime),
+    );
+    const drain_snapshot = lifecycle.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        drain_snapshot.drain_signaled_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        drain_snapshot.queued_connections,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.queued,
+        drain_snapshot.last_drain_signaled_phase,
+    );
+
+    lifecycle.mutex.lock();
+    const both_signaled = blk: {
+        const first =
+            lifecycle.activeConnectionForLeaseLockedV1(first_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        const second =
+            lifecycle.activeConnectionForLeaseLockedV1(second_lease) catch |err| {
+                lifecycle.mutex.unlock();
+                return err;
+            };
+        break :blk first.drain_signaled and
+            first.receive_retired and
+            second.drain_signaled and
+            second.receive_retired;
+    };
+    lifecycle.mutex.unlock();
+    try std.testing.expect(both_signaled);
+
+    try lifecycle.finishConnectionV1(first_lease, false);
+    try lifecycle.finishConnectionV1(second_lease, false);
+    try lifecycle.markStoppedV1();
+}
+
+test "concurrent accept wait is bounded and restores caller listener mode" {
+    const bind_address =
+        try std.net.Address.parseIp("127.0.0.1", 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectError(
+            Error.ConcurrentListenerModeUnsupported,
+            ManagedConcurrentListenerModeV1.enable(
+                listener.stream.handle,
+            ),
+        );
+        return;
+    }
+    const original_flags = if (builtin.os.tag == .windows)
+        null
+    else
+        try std.posix.fcntl(
+            listener.stream.handle,
+            std.posix.F.GETFL,
+            0,
+        );
+    const listener_mode =
+        try ManagedConcurrentListenerModeV1.enable(
+            listener.stream.handle,
+        );
+    var mode_restored = false;
+    defer if (!mode_restored)
+        listener_mode.restore(
+            listener.stream.handle,
+        ) catch unreachable;
+
+    var lifecycle = try ManagedConcurrentLifecycleV1.initV1(
+        56,
+        .{
+            .worker_count = 1,
+            .pending_connection_capacity = 1,
+        },
+    );
+    try lifecycle.markReadyV1();
+    var wait_entered: std.Thread.ResetEvent = .{};
+    var context: ManagedAcceptFallbackTestContextV1 = .{
+        .lifecycle = &lifecycle,
+        .wait_entered = &wait_entered,
+    };
+    const state_thread = try std.Thread.spawn(
+        .{},
+        ManagedAcceptFallbackTestContextV1.failAfterWaitEntered,
+        .{&context},
+    );
+    const timer = try std.time.Timer.start();
+    try std.testing.expect(
+        !(try waitForManagedConcurrentAcceptWithBarrierV1(
+            &listener,
+            &lifecycle,
+            &wait_entered,
+        )),
+    );
+    state_thread.join();
+    try std.testing.expect(
+        timer.read() < 5 * std.time.ns_per_s,
+    );
+    try listener_mode.restore(
+        listener.stream.handle,
+    );
+    mode_restored = true;
+    if (original_flags) |expected_flags| {
+        try std.testing.expectEqual(
+            expected_flags,
+            try std.posix.fcntl(
+                listener.stream.handle,
+                std.posix.F.GETFL,
+                0,
+            ),
+        );
+    }
+
+    lifecycle.managed.mutex.lock();
+    lifecycle.managed.state = .ready;
+    lifecycle.managed.mutex.unlock();
+    const peer = try std.net.tcpConnectToAddress(
+        listener.listen_address,
+    );
+    defer peer.close();
+    const connection = try listener.accept();
+    connection.stream.close();
+}
+
+test "concurrent drain receipt is exact and stale owners are rejected" {
+    var lifecycle = try ManagedConcurrentLifecycleV1.initV1(
+        57,
+        .{
+            .worker_count = 1,
+            .pending_connection_capacity = 1,
+        },
+    );
+    try lifecycle.markReadyV1();
+    const lease = try lifecycle.managed.beginConnectionV1(
+        @intCast(231),
+    );
+    lifecycle.queue_enqueued_connections = 1;
+    lifecycle.queue_dispatched_connections = 1;
+    lifecycle.running_high_watermark = 1;
+    try lifecycle.managed.markRequestHeadReceivedV1(lease);
+    try lifecycle.managed.markRequestReceivedBeforeDeadlineV1(
+        lease,
+        null,
+        0,
+    );
+    const identity: prepared_http.WorkIdentityV1 = .{
+        .sequence = 31,
+        .handle_sha256 = [_]u8{0xA1} ** 32,
+    };
+    _ = try lifecycle.managed.markRequestAdmittedV1(
+        lease,
+        identity,
+    );
+    const receipt: prepared_http.DrainReceiptV1 = .{
+        .admission_was_open = true,
+        .active_work = identity,
+        .transport_owner = transportOwnerTokenV1(lease),
+        .cancellation = .cancelled,
+        .cancellation_winner = .drain,
+        .cancellation_was_new = true,
+    };
+
+    lifecycle.managed.mutex.lock();
+    try applyConcurrentDrainWorkReceiptLockedV1(
+        &lifecycle,
+        receipt,
+    );
+    lifecycle.managed.mutex.unlock();
+    const applied = lifecycle.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        applied.managed.drain_cancelled_work_connections,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_admitted,
+        applied.managed.last_drain_cancelled_work_phase,
+    );
+
+    try lifecycle.managed.retireActiveConnectionWorkV1(
+        lease,
+        identity,
+    );
+    try lifecycle.managed.finishConnectionV1(lease, false);
+    lifecycle.managed.mutex.lock();
+    const stale_result =
+        applyConcurrentDrainWorkReceiptLockedV1(
+            &lifecycle,
+            receipt,
+        );
+    lifecycle.managed.mutex.unlock();
+    try std.testing.expectError(
+        LifecycleError.NoActiveConnection,
+        stale_result,
+    );
+
+    const replacement_lease =
+        try lifecycle.managed.beginConnectionV1(
+            @intCast(231),
+        );
+    lifecycle.queue_enqueued_connections = 2;
+    lifecycle.queue_dispatched_connections = 2;
+    lifecycle.managed.mutex.lock();
+    const reused_result =
+        applyConcurrentDrainWorkReceiptLockedV1(
+            &lifecycle,
+            receipt,
+        );
+    lifecycle.managed.mutex.unlock();
+    try std.testing.expectError(
+        LifecycleError.ConnectionSlotGenerationMismatch,
+        reused_result,
+    );
+    try lifecycle.managed.finishConnectionV1(
+        replacement_lease,
+        false,
+    );
+}
+
+test "concurrent fatal convergence has distinct running failure evidence" {
+    const bind_address =
+        try std.net.Address.parseIp("127.0.0.1", 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+    const peer = try std.net.tcpConnectToAddress(
+        listener.listen_address,
+    );
+    defer peer.close();
+    const connection = try listener.accept();
+    defer connection.stream.close();
+
+    var lifecycle = try ManagedConcurrentLifecycleV1.initV1(
+        58,
+        .{
+            .worker_count = 1,
+            .pending_connection_capacity = 1,
+        },
+    );
+    try lifecycle.markReadyV1();
+    const lease = try lifecycle.managed.beginConnectionV1(
+        connection.stream.handle,
+    );
+    lifecycle.queue_enqueued_connections = 1;
+    lifecycle.queue_dispatched_connections = 1;
+    lifecycle.running_high_watermark = 1;
+    try lifecycle.managed.markRequestHeadReceivedV1(lease);
+    try lifecycle.managed.markRequestReceivedBeforeDeadlineV1(
+        lease,
+        null,
+        0,
+    );
+    const identity: prepared_http.WorkIdentityV1 = .{
+        .sequence = 32,
+        .handle_sha256 = [_]u8{0xA2} ** 32,
+    };
+    _ = try lifecycle.managed.markRequestAdmittedV1(
+        lease,
+        identity,
+    );
+    try lifecycle.managed.recordWorkCancellationV1(
+        lease,
+        identity,
+        .{
+            .requested_cause = .transport_failure,
+            .winner = .transport_failure,
+            .outcome = .cancelled,
+            .cancellation_was_new = true,
+        },
+    );
+    try lifecycle.managed.retireActiveConnectionWorkV1(
+        lease,
+        identity,
+    );
+    try lifecycle.managed.markResponseReadyV1(lease);
+
+    var first_batch: ManagedConcurrentDetachedBatchV1 = .{};
+    lifecycle.managed.mutex.lock();
+    convergeManagedConcurrentFailureLockedV1(
+        &lifecycle,
+        null,
+        error.InjectedConcurrentFailure,
+        null,
+        &first_batch,
+    );
+    lifecycle.managed.mutex.unlock();
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        first_batch.event_count,
+    );
+    const first_event = first_batch.events[0].?.event;
+    try std.testing.expectEqual(
+        ManagedConcurrentEventKindV1.running_failure,
+        first_event.kind,
+    );
+    try std.testing.expectEqualDeep(
+        lease,
+        first_event.lease.?,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        first_batch.connection_count,
+    );
+    first_batch.release();
+
+    const failed = lifecycle.snapshotV1();
+    try std.testing.expectEqual(
+        ManagedStateV1.failed,
+        failed.managed.state,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        failed.managed.failure_cancelled_work_connections,
+    );
+    try std.testing.expectEqual(
+        ManagedConnectionPhaseV1.request_admitted,
+        failed.managed.last_failure_cancelled_work_phase,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        failed.managed.failure_cancelled_response_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        failed.managed.drain_signaled_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        failed.managed.drain_cancelled_work_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        failed.managed.drain_cancelled_response_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        failed.managed.drain_requested_response_write_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        failed.managed.drain_cancelled_response_write_connections,
+    );
+    try std.testing.expect(!failed.cleanup_failed);
+
+    var repeated_batch: ManagedConcurrentDetachedBatchV1 = .{};
+    lifecycle.managed.mutex.lock();
+    convergeManagedConcurrentFailureLockedV1(
+        &lifecycle,
+        null,
+        error.SecondInjectedConcurrentFailure,
+        null,
+        &repeated_batch,
+    );
+    lifecycle.managed.mutex.unlock();
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        repeated_batch.event_count,
+    );
+    repeated_batch.release();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        lifecycle.snapshotV1()
+            .managed.failure_cancelled_response_connections,
+    );
+
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteOutcomeV1.cancelled_before_write,
+        try lifecycle.managed.retireResponseV1(
+            lease,
+            .cancelled_before_write,
+            null,
+        ),
+    );
+    try lifecycle.managed.finishConnectionV1(
+        lease,
+        false,
+    );
+    const retired = lifecycle.snapshotV1();
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        retired.managed.accepted_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        retired.managed.failed_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        retired.managed.active_connections,
     );
 }

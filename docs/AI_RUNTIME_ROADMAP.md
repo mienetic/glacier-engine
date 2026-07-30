@@ -1984,9 +1984,12 @@ graceful drain, restart, durable idempotency, process-death recovery, native
 multi-OS serving, GPU execution, production-model quality, or performance
 evidence.
 
-#### R1k-b8 — Managed unary server process lifecycle, Phases A-D through Phase E2b
+#### R1k-b8 — Managed unary lifecycle through Phase F1 concurrent transport
 
-Status: **integrated experimental host-process lifecycle slice**.
+Status: **Phases A-D through Phase E2b are integrated experimental
+host-process lifecycle evidence; the Phase F1 concurrent-transport production
+path and deterministic native-loopback correctness are retained, while its
+real-process campaign remains pending**.
 
 `ManagedLifecycleV1` adds one nonzero process generation and exact accepted,
 completed, failed, and active connection counts around the unchanged serial
@@ -2118,6 +2121,100 @@ exact-replay evidence with retry policy `never`; a completion retained before
 transport suppression remains available to an explicit exact process-local
 retry. The retained client still performs no automatic retry.
 
+Phase F1 adds the production-path concurrent transport entry points
+`serveManagedConcurrentListenerV1`,
+`serveManagedConcurrentListenerWithObserverV1`, and
+`requestManagedConcurrentDrainAndWakeV1` around
+`ManagedConcurrentLifecycleV1`. `ManagedConcurrentConfigV1` admits a fixed
+`1..16` workers and a fixed `1..64` FIFO of already accepted connections
+(defaults `2/8`), with worker plus pending capacity bounded to 80
+generation-fenced connection slots. One lifecycle mutex is the central
+registry and linearization point for queue membership, connection phase,
+ownership, counters, and snapshots. One shared watchdog owns elapsed-deadline
+decisions for every queued and running slot.
+
+The acceptor does not keep accepting after the user-space FIFO reaches its
+declared capacity. It publishes one pause transition and waits for queue
+capacity, leaving later peers in the passive kernel listen backlog; dispatch
+or queued retirement publishes the matching resume. The transport does not
+invent a pre-parse HTTP 429 or 503. On POSIX, the serving call temporarily makes
+the listener nonblocking, polls readiness for at most 100 milliseconds per
+quantum, and revalidates lifecycle state before `accept`. Every accepted socket
+is returned to blocking mode before FIFO or worker handoff. Managed receive
+revalidates lifecycle on every readiness-wait iteration, with each quantum
+capped at 100 milliseconds even when the configured timeout is zero, so drain
+and fatal convergence do not depend on cross-thread `shutdown` succeeding. An
+unexpected shutdown error advances no successful signal counter or event for
+that connection and leaves it unclaimed, allowing failure convergence to retry
+and take over. Existing service-capacity or Scheduler 429 responses remain
+post-parse application decisions. FIFO means only that already accepted queue
+entries are handed to workers in queue order. It does not constrain completion
+order, establish scheduler fairness, or make model execution parallel.
+
+At accept, the connection receives one generation/sequence/slot-generation/
+native-handle-fenced lease and one monotonic timer. Queue wait consumes both
+the receive and full-request budgets. The shared watchdog may retire a queued
+connection for the uniquely winning receive or full-request timeout without
+creating a service record or an HTTP response; after dispatch the same timer
+continues through the existing receive and response phases. Ownership moves
+once from acceptor to queue to exactly one worker. A queued timeout, drain, or
+failure detaches that still-queued socket for one close, while a dispatched
+worker is its sole reader, response writer, and closer.
+
+The request mutex still serializes unary admission, model execution, and exact
+active-work retirement. The terminal response body survives that gate, so
+response-control callbacks and socket writes occur only after the mutex is
+released. This removes a slow response write from the serialized model gate;
+it does not provide simultaneous model execution.
+
+`ManagedConcurrentSnapshotV1` exposes queue/running high-water marks,
+enqueued/dispatched counts, pause/resume counts, queued drain/failure/receive-
+timeout/full-request-timeout counts, and every live phase count. Its
+conservation conditions are:
+
+- active connections = queued + running;
+- the sum of phase counts = active connections;
+- accepted = completed + failed + active; and
+- enqueued = dispatched + each queued retirement cause + current queue length.
+
+Concurrent drain holds the lifecycle mutex across closing unary admission,
+capturing the runtime receipt, and applying that receipt only through its exact
+fenced transport owner. It then detaches the entire queued set, signals every
+running socket. Fatal convergence instead cancels exact runtime work as
+`transport_failure`, emits `running_failure` for each newly claimed running
+lease, and retains failure-specific
+signal/work/response/write-request/effective-write-cancellation counters
+without relabeling them as drain. The serving call joins every fixed worker
+and the shared watchdog. On POSIX, it restores the exact listener flags
+captured before serving, then permits `stopped` only with an empty FIFO and zero
+live connection slots. Existing service close still owns the separate
+Scheduler/Bank zero-ownership check.
+
+The production path continues to pass its deterministic native-loopback gate:
+`zig build unary-http-test -Dmetal=false -Doptimize=ReleaseSafe -j2`.
+Scenario A keeps one worker responsive while its sibling owns a partial HTTP
+head. Scenario B proves one-worker/one-pending FIFO dispatch, passive
+pause/resume, a third peer held outside the accepted FIFO, and healthy
+follow-up service. Scenario C expires the exact queued lease under its
+accept-origin full-request deadline without an HTTP response, then serves a
+successor. Scenario D makes repeated concurrent drain converge over one active
+receive and one queued socket. All four check snapshot/event conservation,
+joined shutdown, and final zero service/Bank ownership.
+
+This retains Phase F1 implementation and same-process native-loopback
+correctness. It is not real-process overload evidence, native load or
+performance evidence, GPU serving evidence, concurrent model execution, or
+native Windows/FreeBSD behavior. Phase F1 concurrent serving is explicitly
+unsupported on Windows today: the entrypoint returns
+`ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
+cannot prove and restore the caller's original `FIONBIO` mode. Native Windows
+serving therefore remains pending and unproven. Cross-compilation cannot
+establish those runtime properties.
+
+The retained process fixture below still stops at Phase E2b. It does not
+exercise the Phase F1 worker/FIFO/watchdog path and must not be cited as its
+real-process or load evidence.
+
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
 The child accepts only an exact out-of-band `drain\n` command followed by EOF,
@@ -2216,17 +2313,21 @@ cancellation at `response_ready`, before its first write. Phase E2a bounds
 nonblocking sends and adds progress/`WouldBlock` cancellation after writing
 starts. Phase E2b bounds full-request elapsed time but does not detect orderly
 FIN abandonment, preempt an in-flight model drive or kernel call, prove peer
-receipt, or turn the logical Scheduler deadline into wall time. This slice
-adds no
-durable or process-death recovery, concurrent listener queue, process-wide
-overload policy, streaming, early EOS, authentication, authorization, TLS,
-quota, GPU execution, load evidence, or performance claim. Retained-target
-compile closure is not native serving proof on Windows or FreeBSD; native
-reset, response-write, and deadline behavior on those systems remains
-unproven. The next serving order is a bounded
-queue/backpressure/concurrent-transport campaign, then separate load evidence;
-orderly-FIN abandonment remains a separate open boundary. It does not meet the
-full serving promotion gate.
+receipt, or turn the logical Scheduler deadline into wall time. The retained
+A-D through E2b process slice adds no durable or process-death recovery,
+streaming, early EOS, authentication, authorization, TLS, quota, GPU
+execution, load evidence, or performance claim, and it does not exercise the
+Phase F1 concurrent entry points. The Phase F1 implementation supplies the
+bounded queue and passive overload policy, and the separate HTTP root now
+retains deterministic native-loopback correctness; real-process promotion
+evidence remains open. Retained-target compile closure is not native serving
+proof on Windows or FreeBSD; native reset,
+response-write, deadline, queue, watchdog, and drain behavior on those systems
+remains unproven. The next serving order is Phase F1 real-process validation,
+followed by separate native-load evidence using HTTP first-byte and
+terminal-response latency for this non-streaming unary profile.
+Orderly-FIN abandonment remains a separate open boundary. The current evidence
+does not meet the full serving promotion gate.
 
 #### Public durable-runtime composition foundation
 
@@ -2311,7 +2412,11 @@ post-deadline HTTP response, same-child follow-up liveness, zero-ownership
 close, and same-package fresh restart. They do not prove orderly-FIN
 abandonment, peer delivery acknowledgement, kernel preemption, durable request
 state, crash recovery, a bounded concurrent queue, load behavior, or the full
-serving lifecycle. Production artifacts,
+serving lifecycle. The separate Phase F1 runtime implementation now supplies
+that bounded transport queue, fixed worker pool, shared watchdog, passive
+accept backpressure, joined drain, and retained deterministic native-loopback
+correctness, but still adds no Phase F1 real-process, concurrent model
+execution, or load result. Production artifacts,
 remote delivery,
 broader tokenizers/models, GPU package execution, and native multi-OS runtime
 requirements remain open. The combined

@@ -1,10 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const engine = @import("engine");
 
 const testing = std.testing;
 const unary = engine.prepared_text_unary_service;
 const protocol = engine.prepared_text_unary_http_v1;
 const server = engine.prepared_text_unary_http_server;
+const server_api = engine.server_api;
 const client_api = engine.prepared_text_unary_http_client;
 
 const fixture_license =
@@ -340,6 +342,656 @@ const LoopbackServer = struct {
     }
 };
 
+const concurrent_test_watchdog_ns: u64 =
+    10 * std.time.ns_per_s;
+const concurrent_test_event_capacity: usize = 128;
+const raw_models_request =
+    "GET /v1/models HTTP/1.1\r\n" ++
+    "Host: 127.0.0.1\r\n" ++
+    "Connection: close\r\n\r\n";
+
+fn waitForConcurrentTestEvent(
+    event: *std.Thread.ResetEvent,
+) !void {
+    event.timedWait(concurrent_test_watchdog_ns) catch
+        return error.ConcurrentTestTimedOut;
+}
+
+const ConcurrentEventLog = struct {
+    mutex: std.Thread.Mutex = .{},
+    changed: std.Thread.Condition = .{},
+    events: [concurrent_test_event_capacity]server_api.ManagedConcurrentEventV1 = undefined,
+    event_count: usize = 0,
+    overflowed: bool = false,
+    block_first_dispatch: bool = false,
+    dispatch_count: usize = 0,
+    first_dispatch_reached: std.Thread.ResetEvent = .{},
+    first_dispatch_release: std.Thread.ResetEvent = .{},
+
+    fn observer(
+        self: *ConcurrentEventLog,
+    ) server_api.ManagedConcurrentObserverV1 {
+        return .{
+            .context = self,
+            .event_fn = eventOpaque,
+        };
+    }
+
+    fn eventOpaque(
+        context: *anyopaque,
+        event: server_api.ManagedConcurrentEventV1,
+    ) void {
+        const self: *ConcurrentEventLog =
+            @ptrCast(@alignCast(context));
+        var should_block = false;
+        self.mutex.lock();
+        if (self.event_count == self.events.len) {
+            self.overflowed = true;
+        } else {
+            self.events[self.event_count] = event;
+            self.event_count += 1;
+        }
+        if (event.kind == .dispatched) {
+            self.dispatch_count += 1;
+            should_block =
+                self.block_first_dispatch and
+                self.dispatch_count == 1;
+        }
+        self.changed.broadcast();
+        self.mutex.unlock();
+
+        if (should_block) {
+            self.first_dispatch_reached.set();
+            self.first_dispatch_release.wait();
+        }
+    }
+
+    fn waitForKind(
+        self: *ConcurrentEventLog,
+        kind: server_api.ManagedConcurrentEventKindV1,
+        occurrence: usize,
+    ) !server_api.ManagedConcurrentEventV1 {
+        if (occurrence == 0)
+            return error.InvalidConcurrentEventOccurrence;
+        var timer = try std.time.Timer.start();
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        while (true) {
+            if (self.overflowed)
+                return error.ConcurrentEventLogOverflow;
+            var seen: usize = 0;
+            for (self.events[0..self.event_count]) |event| {
+                if (event.kind != kind) continue;
+                seen += 1;
+                if (seen == occurrence) return event;
+            }
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= concurrent_test_watchdog_ns)
+                return error.ConcurrentEventTimedOut;
+            self.changed.timedWait(
+                &self.mutex,
+                concurrent_test_watchdog_ns - elapsed_ns,
+            ) catch return error.ConcurrentEventTimedOut;
+        }
+    }
+
+    fn waitForKindAfterOrdinal(
+        self: *ConcurrentEventLog,
+        kind: server_api.ManagedConcurrentEventKindV1,
+        after_ordinal: u64,
+    ) !server_api.ManagedConcurrentEventV1 {
+        var timer = try std.time.Timer.start();
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        while (true) {
+            if (self.overflowed)
+                return error.ConcurrentEventLogOverflow;
+            var selected: ?server_api.ManagedConcurrentEventV1 = null;
+            for (self.events[0..self.event_count]) |event| {
+                if (event.kind != kind or
+                    event.ordinal <= after_ordinal)
+                {
+                    continue;
+                }
+                if (selected == null or
+                    event.ordinal < selected.?.ordinal)
+                {
+                    selected = event;
+                }
+            }
+            if (selected) |event| return event;
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= concurrent_test_watchdog_ns)
+                return error.ConcurrentEventTimedOut;
+            self.changed.timedWait(
+                &self.mutex,
+                concurrent_test_watchdog_ns - elapsed_ns,
+            ) catch return error.ConcurrentEventTimedOut;
+        }
+    }
+
+    fn countKind(
+        self: *ConcurrentEventLog,
+        kind: server_api.ManagedConcurrentEventKindV1,
+    ) !usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.ConcurrentEventLogOverflow;
+        var count: usize = 0;
+        for (self.events[0..self.event_count]) |event| {
+            if (event.kind == kind) count += 1;
+        }
+        return count;
+    }
+
+    fn copyKind(
+        self: *ConcurrentEventLog,
+        kind: server_api.ManagedConcurrentEventKindV1,
+        destination: []server_api.ManagedConcurrentEventV1,
+    ) !usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.ConcurrentEventLogOverflow;
+        var copied: usize = 0;
+        for (self.events[0..self.event_count]) |event| {
+            if (event.kind != kind) continue;
+            if (copied == destination.len)
+                return error.ConcurrentEventDestinationTooSmall;
+            destination[copied] = event;
+            copied += 1;
+        }
+        return copied;
+    }
+
+    fn totalCount(self: *ConcurrentEventLog) !usize {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.overflowed)
+            return error.ConcurrentEventLogOverflow;
+        return self.event_count;
+    }
+
+    fn waitForFirstDispatch(self: *ConcurrentEventLog) !void {
+        try waitForConcurrentTestEvent(
+            &self.first_dispatch_reached,
+        );
+    }
+
+    fn releaseFirstDispatch(self: *ConcurrentEventLog) void {
+        self.first_dispatch_release.set();
+    }
+};
+
+fn sortConcurrentEventsByOrdinal(
+    events: []server_api.ManagedConcurrentEventV1,
+) void {
+    var index: usize = 1;
+    while (index < events.len) : (index += 1) {
+        const selected = events[index];
+        var insertion = index;
+        while (insertion != 0 and
+            events[insertion - 1].ordinal > selected.ordinal)
+        {
+            events[insertion] = events[insertion - 1];
+            insertion -= 1;
+        }
+        events[insertion] = selected;
+    }
+}
+
+const ConcurrentServerHarness = struct {
+    listener: std.net.Server = undefined,
+    runtime: *server.RuntimeV1 = undefined,
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1 =
+        undefined,
+    config: server_api.ServerConfig = .{},
+    observer: ?server_api.ManagedConcurrentObserverV1 = null,
+    thread: ?std.Thread = null,
+    thread_error: ?anyerror = null,
+    done: std.Thread.ResetEvent = .{},
+    listener_open: bool = false,
+
+    fn start(
+        self: *ConcurrentServerHarness,
+        runtime: *server.RuntimeV1,
+        lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+        config: server_api.ServerConfig,
+        observer: ?server_api.ManagedConcurrentObserverV1,
+    ) !void {
+        const bind_address = try std.net.Address.parseIp(
+            "127.0.0.1",
+            0,
+        );
+        self.listener = try bind_address.listen(.{
+            .reuse_address = true,
+        });
+        self.listener_open = true;
+        self.runtime = runtime;
+        self.lifecycle = lifecycle;
+        self.config = config;
+        self.observer = observer;
+        self.thread = std.Thread.spawn(
+            .{},
+            run,
+            .{self},
+        ) catch |err| {
+            self.listener.deinit();
+            self.listener_open = false;
+            return err;
+        };
+    }
+
+    fn run(self: *ConcurrentServerHarness) void {
+        defer self.done.set();
+        server_api
+            .serveManagedConcurrentListenerWithObserverV1(
+            &self.listener,
+            self.config,
+            self.runtime,
+            self.lifecycle,
+            self.observer,
+        ) catch |err| {
+            self.thread_error = err;
+        };
+    }
+
+    fn address(
+        self: *const ConcurrentServerHarness,
+    ) std.net.Address {
+        return self.listener.listen_address;
+    }
+
+    fn port(self: *const ConcurrentServerHarness) u16 {
+        return self.listener.listen_address.getPort();
+    }
+
+    fn drain(self: *ConcurrentServerHarness) !void {
+        try server_api.requestManagedConcurrentDrainAndWakeV1(
+            self.lifecycle,
+            self.runtime,
+            self.listener.listen_address,
+        );
+    }
+
+    fn finish(self: *ConcurrentServerHarness) !void {
+        try waitForConcurrentTestEvent(&self.done);
+        const thread = self.thread orelse
+            return error.ConcurrentServerNotRunning;
+        thread.join();
+        self.thread = null;
+        self.listener.deinit();
+        self.listener_open = false;
+        if (self.thread_error) |err| return err;
+    }
+
+    fn deinit(self: *ConcurrentServerHarness) void {
+        if (self.thread) |thread| {
+            server_api
+                .requestManagedConcurrentDrainAndWakeV1(
+                self.lifecycle,
+                self.runtime,
+                self.listener.listen_address,
+            ) catch {
+                _ = server.beginDrainV1(self.runtime) catch {};
+                const wake = std.net.tcpConnectToAddress(
+                    self.listener.listen_address,
+                ) catch null;
+                if (wake) |stream| stream.close();
+            };
+            thread.join();
+            self.thread = null;
+        }
+        if (self.listener_open) {
+            self.listener.deinit();
+            self.listener_open = false;
+        }
+    }
+};
+
+const ModelsCall = struct {
+    port: u16 = 0,
+    done: std.Thread.ResetEvent = .{},
+    model_id: ?[protocol.model_id_bytes]u8 = null,
+    thread: ?std.Thread = null,
+    thread_error: ?anyerror = null,
+
+    fn start(self: *ModelsCall, port: u16) !void {
+        self.port = port;
+        self.thread = try std.Thread.spawn(
+            .{},
+            run,
+            .{self},
+        );
+    }
+
+    fn run(self: *ModelsCall) void {
+        defer self.done.set();
+        self.runFallible() catch |err| {
+            self.thread_error = err;
+        };
+    }
+
+    fn runFallible(self: *ModelsCall) !void {
+        var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+        defer _ = gpa.deinit();
+        var client = try client_api.ClientV1.initLoopback(
+            gpa.allocator(),
+            "127.0.0.1",
+            self.port,
+        );
+        defer client.deinit();
+        const models = try expectModels(
+            try client.listModelsV1(),
+        );
+        self.model_id = models.model_id;
+    }
+
+    fn finish(
+        self: *ModelsCall,
+        expected_model_id: *const [protocol.model_id_bytes]u8,
+    ) !void {
+        try waitForConcurrentTestEvent(&self.done);
+        const thread = self.thread orelse
+            return error.ModelsCallNotRunning;
+        thread.join();
+        self.thread = null;
+        if (self.thread_error) |err| return err;
+        const actual_model_id = self.model_id orelse
+            return error.ModelsCallMissingResult;
+        try testing.expectEqualSlices(
+            u8,
+            expected_model_id,
+            &actual_model_id,
+        );
+    }
+
+    fn deinit(self: *ModelsCall) void {
+        if (self.thread) |thread| {
+            thread.join();
+            self.thread = null;
+        }
+    }
+};
+
+fn openRawLoopbackPeer(port: u16) !std.net.Stream {
+    return std.net.tcpConnectToAddress(
+        try std.net.Address.parseIp(
+            "127.0.0.1",
+            port,
+        ),
+    );
+}
+
+fn writeRawModelsRequest(peer: std.net.Stream) !void {
+    try peer.writeAll(raw_models_request);
+}
+
+fn writeRawPartialModelsHead(peer: std.net.Stream) !void {
+    try peer.writeAll(
+        "GET /v1/models HTTP/1.1\r\n" ++
+            "Host: 127.0.0.1",
+    );
+}
+
+fn waitRawPeerReadable(
+    handle: std.net.Stream.Handle,
+    timer: *std.time.Timer,
+) !void {
+    while (true) {
+        const elapsed_ns = timer.read();
+        if (elapsed_ns >= concurrent_test_watchdog_ns)
+            return error.ConcurrentPeerReadTimedOut;
+        const remaining_ns =
+            concurrent_test_watchdog_ns - elapsed_ns;
+        const remaining_ms: i32 = @intCast(
+            std.math.divCeil(
+                u64,
+                remaining_ns,
+                std.time.ns_per_ms,
+            ) catch unreachable,
+        );
+        const ready = if (builtin.os.tag == .windows) blk: {
+            var descriptors = [_]std.posix.pollfd{.{
+                .fd = handle,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            }};
+            break :blk try std.posix.poll(
+                &descriptors,
+                remaining_ms,
+            ) != 0;
+        } else blk: {
+            var descriptors = [_]std.c.pollfd{.{
+                .fd = handle,
+                .events = std.c.POLL.IN,
+                .revents = 0,
+            }};
+            const result = std.c.poll(
+                &descriptors,
+                @intCast(descriptors.len),
+                remaining_ms,
+            );
+            break :blk switch (std.posix.errno(result)) {
+                .SUCCESS => result != 0,
+                .INTR => false,
+                .NOMEM => return error.SystemResources,
+                else => return error.ConcurrentPeerPollFailed,
+            };
+        };
+        if (ready) return;
+    }
+}
+
+fn expectRawPeerEofWithoutResponse(
+    peer: std.net.Stream,
+) !void {
+    var timer = try std.time.Timer.start();
+    try waitRawPeerReadable(peer.handle, &timer);
+    var response: [1]u8 = undefined;
+    const read_count = peer.read(&response) catch |read_error| {
+        const transport_error: anyerror = read_error;
+        switch (transport_error) {
+            error.ConnectionResetByPeer,
+            error.ConnectionAborted,
+            => return,
+            else => return read_error,
+        }
+    };
+    if (read_count != 0)
+        return error.UnexpectedConcurrentHttpResponse;
+}
+
+fn expectRawModelsResponse(
+    peer: std.net.Stream,
+    expected_model_id: *const [protocol.model_id_bytes]u8,
+) !void {
+    var timer = try std.time.Timer.start();
+    var response: [
+        protocol.header_max_bytes +
+            protocol.response_body_max_bytes
+    ]u8 = undefined;
+    var used: usize = 0;
+    while (used < response.len) {
+        try waitRawPeerReadable(peer.handle, &timer);
+        const read_count =
+            peer.read(response[used..]) catch |read_error| {
+                const transport_error: anyerror = read_error;
+                switch (transport_error) {
+                    error.ConnectionResetByPeer,
+                    error.ConnectionAborted,
+                    => break,
+                    else => return read_error,
+                }
+            };
+        if (read_count == 0) break;
+        used += read_count;
+    }
+    if (used == response.len)
+        return error.ConcurrentHttpResponseTooLarge;
+    const header_end = std.mem.indexOf(
+        u8,
+        response[0..used],
+        "\r\n\r\n",
+    ) orelse return error.ConcurrentHttpResponseMissingHead;
+    try testing.expect(std.mem.startsWith(
+        u8,
+        response[0..header_end],
+        "HTTP/1.1 200",
+    ));
+    var parser_workspace: [protocol.parser_workspace_bytes]u8 = undefined;
+    var parser = std.heap.FixedBufferAllocator.init(
+        &parser_workspace,
+    );
+    const models = try protocol.decodeModelListV1(
+        parser.allocator(),
+        response[header_end + 4 .. used],
+    );
+    try testing.expectEqualSlices(
+        u8,
+        expected_model_id,
+        &models.model_id,
+    );
+}
+
+fn expectConcurrentSnapshotConservation(
+    snapshot: server_api.ManagedConcurrentSnapshotV1,
+) !void {
+    try testing.expectEqual(
+        snapshot.managed.accepted_connections,
+        snapshot.managed.completed_connections +
+            snapshot.managed.failed_connections +
+            snapshot.managed.active_connections,
+    );
+    try testing.expectEqual(
+        snapshot.managed.active_connections,
+        snapshot.running_connections +
+            snapshot.managed.queued_connections,
+    );
+    try testing.expectEqual(
+        snapshot.managed.queued_connections,
+        snapshot.phase_counts.queued,
+    );
+    const phase_total: u16 =
+        @as(u16, snapshot.phase_counts.queued) +
+        @as(u16, snapshot.phase_counts.receiving_head) +
+        @as(u16, snapshot.phase_counts.request_head_received) +
+        @as(u16, snapshot.phase_counts.request_received) +
+        @as(u16, snapshot.phase_counts.request_admitted) +
+        @as(u16, snapshot.phase_counts.response_ready) +
+        @as(u16, snapshot.phase_counts.response_writing) +
+        @as(u16, snapshot.phase_counts.response_written);
+    try testing.expectEqual(
+        @as(u16, snapshot.managed.active_connections),
+        phase_total,
+    );
+    try testing.expectEqual(
+        snapshot.queue_enqueued_connections,
+        snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        snapshot.queue_enqueued_connections,
+        snapshot.queue_dispatched_connections +
+            snapshot.drain_cancelled_queued_connections +
+            snapshot.failure_cancelled_queued_connections +
+            snapshot.receive_timeout_queued_connections +
+            snapshot.full_request_timeout_queued_connections +
+            snapshot.managed.queued_connections,
+    );
+    try testing.expect(
+        snapshot.queue_high_watermark <=
+            snapshot.pending_connection_capacity,
+    );
+    try testing.expect(
+        snapshot.running_high_watermark <=
+            snapshot.worker_count,
+    );
+    try testing.expect(
+        snapshot.listener_backpressure_resumptions <=
+            snapshot.listener_backpressure_activations,
+    );
+}
+
+fn expectBackpressureTransitionsAreExact(
+    event_log: *ConcurrentEventLog,
+) !void {
+    var transitions: [concurrent_test_event_capacity]server_api.ManagedConcurrentEventV1 = undefined;
+    var transition_count: usize = 0;
+    transition_count += try event_log.copyKind(
+        .backpressure_paused,
+        transitions[transition_count..],
+    );
+    transition_count += try event_log.copyKind(
+        .backpressure_resumed,
+        transitions[transition_count..],
+    );
+    sortConcurrentEventsByOrdinal(
+        transitions[0..transition_count],
+    );
+    var paused = false;
+    for (transitions[0..transition_count]) |event| {
+        switch (event.kind) {
+            .backpressure_paused => {
+                try testing.expect(!paused);
+                try testing.expectEqual(
+                    @as(u8, 1),
+                    event.queued_connections,
+                );
+                paused = true;
+            },
+            .backpressure_resumed => {
+                try testing.expect(paused);
+                paused = false;
+            },
+            else => unreachable,
+        }
+    }
+    try testing.expect(!paused);
+}
+
+fn expectModelOnlyServiceCleanup(
+    service: *unary.ServiceV1,
+) !void {
+    const snapshot = try service.snapshotV1();
+    try testing.expectEqual(
+        @as(u32, 0),
+        snapshot.active_requests,
+    );
+    try testing.expectEqual(
+        @as(u32, 0),
+        snapshot.terminal_records,
+    );
+    try testing.expect(snapshot.bank.?.used.isZero());
+    const close = try service.closeV1();
+    try testing.expectEqual(
+        @as(u32, 0),
+        close.terminal_records,
+    );
+    try testing.expect(close.bank_snapshot.used.isZero());
+}
+
+const ConcurrentDrainCall = struct {
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+    runtime: *server.RuntimeV1,
+    listen_address: std.net.Address,
+    start: *std.Thread.ResetEvent,
+    done: std.Thread.ResetEvent = .{},
+    thread_error: ?anyerror = null,
+
+    fn run(self: *ConcurrentDrainCall) void {
+        self.start.wait();
+        server_api.requestManagedConcurrentDrainAndWakeV1(
+            self.lifecycle,
+            self.runtime,
+            self.listen_address,
+        ) catch |err| {
+            self.thread_error = err;
+        };
+        self.done.set();
+    }
+};
+
 fn expectModels(
     result: client_api.ModelsResultV1,
 ) !protocol.ModelListV1 {
@@ -368,6 +1020,792 @@ fn expectApiError(
             try testing.expectEqual(expected, api_error.code);
             return api_error;
         },
+    };
+}
+
+// A: one worker remains live while its sibling owns a partial HTTP head.
+fn runConcurrentSiblingLivenessScenario(
+    binding: unary.ModelBindingV1,
+) !void {
+    var service_harness: ServiceHarness(1, 1) = .{};
+    try service_harness.init(
+        binding,
+        0x4854_5450_4641,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = service_harness.service.closeV1() catch {};
+    };
+
+    var runtime = try server.initV1(
+        &service_harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            0x4641_0000_0000_0001,
+            .{
+                .worker_count = 2,
+                .pending_connection_capacity = 2,
+            },
+        );
+    try lifecycle.markReadyV1();
+    var event_log: ConcurrentEventLog = .{};
+    var transport: ConcurrentServerHarness = .{};
+    var models_call: ModelsCall = .{};
+    var partial_peer: ?std.net.Stream = null;
+    try transport.start(
+        &runtime,
+        &lifecycle,
+        .{},
+        event_log.observer(),
+    );
+    defer {
+        event_log.releaseFirstDispatch();
+        transport.deinit();
+        models_call.deinit();
+        if (partial_peer) |peer| peer.close();
+    }
+
+    partial_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawPartialModelsHead(partial_peer.?);
+    const first_dispatch =
+        try event_log.waitForKind(.dispatched, 1);
+    try testing.expectEqual(
+        @as(u64, 1),
+        first_dispatch.lease.?.connection_sequence,
+    );
+    const partial_snapshot = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        partial_snapshot,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        partial_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        partial_snapshot.running_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        partial_snapshot.phase_counts.receiving_head,
+    );
+
+    try models_call.start(transport.port());
+    try models_call.finish(&runtime.model_id);
+    _ = try event_log.waitForKind(.retired, 1);
+    const sibling_snapshot = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        sibling_snapshot,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        sibling_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        sibling_snapshot.managed.completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        sibling_snapshot.managed.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        sibling_snapshot.managed.active_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        sibling_snapshot.phase_counts.receiving_head,
+    );
+    try testing.expectEqual(
+        @as(u8, 2),
+        sibling_snapshot.running_high_watermark,
+    );
+
+    partial_peer.?.close();
+    partial_peer = null;
+    _ = try event_log.waitForKind(.retired, 2);
+    try transport.drain();
+    try transport.finish();
+
+    const final_snapshot = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        final_snapshot,
+    );
+    try testing.expectEqual(
+        server_api.ManagedStateV1.stopped,
+        final_snapshot.managed.state,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.managed.completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.managed.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.queue_enqueued_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.queue_dispatched_connections,
+    );
+    try testing.expectEqual(
+        final_snapshot.event_ordinal,
+        @as(u64, @intCast(try event_log.totalCount())),
+    );
+    try expectModelOnlyServiceCleanup(
+        &service_harness.service,
+    );
+    service_closed = true;
+}
+
+// B: a one-worker/one-pending transport preserves FIFO under backpressure.
+fn runConcurrentFifoBackpressureScenario(
+    binding: unary.ModelBindingV1,
+) !void {
+    var failure_stage: []const u8 = "setup";
+    errdefer std.log.err(
+        "F1 scenario B stage: {s}",
+        .{failure_stage},
+    );
+    var service_harness: ServiceHarness(1, 1) = .{};
+    try service_harness.init(
+        binding,
+        0x4854_5450_4642,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = service_harness.service.closeV1() catch {};
+    };
+
+    var runtime = try server.initV1(
+        &service_harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            0x4642_0000_0000_0001,
+            .{
+                .worker_count = 1,
+                .pending_connection_capacity = 1,
+            },
+        );
+    try lifecycle.markReadyV1();
+    var event_log: ConcurrentEventLog = .{
+        .block_first_dispatch = true,
+    };
+    try testing.expect(
+        !event_log.first_dispatch_release.isSet(),
+    );
+    var transport: ConcurrentServerHarness = .{};
+    var first_models: ModelsCall = .{};
+    var follow_up_models: ModelsCall = .{};
+    var second_peer: ?std.net.Stream = null;
+    var third_peer: ?std.net.Stream = null;
+    try transport.start(
+        &runtime,
+        &lifecycle,
+        .{},
+        event_log.observer(),
+    );
+    defer {
+        event_log.releaseFirstDispatch();
+        transport.deinit();
+        first_models.deinit();
+        follow_up_models.deinit();
+        if (second_peer) |peer| peer.close();
+        if (third_peer) |peer| peer.close();
+    }
+
+    try first_models.start(transport.port());
+    try event_log.waitForFirstDispatch();
+    try testing.expect(
+        !event_log.first_dispatch_release.isSet(),
+    );
+    const first_dispatch =
+        try event_log.waitForKind(.dispatched, 1);
+    failure_stage = "first dispatch";
+    try testing.expectEqual(
+        @as(u64, 1),
+        first_dispatch.lease.?.connection_sequence,
+    );
+
+    second_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawModelsRequest(second_peer.?);
+    const second_enqueued =
+        try event_log.waitForKind(.enqueued, 2);
+    try testing.expectEqual(
+        @as(u64, 2),
+        second_enqueued.lease.?.connection_sequence,
+    );
+    const paused =
+        try event_log.waitForKindAfterOrdinal(
+            .backpressure_paused,
+            second_enqueued.ordinal,
+        );
+    failure_stage = "pause event";
+    try testing.expectEqual(@as(u8, 1), paused.queued_connections);
+    try testing.expectEqual(@as(u8, 1), paused.running_connections);
+
+    third_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawModelsRequest(third_peer.?);
+    const paused_snapshot = lifecycle.snapshotV1();
+    failure_stage = "paused snapshot";
+    try expectConcurrentSnapshotConservation(
+        paused_snapshot,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        paused_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        paused_snapshot.managed.queued_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        paused_snapshot.running_connections,
+    );
+    try testing.expect(paused_snapshot.accept_paused);
+    try testing.expectEqual(
+        paused_snapshot.listener_backpressure_activations,
+        paused_snapshot.listener_backpressure_resumptions + 1,
+    );
+
+    event_log.releaseFirstDispatch();
+    failure_stage = "released dispatch";
+    try first_models.finish(&runtime.model_id);
+    const resumed =
+        try event_log.waitForKindAfterOrdinal(
+            .backpressure_resumed,
+            paused.ordinal,
+        );
+    try testing.expect(resumed.ordinal > paused.ordinal);
+    try expectRawModelsResponse(
+        second_peer.?,
+        &runtime.model_id,
+    );
+    try expectRawModelsResponse(
+        third_peer.?,
+        &runtime.model_id,
+    );
+    _ = try event_log.waitForKind(.retired, 3);
+
+    var dispatches: [8]server_api.ManagedConcurrentEventV1 =
+        undefined;
+    const dispatch_count = try event_log.copyKind(
+        .dispatched,
+        &dispatches,
+    );
+    failure_stage = "FIFO dispatch evidence";
+    try testing.expectEqual(
+        @as(usize, 3),
+        dispatch_count,
+    );
+    sortConcurrentEventsByOrdinal(
+        dispatches[0..dispatch_count],
+    );
+    try testing.expect(
+        dispatches[0].ordinal < dispatches[1].ordinal,
+    );
+    try testing.expect(
+        dispatches[1].ordinal < dispatches[2].ordinal,
+    );
+    for (
+        dispatches[0..3],
+        1..4,
+    ) |dispatch, expected_sequence| {
+        try testing.expectEqual(
+            @as(u64, @intCast(expected_sequence)),
+            dispatch.lease.?.connection_sequence,
+        );
+    }
+
+    try follow_up_models.start(transport.port());
+    try follow_up_models.finish(&runtime.model_id);
+    _ = try event_log.waitForKind(.retired, 4);
+    try transport.drain();
+    try transport.finish();
+
+    const final_snapshot = lifecycle.snapshotV1();
+    failure_stage = "final snapshot";
+    try expectConcurrentSnapshotConservation(
+        final_snapshot,
+    );
+    try testing.expectEqual(
+        server_api.ManagedStateV1.stopped,
+        final_snapshot.managed.state,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        final_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 4),
+        final_snapshot.managed.completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        final_snapshot.managed.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        final_snapshot.queue_high_watermark,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        final_snapshot.running_high_watermark,
+    );
+    try testing.expectEqual(
+        final_snapshot.listener_backpressure_activations,
+        final_snapshot.listener_backpressure_resumptions,
+    );
+    try expectBackpressureTransitionsAreExact(
+        &event_log,
+    );
+    failure_stage = "event conservation";
+    try testing.expectEqual(
+        final_snapshot.event_ordinal,
+        @as(u64, @intCast(try event_log.totalCount())),
+    );
+    try expectModelOnlyServiceCleanup(
+        &service_harness.service,
+    );
+    failure_stage = "service cleanup";
+    service_closed = true;
+}
+
+// C: accept-origin timeout authority retires an exact queued lease.
+fn runConcurrentQueuedTimeoutScenario(
+    binding: unary.ModelBindingV1,
+) !void {
+    var service_harness: ServiceHarness(1, 1) = .{};
+    try service_harness.init(
+        binding,
+        0x4854_5450_4643,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = service_harness.service.closeV1() catch {};
+    };
+
+    var runtime = try server.initV1(
+        &service_harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            0x4643_0000_0000_0001,
+            .{
+                .worker_count = 1,
+                .pending_connection_capacity = 1,
+            },
+        );
+    try lifecycle.markReadyV1();
+    var event_log: ConcurrentEventLog = .{
+        .block_first_dispatch = true,
+    };
+    var transport: ConcurrentServerHarness = .{};
+    var first_peer: ?std.net.Stream = null;
+    var timed_out_peer: ?std.net.Stream = null;
+    var successor_peer: ?std.net.Stream = null;
+    try transport.start(
+        &runtime,
+        &lifecycle,
+        .{
+            .full_request_timeout_ns = std.time.ns_per_s,
+        },
+        event_log.observer(),
+    );
+    defer {
+        event_log.releaseFirstDispatch();
+        transport.deinit();
+        if (first_peer) |peer| peer.close();
+        if (timed_out_peer) |peer| peer.close();
+        if (successor_peer) |peer| peer.close();
+    }
+
+    first_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawModelsRequest(first_peer.?);
+    try event_log.waitForFirstDispatch();
+    const first_dispatch =
+        try event_log.waitForKind(.dispatched, 1);
+    try testing.expectEqual(
+        @as(u64, 1),
+        first_dispatch.lease.?.connection_sequence,
+    );
+
+    timed_out_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawModelsRequest(timed_out_peer.?);
+    const queued =
+        try event_log.waitForKind(.enqueued, 2);
+    try testing.expectEqual(
+        @as(u64, 2),
+        queued.lease.?.connection_sequence,
+    );
+    _ = try event_log.waitForKind(
+        .backpressure_paused,
+        1,
+    );
+    const timeout_event =
+        try event_log.waitForKind(
+            .queued_full_request_timeout,
+            1,
+        );
+    try testing.expectEqual(
+        queued.lease.?.connection_sequence,
+        timeout_event.lease.?.connection_sequence,
+    );
+    try expectRawPeerEofWithoutResponse(
+        timed_out_peer.?,
+    );
+
+    const timed_out_snapshot = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        timed_out_snapshot,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        timed_out_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        timed_out_snapshot.managed.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        timed_out_snapshot.managed.active_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 0),
+        timed_out_snapshot.managed.queued_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        timed_out_snapshot.phase_counts.receiving_head,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        timed_out_snapshot
+            .full_request_timeout_queued_connections,
+    );
+    try testing.expect(
+        timed_out_snapshot
+            .managed
+            .full_request_timeout_signaled_connections >= 1,
+    );
+
+    successor_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawModelsRequest(successor_peer.?);
+    const successor_enqueued =
+        try event_log.waitForKind(.enqueued, 3);
+    try testing.expectEqual(
+        @as(u64, 3),
+        successor_enqueued.lease.?.connection_sequence,
+    );
+    event_log.releaseFirstDispatch();
+
+    try expectRawPeerEofWithoutResponse(first_peer.?);
+    try expectRawModelsResponse(
+        successor_peer.?,
+        &runtime.model_id,
+    );
+    _ = try event_log.waitForKind(.retired, 2);
+    try transport.drain();
+    try transport.finish();
+
+    const final_snapshot = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        final_snapshot,
+    );
+    try testing.expectEqual(
+        server_api.ManagedStateV1.stopped,
+        final_snapshot.managed.state,
+    );
+    try testing.expectEqual(
+        @as(u64, 3),
+        final_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.managed.completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.managed.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 3),
+        final_snapshot.queue_enqueued_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.queue_dispatched_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot
+            .full_request_timeout_queued_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        final_snapshot.queue_high_watermark,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        final_snapshot.running_high_watermark,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot
+            .managed
+            .full_request_timeout_signaled_connections,
+    );
+    try testing.expectEqual(
+        final_snapshot.event_ordinal,
+        @as(u64, @intCast(try event_log.totalCount())),
+    );
+    try expectBackpressureTransitionsAreExact(
+        &event_log,
+    );
+    try expectModelOnlyServiceCleanup(
+        &service_harness.service,
+    );
+    service_closed = true;
+}
+
+// D: repeated drain converges one active receive and one queued socket.
+fn runConcurrentDrainScenario(
+    binding: unary.ModelBindingV1,
+) !void {
+    var service_harness: ServiceHarness(1, 1) = .{};
+    try service_harness.init(
+        binding,
+        0x4854_5450_4644,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = service_harness.service.closeV1() catch {};
+    };
+
+    var runtime = try server.initV1(
+        &service_harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            0x4644_0000_0000_0001,
+            .{
+                .worker_count = 1,
+                .pending_connection_capacity = 1,
+            },
+        );
+    try lifecycle.markReadyV1();
+    var event_log: ConcurrentEventLog = .{};
+    var transport: ConcurrentServerHarness = .{};
+    var active_peer: ?std.net.Stream = null;
+    var queued_peer: ?std.net.Stream = null;
+    var drain_start: std.Thread.ResetEvent = .{};
+    var first_drain: ConcurrentDrainCall = .{
+        .lifecycle = &lifecycle,
+        .runtime = &runtime,
+        .listen_address = undefined,
+        .start = &drain_start,
+    };
+    var second_drain: ConcurrentDrainCall = .{
+        .lifecycle = &lifecycle,
+        .runtime = &runtime,
+        .listen_address = undefined,
+        .start = &drain_start,
+    };
+    var first_drain_thread: ?std.Thread = null;
+    var second_drain_thread: ?std.Thread = null;
+    try transport.start(
+        &runtime,
+        &lifecycle,
+        .{},
+        event_log.observer(),
+    );
+    first_drain.listen_address = transport.address();
+    second_drain.listen_address = transport.address();
+    defer {
+        drain_start.set();
+        if (first_drain_thread) |thread| thread.join();
+        if (second_drain_thread) |thread| thread.join();
+        event_log.releaseFirstDispatch();
+        transport.deinit();
+        if (active_peer) |peer| peer.close();
+        if (queued_peer) |peer| peer.close();
+    }
+
+    active_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawPartialModelsHead(active_peer.?);
+    const active_dispatch =
+        try event_log.waitForKind(.dispatched, 1);
+    try testing.expectEqual(
+        @as(u64, 1),
+        active_dispatch.lease.?.connection_sequence,
+    );
+
+    queued_peer = try openRawLoopbackPeer(
+        transport.port(),
+    );
+    try writeRawModelsRequest(queued_peer.?);
+    const queued_event =
+        try event_log.waitForKind(.enqueued, 2);
+    try testing.expectEqual(
+        @as(u64, 2),
+        queued_event.lease.?.connection_sequence,
+    );
+    _ = try event_log.waitForKind(
+        .backpressure_paused,
+        1,
+    );
+    const before_drain = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        before_drain,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        before_drain.phase_counts.receiving_head,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        before_drain.phase_counts.queued,
+    );
+
+    first_drain_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentDrainCall.run,
+        .{&first_drain},
+    );
+    second_drain_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentDrainCall.run,
+        .{&second_drain},
+    );
+    drain_start.set();
+    try waitForConcurrentTestEvent(&first_drain.done);
+    try waitForConcurrentTestEvent(&second_drain.done);
+    first_drain_thread.?.join();
+    first_drain_thread = null;
+    second_drain_thread.?.join();
+    second_drain_thread = null;
+    if (first_drain.thread_error) |err| return err;
+    if (second_drain.thread_error) |err| return err;
+
+    const queued_drain =
+        try event_log.waitForKind(.queued_drain, 1);
+    try testing.expectEqual(
+        queued_event.lease.?.connection_sequence,
+        queued_drain.lease.?.connection_sequence,
+    );
+    try expectRawPeerEofWithoutResponse(queued_peer.?);
+    try expectRawPeerEofWithoutResponse(active_peer.?);
+    _ = try event_log.waitForKind(.retired, 1);
+    try transport.finish();
+
+    const final_snapshot = lifecycle.snapshotV1();
+    try expectConcurrentSnapshotConservation(
+        final_snapshot,
+    );
+    try testing.expectEqual(
+        server_api.ManagedStateV1.stopped,
+        final_snapshot.managed.state,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.managed.accepted_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        final_snapshot.managed.completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.managed.failed_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 2),
+        final_snapshot.managed.drain_signaled_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.queue_dispatched_connections,
+    );
+    try testing.expectEqual(
+        @as(u64, 1),
+        final_snapshot.drain_cancelled_queued_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        final_snapshot.queue_high_watermark,
+    );
+    try testing.expectEqual(
+        @as(u8, 1),
+        final_snapshot.running_high_watermark,
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        try event_log.countKind(.dispatched),
+    );
+    try testing.expectEqual(
+        @as(usize, 1),
+        try event_log.countKind(.queued_drain),
+    );
+    try testing.expectEqual(
+        final_snapshot.event_ordinal,
+        @as(u64, @intCast(try event_log.totalCount())),
+    );
+    try expectModelOnlyServiceCleanup(
+        &service_harness.service,
+    );
+    service_closed = true;
+}
+
+test "phase F1 bounded concurrent transport is deterministic over native loopback" {
+    var fixture = try ModelFixture.init();
+    defer fixture.deinit();
+    const binding = try fixture.bind();
+
+    runConcurrentSiblingLivenessScenario(binding) catch |err| {
+        std.log.err("F1 scenario A failed", .{});
+        return err;
+    };
+    runConcurrentFifoBackpressureScenario(binding) catch |err| {
+        std.log.err("F1 scenario B failed", .{});
+        return err;
+    };
+    runConcurrentQueuedTimeoutScenario(binding) catch |err| {
+        std.log.err("F1 scenario C failed", .{});
+        return err;
+    };
+    runConcurrentDrainScenario(binding) catch |err| {
+        std.log.err("F1 scenario D failed", .{});
+        return err;
     };
 }
 

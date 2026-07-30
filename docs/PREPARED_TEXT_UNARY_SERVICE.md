@@ -1,8 +1,9 @@
 # Bounded Prepared-Text Unary Service
 
 Status: **experimental process-local kernel with a bounded loopback HTTP/1.1
-adapter, retained client, and R1k-b8 Phases A-D through Phase E2b managed
-child-process lifecycle**.
+adapter, retained client, R1k-b8 Phases A-D through Phase E2b managed
+child-process evidence, and a Phase F1 concurrent-transport implementation
+with deterministic native-loopback correctness retained**.
 
 `prepared_text_unary_service` composes the existing prepared-model,
 `LaneWeave`, `ResourceBank`, publication, and terminal-result contracts into a
@@ -141,7 +142,7 @@ content, and token-count correlation. Calls are serialized because the client
 reuses its bounded workspaces. It does not authenticate the peer or
 automatically retry a request.
 
-## Managed child-process lifecycle, Phases A-D through Phase E2b
+## Managed lifecycle: Phases A-D through E2b evidence and Phase F1 implementation
 
 `ManagedLifecycleV1` wraps the serial listener without changing `ServiceV1` or
 the frozen HTTP profile. One nonzero process generation starts in `starting`,
@@ -312,6 +313,107 @@ handle; a response-write request is distinct from a later effective writer
 cancellation. Drain, receive-timeout, peer-reset, and independent
 transport-failure counters are not relabeled.
 
+### Phase F1 bounded concurrent transport and native-loopback correctness
+
+The implemented Phase F1 path adds `ManagedConcurrentLifecycleV1`,
+`serveManagedConcurrentListenerV1`,
+`serveManagedConcurrentListenerWithObserverV1`, and
+`requestManagedConcurrentDrainAndWakeV1`. Its
+`ManagedConcurrentConfigV1` accepts a fixed `1..16` workers and a fixed
+`1..64` pending connections (defaults `2/8`). Worker plus pending capacity is
+the fixed connection-slot capacity and cannot exceed 80.
+
+The pending structure is a FIFO of connections the process has already
+accepted. Its ordering promise ends at worker dispatch: it does not promise
+response completion order, Scheduler fairness, simultaneous model execution,
+or preferential service among peers still in the kernel backlog. The existing
+HTTP request mutex continues to serialize unary admission, model execution,
+and exact active-work retirement. Response encoding survives that boundary,
+and response-control callbacks plus socket writes occur after the mutex is
+released. Slow transport output can therefore overlap later serialized model
+work without making model work parallel.
+
+`ManagedConcurrentLifecycleV1` is the one central registry. The existing
+lifecycle mutex linearizes queue membership, fixed-slot phases, ownership
+handoff, counters, and snapshots. One shared watchdog evaluates deadlines for
+all queued and running slots; the concurrent path does not create one
+watchdog thread per connection. The timer begins immediately after `accept`,
+so time spent waiting in FIFO consumes both the receive timeout and the
+accept-origin full-request timeout. When the shorter receive deadline is
+enabled, it remains the unique incomplete-request winner. A queued expiry
+retires the fenced lease and closes the socket without reading a request,
+creating a service record, or synthesizing an HTTP response.
+
+When the accepted FIFO reaches its configured capacity, the acceptor pauses
+before the next `accept` and waits for capacity. Additional peers remain under
+the operating system's passive listen backlog. Dispatch or queued retirement
+resumes the acceptor. On POSIX, the serving call temporarily makes the listener
+nonblocking, waits for readiness for at most 100 milliseconds per poll quantum,
+and revalidates lifecycle state before entering `accept`. Every accepted socket
+is returned to blocking mode before FIFO or worker handoff. Managed receive
+revalidates lifecycle on every readiness-wait iteration, with each quantum
+capped at 100 milliseconds even when the configured timeout is zero, so drain
+and fatal convergence do not depend on cross-thread `shutdown` succeeding. An
+unexpected shutdown error advances no successful signal counter or event for
+that connection and leaves it unclaimed, allowing failure convergence to retry
+and take over. This bounded transport path does not return an unparsed-request
+HTTP 429 or 503; the existing 429 for service or Scheduler capacity remains a
+distinct post-parse application response.
+
+Socket ownership moves exactly once from acceptor to FIFO to one worker.
+Queued timeout, drain, or failure first detaches the still-queued connection
+and then closes it once. After dispatch, its worker is the sole socket reader,
+response writer, and closer. The generation, connection sequence, slot index,
+slot generation, and native handle fence every live lease; an opaque transport
+owner routes an exact active-work drain receipt without exposing the native
+handle to the HTTP runtime.
+
+`ManagedConcurrentSnapshotV1` retains queue and running high-water marks,
+enqueued and dispatched totals, listener pause and resume totals, queued
+drain/failure/receive-timeout/full-request-timeout totals, and counts for every
+connection phase. The registry enforces four exact conservation rules:
+
+- active connections equal queued plus running connections;
+- the sum of phase counts equals active connections;
+- accepted equals completed plus failed plus active connections; and
+- enqueued equals dispatched plus every queued retirement cause plus the
+  current FIFO length.
+
+Concurrent drain closes unary admission before mutating transport state,
+and the lifecycle mutex remains held across runtime receipt capture and
+application to the exact fenced transport owner. Drain then detaches all
+queued sockets and signals all dispatched sockets. Fatal convergence instead
+closes runtime admission and cancels its exact work with `transport_failure`,
+retires queued connections under the failure cause, emits one
+`running_failure` event for each newly claimed running lease, and records
+signal/work/response/write-request/effective-write-cancellation failure
+counters without incrementing drain counters. The serving call joins every
+worker and the shared watchdog. On POSIX, it then restores the exact listener
+flags captured before serving. It may publish `stopped` only when the FIFO and
+all connection slots are empty; the existing service close separately verifies
+zero Scheduler and Bank ownership. The optional observer runs outside
+lifecycle, runtime, service, and socket-control locks and cannot select a
+production winner.
+
+The deterministic native-loopback gate continues to pass through
+`zig build unary-http-test -Dmetal=false -Doptimize=ReleaseSafe -j2`.
+Scenario A keeps a worker live beside a sibling partial HTTP head. Scenario B
+proves one-worker/one-pending FIFO dispatch, exact passive pause/resume, and
+healthy successor service. Scenario C retires the exact queued lease at its
+accept-origin full-request deadline without an HTTP response, then serves a
+successor. Scenario D makes two concurrent drain calls converge over one
+active receive and one queued socket. All four validate snapshot/event
+conservation, joined shutdown, and final zero service/Bank ownership.
+
+That gate is same-process native-loopback correctness, not real-process
+overload, native load, latency, throughput, GPU, or native foreign-OS evidence.
+Phase F1 concurrent serving is explicitly unsupported on Windows today: the
+entrypoint returns `ConcurrentListenerModeUnsupported` before worker/watchdog
+startup because it cannot prove and restore the caller's original `FIONBIO`
+mode. Native Windows serving therefore remains pending and unproven. The
+real-process fixture described next still stops at Phase E2b and must not be
+cited as Phase F1 process evidence.
+
 The focused real-process fixture uses one executable in supervisor and child
 worker modes. The ordinary clean path accepts `drain\n` followed by EOF or
 empty stdin EOF as out-of-band control; phase-targeted fixture controls select
@@ -437,6 +539,16 @@ zig build unary-server-process-compile \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
 
+The ReleaseSafe `unary-http-test` command above now retains Phase F1
+native-loopback scenarios A-D: sibling liveness, accepted-FIFO
+backpressure/order, exact queued full-request timeout, and repeated drain with
+conservation plus zero ownership.
+
+These existing process commands currently retain Phases A-D through Phase E2b
+only. They do not yet execute the Phase F1
+fixed-worker/FIFO/shared-watchdog entry points. Neither their E2b evidence nor
+the passing same-process HTTP root is Phase F1 real-process evidence.
+
 The acceptance fixture uses a generated `32/64/1/256` ordinary package. It
 checks two-request interleaving against independent generation oracles, active
 and completed idempotent replay, conflict and capacity immutability,
@@ -478,9 +590,11 @@ installed text-runtime golden path in one Zig invocation.
 
 ## Deliberate nonclaims and next work
 
-This slice establishes an experimental serial loopback socket, bounded JSON
-profile, retained client, and focused managed child-process Phases A-D through
-Phase E2b. Phase C remains the shorter pre-admission receive boundary. Phase D
+This surface establishes an experimental loopback socket, bounded JSON
+profile, retained client, focused managed child-process evidence through Phase
+E2b, and a Phase F1 concurrent-transport implementation with deterministic
+native-loopback correctness retained. Phase C remains the shorter
+pre-admission receive boundary. Phase D
 cancels admitted execution only when managed drain wins. Phase E1 detects a
 reset only at a between-quantum checkpoint and cancels a response at
 `response_ready`, before its first write. Phase E2a bounds managed kernel sends
@@ -488,21 +602,34 @@ and makes progress/`WouldBlock` cancellation observable after writing starts.
 Phase E2b adds a full-request elapsed boundary, but it does not detect orderly
 FIN abandonment, preempt an in-flight model drive or kernel call, acknowledge
 peer receipt, or turn the logical Scheduler deadline into wall time. A
-successful local writer completion is not a delivery acknowledgement. This
-slice does not establish a packaged
-production daemon, non-loopback serving, concurrent listener queue,
-process-wide overload policy, streaming publication, durable idempotency or
-crash recovery, process-death recovery, authentication, authorization, TLS,
-automatic retry, quota enforcement, GPU execution, production-model quality,
-load evidence, or performance.
-Retained-target compilation is not native Windows or FreeBSD serving proof,
-and native reset, response-write, and deadline behavior on those systems
-remains unproven. The next serving slices are:
+successful local writer completion is not a delivery acknowledgement.
 
-1. define a bounded listener queue, backpressure, and concurrent-serving
-   overload campaign;
-2. add load generation after those process boundaries, separating admission
-   latency, first-token latency, throughput, fairness, and cleanup;
+Phase F1 makes multiple transport workers available around one bounded
+accepted FIFO, but model admission and execution remain serialized. FIFO
+therefore says nothing about completion order or scheduler fairness. Passive
+accept backpressure leaves peers in the kernel backlog and sends no pre-parse
+429/503. The current evidence does not yet validate this concurrent path in a
+retained real-process campaign.
+
+This work does not establish a packaged production daemon, non-loopback
+serving, streaming publication, durable idempotency or crash recovery,
+process-death recovery, authentication, authorization, TLS, automatic retry,
+quota enforcement, GPU execution, production-model quality, native load, or
+performance. Retained-target compilation is not native Windows or FreeBSD
+serving proof, and native reset, response-write, deadline, queue, watchdog, and
+drain behavior on those systems remains unproven. The next serving slices are:
+
+1. retain a distinct Phase F1 real-process campaign for process control,
+   queued receive and full-request deadline expiry, failure cleanup,
+   stale-owner rejection, exact counter conservation, drain/join, healthy
+   successor service, and final zero transport/service/Bank ownership; the
+   current `unary-server-process-test` stops at Phase E2b;
+2. after that real-process gate, run a separate native-load campaign reporting
+   accept/admission and queue delay, HTTP first-byte latency for this
+   non-streaming unary profile, terminal-response latency, throughput, outcome
+   mix, and cleanup under a declared machine/OS/backend/power/thermal
+   envelope; do not label HTTP first byte as first-token latency or infer
+   fairness, GPU performance, or native foreign-OS behavior;
 3. extend abandonment detection to orderly FIN with exact connection outcome
    accounting;
 4. add forced process-death evidence independently of checkpoint-aware drain

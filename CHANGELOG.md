@@ -110,6 +110,51 @@ before the first stable release.
   the same child and zero active service or Bank ownership. This boundary is
   distinct from both the pre-admission receive timeout and the request's
   logical Scheduler deadline.
+- R1k-b8 Phase F1 now has a production-path concurrent transport
+  implementation behind `ManagedConcurrentLifecycleV1`,
+  `serveManagedConcurrentListenerV1`, and
+  `requestManagedConcurrentDrainAndWakeV1`, with deterministic native-loopback
+  correctness retained. `ManagedConcurrentConfigV1` fixes `1..16` workers and
+  a `1..64` FIFO of already accepted connections, for at most 80
+  generation-fenced registry slots. One lifecycle mutex linearizes the FIFO,
+  slot phases, snapshots, and exact counters, while one shared watchdog applies
+  the accept-origin receive and full-request deadlines to both queued and
+  running connections. Queue wait therefore consumes both elapsed budgets. A
+  full accepted FIFO pauses `accept`, leaving later peers in the kernel listen
+  backlog instead of synthesizing an HTTP 429 or 503 before parsing. On POSIX,
+  listener mode is temporarily made nonblocking; readiness polling waits at
+  most 100 milliseconds per quantum and revalidates lifecycle state before
+  `accept`. Every accepted socket is returned to blocking mode before FIFO or
+  worker handoff. Acceptor-to-queue-to-worker handoff has one socket owner;
+  queued retirement or the dispatched worker performs the sole close. Managed
+  receive revalidates lifecycle on every readiness-wait iteration, with each
+  quantum capped at 100 milliseconds even when the configured timeout is zero,
+  so drain and fatal convergence do not depend on cross-thread `shutdown`
+  succeeding. An unexpected shutdown error advances no successful signal
+  counter or event for that connection and leaves it unclaimed, allowing
+  failure convergence to retry and take over. Drain holds the
+  lifecycle lock across runtime receipt capture and exact-owner application,
+  then retires the queue and signals running sockets. On POSIX, after every
+  worker and the watchdog join, the serving call restores the exact listener
+  flags captured before serving, before `stopped` can expose zero transport
+  ownership. Fatal convergence instead cancels runtime work as
+  `transport_failure`, emits `running_failure` for each newly claimed running
+  lease, and records phase-specific failure counters without relabeling them as
+  drain. Response callbacks and writes now run outside the request mutex, but
+  admission and model execution remain serialized. FIFO is only a
+  dispatch-order guarantee for the accepted queue: it is not completion-order,
+  fairness, parallel-model, GPU, native foreign-OS, load, or performance
+  evidence. The passing ReleaseSafe command remains
+  `zig build unary-http-test -Dmetal=false -Doptimize=ReleaseSafe -j2`, retaining
+  four deterministic native-loopback scenarios: sibling liveness beside a
+  partial request, one-worker/one-pending FIFO pause/resume, exact queued
+  accept-origin full-request timeout, and repeated drain over one running plus
+  one queued socket. A Phase F1 real-process campaign and separate native-load
+  evidence remain follow-up work. Phase F1 concurrent serving is explicitly
+  unsupported on Windows today: the entrypoint returns
+  `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
+  cannot prove and restore the caller's original `FIONBIO` mode. Native Windows
+  serving therefore remains pending and unproven.
 - R1k-b8 Phases A-D plus Phase E1 add an experimental managed lifecycle around
   that serial loopback server. `ManagedLifecycleV1` records one nonzero process
   generation, exact connection outcomes, and the monotone
