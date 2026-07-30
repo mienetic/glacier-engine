@@ -587,6 +587,10 @@ zig build unary-server-native-load-test \
 zig build unary-server-native-load-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j1 \
   -Dunary-server-native-load-profile=retention-capacity-v1
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-profile=queued-receive-timeout-v1
 ```
 
 The load capture uses the optional `RequestWorkControlV1.published_fn`
@@ -655,6 +659,46 @@ distribution. Final closure requires zero connection, active service,
 Scheduler, and Bank ownership while the 40 terminal service records remain
 retained capacity, not live ownership.
 
+The `queued-receive-timeout-v1` selector also uses the same manual target,
+native child, and process-test artifact without another compile root. Eight
+sequential warmups complete before eight deterministic measured epochs. Each
+epoch first dispatches two requests and holds them at a bounded campaign
+control, then accepts six peers into the FIFO. Those queued leases reach their
+exact 2-second receive deadline before either worker is released; the two
+running controls then complete. Flow rotation produces exactly
+`2 completed / 6 timed_out` measured records in every one of eight flows.
+
+The queued-timeout closure requires accepted/enqueued `72`,
+dispatched/completed `24`, failed/queued-receive-timeout `48`, queue/running
+high-water `6/2`, listener pause/resume `8/8`, 24 completed Service records,
+event ordinal `184`, and zero active connection, Service, Scheduler, and Bank
+ownership. Every timeout wins while its lease remains in `.queued`; it has no
+worker dispatch, request parse, Service record, Bank admission, or HTTP response.
+The verifier admits client arrival to server timeout only in `2..4` seconds,
+enqueue to timeout at no more than 3 seconds, and timeout to
+peer-close/no-response transport settlement at no more than 1 second.
+Settlement requires zero response bytes and accepts a zero-length read or
+connection reset/abort. These are campaign-admissibility bounds, not general
+runtime latency promises. The fixed profile identity binds the configured
+2-second timeout and all three caps.
+The live campaign remains manual and is not selected by default builds,
+`affected-fast`, or GitHub CI.
+
+Each timed-out embedded W6 record contains arrival, terminal, and settlement
+only. Correctness is not applicable, and the Bank/work/dispatch/output fields
+remain absent. Its transport-specific outer record retains the
+client-observed canonical request root, a domain-separated opaque digest of the
+raw outbound HTTP bytes, the exact accepted lease plus enqueue and
+`.queued_receive_timeout` evidence, and independently recomputable
+transport-semantic, terminal, and completion roots. The socket emits only
+`.queued_receive_timeout`, never a separate `.retired` event; any `retired_*`
+sidecar fields are profile-defined aliases of that terminal event. The envelope
+does not retain the raw outbound bytes. More importantly, the worker never
+parses a queued timed-out socket.
+Request-to-lease association is therefore the deterministic
+single-outstanding client-plan/transmit correlation enforced by each campaign
+slot, not server-parsed request attestation.
+
 For completed requests, the event mapping is explicit: arrival is immediately
 before client connect; admission is the accepted connection entering the
 FIFO; first service is worker dispatch; submit return is the exact
@@ -677,15 +721,19 @@ observer cannot attribute external CPU load strongly enough. Other operating
 systems reject before execution. Missing telemetry stays unavailable; it is
 never encoded as a measured zero.
 
-Both profiles use the tiny deterministic serialized CPU fixture. The default
-profile completes every measured request. The selected capacity profile proves
-only retained-record capacity saturation; it is not transient, general, or
-open-loop overload, a queued-timeout campaign, or throughput-superiority
-evidence. Neither profile establishes production-model behavior, first-token
-latency, fairness, physical parallelism, GPU behavior, temperature, frequency,
-power, energy, or foreign-OS evidence. HTTP first byte is a transport
-observation, not first-token latency. A passing run is evidence for that exact
-executable, machine, environment, and selected profile only.
+All three profiles use the tiny deterministic serialized CPU fixture. The
+default profile completes every measured request. The selected capacity profile
+proves only retained-record capacity saturation; it is not transient, general,
+or open-loop overload, a queued-timeout campaign, or throughput-superiority
+evidence. The queued receive-timeout profile proves only its declared
+deterministic closed-loop queued-pressure shape. It is not an explicitly
+scheduled open-loop or transient/general overload campaign, generic queue
+latency, throughput superiority, fairness, physical parallelism, or a
+first-token measurement. None of the profiles establishes production-model,
+GPU, temperature, frequency, power, energy, or native foreign-OS behavior.
+HTTP first byte in profiles that receive a response is a transport observation,
+not first-token latency. A passing run is evidence for that exact executable,
+machine, environment, and selected profile only.
 
 The ReleaseSafe `unary-http-test` command above retains Phase F1 same-process
 native-loopback behavior scenarios A-D: sibling liveness, accepted-FIFO
@@ -767,7 +815,8 @@ therefore says nothing about completion order or scheduler fairness. Passive
 accept backpressure leaves peers in the kernel backlog and sends no pre-parse
 429/503. The retained correctness campaign validates bounded lifecycle and
 ownership. The separate opt-in native-load target measures only its declared
-all-completed or retained-record-capacity deterministic CPU profile.
+all-completed, retained-record-capacity, or queued-receive-timeout deterministic
+CPU profile.
 
 `RequestWorkControlV1.admission_rejected_fn` is an optional evidence boundary
 for a canonical request whose Service admission returns either
@@ -804,16 +853,16 @@ is not native Windows or FreeBSD serving proof, and native reset,
 response-write, deadline, queue, watchdog, and drain behavior on those systems
 remains unproven. The next serving slices are:
 
-1. broaden the fixed all-completed and retained-record-capacity native CPU
-   profiles with queued-timeout and additional mixed-outcome profiles, then
-   retain eligible captures across reproducible native machines. Continue to
-   report only profile-defined transport timing, FIFO queue delay, HTTP
-   first-byte latency for this non-streaming unary profile,
+1. broaden the fixed all-completed, retained-record-capacity, and closed-loop
+   queued-receive-timeout native CPU profiles with additional mixed-outcome
+   profiles, then retain eligible captures across reproducible native machines.
+   Continue to report only profile-defined transport timing, FIFO queue delay,
+   HTTP first-byte latency for this non-streaming unary profile,
    terminal-response latency, throughput, outcome mix, and cleanup under a
    declared machine/OS/backend/power/thermal envelope; do not label HTTP first
-   byte as first-token latency, treat retained-record saturation as throughput
-   superiority, or infer fairness, GPU performance, or native foreign-OS
-   behavior;
+   byte as first-token latency, treat retained-record saturation or the fixed
+   queue-pressure shape as throughput superiority or general overload, or infer
+   fairness, GPU performance, or native foreign-OS behavior;
 2. define body-complete half-close, cancellation, response, and outcome
    ownership policy before extending orderly-FIN abandonment detection with
    exact connection accounting;

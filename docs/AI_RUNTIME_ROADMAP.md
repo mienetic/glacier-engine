@@ -2264,17 +2264,49 @@ output root remains zero because no model output exists. The service reaches
 its exact 40-terminal-record capacity and closes with zero connection, active
 service, Scheduler, and Bank ownership.
 
+The same target and artifact select a third fixed profile with
+`-Dunary-server-native-load-profile=queued-receive-timeout-v1`. It completes
+8 sequential warmups before 8 deterministic measured epochs. Every epoch
+holds 2 running requests while 6 accepted FIFO peers reach their exact
+2-second receive deadline, then releases the running pair to complete. Flow
+rotation retains measured `2 completed / 6 timed_out` in each of eight flows.
+Its exact closure is accepted/enqueued `72`, dispatched/completed `24`,
+failed/queued-receive-timeout `48`, queue/running high-water `6/2`,
+pause/resume `8/8`, 24 completed Service records, event ordinal `184`, and
+zero live connection, Service, Scheduler, and Bank ownership.
+The verifier admits client arrival to server timeout only in `2..4` seconds,
+enqueue to timeout at no more than 3 seconds, and timeout to
+peer-close/no-response transport settlement at no more than 1 second.
+Settlement requires zero response bytes and accepts a zero-length read or
+connection reset/abort. These are campaign-admissibility bounds, not general
+runtime latency promises. The fixed profile identity binds the configured
+2-second timeout and all three caps.
+
+The timed-out embedded W6 records contain only arrival, terminal, and
+settlement with not-applicable correctness and no Bank, work, dispatch, or
+output. Their transport-specific outer records retain the client-observed
+canonical request root, an opaque digest of the raw outbound HTTP bytes, exact
+enqueue/lease/`.queued_receive_timeout` evidence, and independently
+recomputable transport-semantic, terminal, and completion roots. The socket
+emits only `.queued_receive_timeout`, never a separate `.retired` event; any
+`retired_*` sidecar fields are profile-defined aliases of that terminal event.
+No queued timed-out socket is server-parsed. Request-to-lease association is
+the campaign's deterministic single-outstanding client-plan/transmit
+correlation, not server-parsed request attestation.
+
 The load target is manual, uses `-j1`, and is absent from default tests and
 automatic CI. Native macOS may mark the environment eligible only after stable
 power, Low Power Mode, thermal-constraint, external-CPU-load, CPU-drift, and
-host/boot gates pass. Linux executes and verifies either native profile but
+host/boot gates pass. Linux executes and verifies any native profile but
 currently remains ineligible because external CPU-load attribution is
 unavailable. The capacity profile is retained-record capacity saturation. It
-does not establish transient, general, or open-loop overload, queued-timeout
-behavior, throughput superiority, representative model performance,
-first-token latency, fairness, completion order, concurrent model execution,
-physical CPU parallelism, GPU behavior, or another operating system's
-behavior.
+does not establish transient, general, or open-loop overload or queued-timeout
+behavior. The queued receive-timeout profile is deterministic closed-loop
+queued-pressure evidence, not explicit open-loop/transient/general overload,
+generic queue latency, throughput superiority, representative model
+performance, first-token latency, fairness, completion order, concurrent model
+execution, physical CPU parallelism, GPU behavior, or another operating
+system's behavior.
 
 The focused acceptance executable has two modes: its supervisor creates one
 generated ordinary package and re-executes the same artifact as a child worker.
@@ -2385,18 +2417,20 @@ execution. The retained unary roots additionally supply exact cause-specific
 post-parse observability for service-capacity and Scheduler rejection,
 including managed connection-owner decoration and Scheduler event identity.
 The separate opt-in native-load target adds one exact all-completed
-CPU/loopback result and one exact retained-record-capacity result under their
-captured environments. The capacity profile proves only its fixed
-retained-record saturation and does not establish transient or general
-overload, queued-timeout behavior, throughput superiority, production-model
-behavior, first-token evidence, fairness, physical parallelism, or a GPU
-result. Retained-target
-compile closure is not native serving proof on Windows or FreeBSD; native
-reset, response-write, deadline, queue, watchdog, and drain behavior on those
-systems remains unproven. Next comes queued-timeout and broader overload
-profiles,
-production-model, repeated-machine, publication-eligible native Linux, and
-separately declared GPU load evidence.
+CPU/loopback result, one exact retained-record-capacity result, and one exact
+queued-receive-timeout result under their captured environments. The capacity
+profile proves only fixed retained-record saturation. The timeout profile
+proves only its deterministic closed-loop queue-pressure shape: 8 sequential
+warmups and 8 measured epochs, each with 2 running completions and 6 queued
+receive timeouts, rotated to `2 completed / 6 timed_out` per measured flow.
+Neither profile establishes transient or general overload, throughput
+superiority, production-model behavior, first-token evidence, fairness,
+physical parallelism, or a GPU result. Retained-target compile closure is not
+native serving proof on Windows or FreeBSD; native reset, response-write,
+deadline, queue, watchdog, and drain behavior on those systems remains
+unproven. Next come broader overload profiles, production-model and
+repeated-machine captures, publication-eligible native Linux, and separately
+declared GPU load evidence.
 Orderly-FIN abandonment remains a separate open boundary and requires explicit
 body-complete half-close, cancellation, response, and outcome-ownership policy
 before implementation. The current evidence does not meet the full serving
@@ -2490,9 +2524,9 @@ that bounded transport queue, fixed worker pool, shared watchdog, passive
 accept backpressure, joined drain, and retained deterministic native-loopback
 correctness, including its native POSIX child-process profiles, but still adds
 no concurrent model execution. Its separate opt-in native-load target supplies
-one fixed all-completed CPU/loopback profile and one fixed
-retained-record-capacity profile; queued-timeout and explicit open-loop
-campaigns remain unproven. Production artifacts, remote delivery,
+fixed all-completed, retained-record-capacity, and queued-receive-timeout
+CPU/loopback profiles; explicit open-loop campaigns remain unproven.
+Production artifacts, remote delivery,
 broader tokenizers/models, GPU package execution, and native multi-OS runtime
 requirements remain open. The combined
 49-boundary worker now carries an admitted ordinary-profile bundle, while a

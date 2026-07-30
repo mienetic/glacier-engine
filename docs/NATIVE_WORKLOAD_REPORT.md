@@ -45,6 +45,43 @@ for all 72 requests. Its embedded W6 capacity-rejected records retain only
 arrival, terminal, and settlement with no queue slot or logical ownership, as
 required by the backend-neutral V1 outcome.
 
+The same target and artifact also select
+`-Dunary-server-native-load-profile=queued-receive-timeout-v1`. Eight
+sequential warmups complete before eight deterministic measured epochs, each
+with two running requests that complete after six accepted FIFO peers reach
+their exact 2-second queued receive deadline. Across the measured cohort this
+is 16 completed and 48 timed-out attempts; flow rotation gives every flow
+exactly `2 completed / 6 timed_out`. Exact closure retains
+accepted/enqueued `72`, dispatched/completed `24`,
+failed/queued-receive-timeout `48`, queue/running high-water `6/2`,
+pause/resume `8/8`, 24 completed Service records, event ordinal `184`, and zero
+live connection, Service, Scheduler, and Bank ownership.
+The verifier admits client arrival to server timeout only in `2..4` seconds,
+enqueue to timeout at no more than 3 seconds, and timeout to
+peer-close/no-response transport settlement at no more than 1 second.
+Settlement requires zero response bytes and accepts a zero-length read or
+connection reset/abort. These are campaign-admissibility bounds, not general
+runtime latency promises. The configured timeout and all three caps are bound
+into the canonical profile identity:
+
+```text
+glacier-f1-native-unary-load-profile/queued-receive-timeout-8-warmup-16-completed-48-timed-out-8-flow-2-worker-6-pending-2000000000ns-timeout-4000000000ns-observation-cap-3000000000ns-queue-cap-1000000000ns-settlement-cap/v1
+```
+
+A queued-timeout W6 record has only arrival, terminal, and settlement,
+not-applicable correctness, and no Bank, work, dispatch, or output. Its outer
+record retains the client-observed canonical request root, an opaque
+domain-separated digest of the raw outbound HTTP bytes, exact
+enqueue/lease/`.queued_receive_timeout` evidence, and independently
+recomputable transport-semantic, terminal, and completion roots. The socket
+emits only `.queued_receive_timeout`, never a separate `.retired` event; any
+`retired_*` sidecar fields are profile-defined aliases of that terminal event.
+The raw outbound bytes are not retained. The queued socket is never
+server-parsed, so request-to-lease association proves the campaign's
+deterministic
+single-outstanding client-plan/transmit correlation rather than server-parsed
+request attestation.
+
 For each rejection, the sidecar `response_handle_sha256` is a
 domain-separated producer observation over the raw HTTP response. It is
 opaque to the offline verifier because the envelope retains only its byte
@@ -57,8 +94,11 @@ model-output claim: the embedded W6 output root remains zero. The sidecar
 completion root binds both the opaque raw-response digest and semantic root.
 Service terminal-record capacity is exactly 40 and final active ownership is
 zero. This proves retained-record capacity saturation, not
-transient/general/open-loop overload, queued-timeout behavior, throughput
-superiority, production-model behavior, fairness, GPU behavior, or cross-OS
+transient/general/open-loop overload or queued-timeout behavior. The queued
+receive-timeout profile separately proves deterministic closed-loop queued
+pressure, not explicit open-loop/transient/general overload, generic queue
+latency, throughput superiority, first-token latency, production-model
+behavior, fairness, physical parallelism, GPU behavior, or native foreign-OS
 evidence. See
 [Bounded Prepared-Text Unary Service](PREPARED_TEXT_UNARY_SERVICE.md) and
 [Benchmarks](BENCHMARKS.md).
@@ -283,12 +323,18 @@ zig build unary-server-native-load-test \
 zig build unary-server-native-load-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j1 \
   -Dunary-server-native-load-profile=retention-capacity-v1
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-profile=queued-receive-timeout-v1
 ```
 
-Both commands reuse the same managed-process artifact and compile root. The
-second command's balanced completed/rejected result is an exact fixed-profile
-outcome, not evidence that an uncontrolled arrival stream, transient queue
-pressure, or another machine would produce that ratio.
+All commands reuse the same managed-process artifact and compile root. The
+capacity command's balanced completed/rejected result and the queued-timeout
+command's exact completed/timed-out result are fixed-profile outcomes, not
+evidence that an uncontrolled arrival stream, transient queue pressure, or
+another machine would produce either ratio. The live profiles remain manual
+and are not run by GitHub CI.
 
 The W6b producer is compiled and executed only by a native macOS Metal gate:
 

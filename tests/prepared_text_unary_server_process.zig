@@ -23,6 +23,8 @@ const worker_mode = "worker";
 const native_load_mode = "--native-load";
 const native_load_retention_capacity_mode =
     "--native-load-retention-capacity";
+const native_load_queued_receive_timeout_mode =
+    "--native-load-queued-receive-timeout";
 const loopback_host = "127.0.0.1";
 const drain_command = "drain\n";
 const drain_head_command = "drain-head\n";
@@ -81,6 +83,8 @@ const generation_native_load: u64 =
     0x4753_5052_0000_0116;
 const generation_native_load_retention_capacity: u64 =
     0x4753_5052_0000_0117;
+const generation_native_load_queued_receive_timeout: u64 =
+    0x4753_5052_0000_0118;
 const frame_max_bytes = 1024;
 const concurrent_event_capacity = 512;
 const native_load_flow_count: usize = 8;
@@ -94,10 +98,30 @@ const native_load_retention_capacity_completed_count: usize =
 const native_load_retention_capacity_rejected_count: usize =
     native_load_record_count -
     native_load_retention_capacity_completed_count;
+const native_load_queued_receive_timeout_epoch_count: usize = 8;
+const native_load_queued_receive_timeout_running_per_epoch: usize = 2;
+const native_load_queued_receive_timeout_queued_per_epoch: usize = 6;
+const native_load_queued_receive_timeout_completed_count: usize =
+    native_load_warmup_count +
+    native_load_queued_receive_timeout_epoch_count *
+        native_load_queued_receive_timeout_running_per_epoch;
+const native_load_queued_receive_timeout_timed_out_count: usize =
+    native_load_queued_receive_timeout_epoch_count *
+    native_load_queued_receive_timeout_queued_per_epoch;
+const native_load_queued_receive_timeout_event_count: usize =
+    native_load_warmup_count * 3 +
+    native_load_queued_receive_timeout_epoch_count *
+        (native_load_flow_count +
+            native_load_queued_receive_timeout_running_per_epoch * 2 +
+            native_load_queued_receive_timeout_queued_per_epoch +
+            2);
 const native_load_wave_count: usize =
     native_load_record_count / native_load_flow_count;
 const native_load_worker_count: u8 = 2;
 const native_load_pending_capacity: u8 = 8;
+const native_load_queued_receive_timeout_worker_count: u8 = 2;
+const native_load_queued_receive_timeout_pending_capacity: u8 = 6;
+const native_load_no_worker: u8 = std.math.maxInt(u8);
 const native_load_sidecar_bytes: usize = 296;
 const native_load_closure_u64_count: usize = 28;
 const native_load_closure_bytes: usize =
@@ -137,15 +161,41 @@ const native_load_retention_capacity_terminal_domain =
     "glacier-f1-native-unary-retention-capacity-terminal-v1\x00";
 const native_load_retention_capacity_completion_domain =
     "glacier-f1-native-unary-retention-capacity-completion-v1\x00";
+const native_load_queued_receive_timeout_outer_magic =
+    [_]u8{ 'G', 'F', '1', 'Q', 'R', 'T', '0', '1' };
+const native_load_queued_receive_timeout_outer_abi: u64 =
+    0x4746_3151_0000_0001;
+const native_load_queued_receive_timeout_outer_body_domain =
+    "glacier-f1-native-unary-queued-receive-timeout-body-v1\x00";
+const native_load_queued_receive_timeout_outer_footer_domain =
+    "glacier-f1-native-unary-queued-receive-timeout-footer-v1\x00";
+const native_load_queued_receive_timeout_http_request_domain =
+    "glacier-f1-native-unary-queued-receive-timeout-http-request-v1\x00";
+const native_load_queued_receive_timeout_transport_semantics_domain =
+    "glacier-f1-native-unary-queued-receive-timeout-transport-semantics-v1\x00";
+const native_load_queued_receive_timeout_terminal_domain =
+    "glacier-f1-native-unary-queued-receive-timeout-terminal-v1\x00";
+const native_load_queued_receive_timeout_completion_domain =
+    "glacier-f1-native-unary-queued-receive-timeout-completion-v1\x00";
 const native_load_retention_capacity_error_code_wire: u8 = 11;
 const native_load_retention_capacity_retry_wire: u8 = 1;
 const native_load_retention_capacity_status_wire: u32 = 429;
+const native_load_queued_receive_timeout_kind_wire: u8 = 6;
+const native_load_queued_phase_wire: u8 = 8;
 const native_load_zero_digest = [_]u8{0} ** 32;
 const worker_timeout_ns = 15 * std.time.ns_per_s;
 const watchdog_poll_ns = 10 * std.time.ns_per_ms;
 const retained_receive_timeout_ns =
     std.time.ns_per_s;
 const retained_full_request_timeout_ns =
+    std.time.ns_per_s;
+const native_load_queued_receive_timeout_ns =
+    2 * std.time.ns_per_s;
+const native_load_queued_receive_timeout_max_observation_ns =
+    4 * std.time.ns_per_s;
+const native_load_queued_receive_timeout_max_queue_residence_ns =
+    3 * std.time.ns_per_s;
+const native_load_queued_receive_timeout_max_settlement_propagation_ns =
     std.time.ns_per_s;
 const retained_peer_reset_poll_timeout_ns =
     server_api.maximum_peer_reset_poll_timeout_ns;
@@ -170,16 +220,28 @@ comptime {
             "retention-capacity-v1 semantic wire values drifted",
         );
     }
+    if (@intFromEnum(
+        server_api.ManagedConcurrentEventKindV1.queued_receive_timeout,
+    ) != native_load_queued_receive_timeout_kind_wire or
+        @intFromEnum(server_api.ManagedConnectionPhaseV1.queued) !=
+            native_load_queued_phase_wire)
+    {
+        @compileError(
+            "queued-receive-timeout-v1 semantic wire values drifted",
+        );
+    }
 }
 
 const NativeLoadProfile = enum {
     successful,
     retention_capacity,
+    queued_receive_timeout,
 
     fn generation(self: NativeLoadProfile) u64 {
         return switch (self) {
             .successful => generation_native_load,
             .retention_capacity => generation_native_load_retention_capacity,
+            .queued_receive_timeout => generation_native_load_queued_receive_timeout,
         };
     }
 
@@ -187,22 +249,49 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful => native_load_record_count,
             .retention_capacity => native_load_retention_capacity_completed_count,
+            .queued_receive_timeout => native_load_queued_receive_timeout_completed_count,
         };
     }
 
-    fn rejectedCount(self: NativeLoadProfile) usize {
-        return native_load_record_count -
-            self.completedCount();
+    fn capacityRejectedCount(self: NativeLoadProfile) usize {
+        return switch (self) {
+            .retention_capacity => native_load_retention_capacity_rejected_count,
+            .successful, .queued_receive_timeout => 0,
+        };
+    }
+
+    fn timedOutCount(self: NativeLoadProfile) usize {
+        return switch (self) {
+            .queued_receive_timeout => native_load_queued_receive_timeout_timed_out_count,
+            .successful, .retention_capacity => 0,
+        };
+    }
+
+    fn decisionCount(self: NativeLoadProfile) usize {
+        return self.completedCount() +
+            self.capacityRejectedCount();
     }
 
     fn expectedOutcome(
         self: NativeLoadProfile,
         ordinal: usize,
     ) native_report.OutcomeV1 {
-        return if (ordinal < self.completedCount())
-            .completed
-        else
-            .capacity_rejected;
+        return switch (self) {
+            .successful => .completed,
+            .retention_capacity => if (ordinal <
+                native_load_retention_capacity_completed_count)
+                .completed
+            else
+                .capacity_rejected,
+            .queued_receive_timeout => if (ordinal <
+                native_load_warmup_count or
+                (ordinal - native_load_warmup_count) %
+                    native_load_flow_count <
+                    native_load_queued_receive_timeout_running_per_epoch)
+                .completed
+            else
+                .timed_out,
+        };
     }
 
     fn profileIdentity(
@@ -215,6 +304,35 @@ const NativeLoadProfile = enum {
                 "retention-capacity-8-warmup-" ++
                 "32-completed-32-rejected-8-flow-" ++
                 "2-worker-40-record/v1",
+            .queued_receive_timeout => "glacier-f1-native-unary-load-profile/" ++
+                "queued-receive-timeout-8-warmup-" ++
+                "16-completed-48-timed-out-8-flow-" ++
+                "2-worker-6-pending-" ++
+                "2000000000ns-timeout-" ++
+                "4000000000ns-observation-cap-" ++
+                "3000000000ns-queue-cap-" ++
+                "1000000000ns-settlement-cap/v1",
+        };
+    }
+
+    fn workerCount(self: NativeLoadProfile) u8 {
+        return switch (self) {
+            .successful, .retention_capacity => native_load_worker_count,
+            .queued_receive_timeout => native_load_queued_receive_timeout_worker_count,
+        };
+    }
+
+    fn pendingCapacity(self: NativeLoadProfile) u8 {
+        return switch (self) {
+            .successful, .retention_capacity => native_load_pending_capacity,
+            .queued_receive_timeout => native_load_queued_receive_timeout_pending_capacity,
+        };
+    }
+
+    fn placementIdentity(self: NativeLoadProfile) []const u8 {
+        return switch (self) {
+            .successful, .retention_capacity => "managed-concurrent-loopback-2-worker-8-pending/v1",
+            .queued_receive_timeout => "managed-concurrent-loopback-2-worker-6-pending/v1",
         };
     }
 
@@ -222,6 +340,7 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful => native_load_outer_magic,
             .retention_capacity => native_load_retention_capacity_outer_magic,
+            .queued_receive_timeout => native_load_queued_receive_timeout_outer_magic,
         };
     }
 
@@ -229,6 +348,7 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful => native_load_outer_abi,
             .retention_capacity => native_load_retention_capacity_outer_abi,
+            .queued_receive_timeout => native_load_queued_receive_timeout_outer_abi,
         };
     }
 
@@ -236,6 +356,7 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful => native_load_outer_body_domain,
             .retention_capacity => native_load_retention_capacity_outer_body_domain,
+            .queued_receive_timeout => native_load_queued_receive_timeout_outer_body_domain,
         };
     }
 
@@ -243,6 +364,7 @@ const NativeLoadProfile = enum {
         return switch (self) {
             .successful => native_load_outer_footer_domain,
             .retention_capacity => native_load_retention_capacity_outer_footer_domain,
+            .queued_receive_timeout => native_load_queued_receive_timeout_outer_footer_domain,
         };
     }
 };
@@ -269,6 +391,7 @@ const WorkerProfile = enum {
     application_rejection,
     native_load,
     native_load_retention_capacity,
+    native_load_queued_receive_timeout,
 
     fn wire(self: WorkerProfile) []const u8 {
         return switch (self) {
@@ -293,6 +416,7 @@ const WorkerProfile = enum {
             .application_rejection => "application-rejection",
             .native_load => "native-load",
             .native_load_retention_capacity => "native-load-retention-capacity",
+            .native_load_queued_receive_timeout => "native-load-queued-receive-timeout",
         };
     }
 
@@ -327,6 +451,7 @@ const WorkerProfile = enum {
             .application_rejection,
             .native_load,
             .native_load_retention_capacity,
+            .native_load_queued_receive_timeout,
             => null,
             .timeout_head => .receiving_head,
             .timeout_body => .request_head_received,
@@ -355,6 +480,7 @@ const WorkerProfile = enum {
             .native_load,
             .native_load_retention_capacity,
             => 0,
+            .native_load_queued_receive_timeout => native_load_queued_receive_timeout_ns,
             .concurrent_queued_receive_timeout => retained_receive_timeout_ns,
         };
     }
@@ -432,6 +558,7 @@ const WorkerProfile = enum {
             .concurrent_stale_owner_failure,
             .native_load,
             .native_load_retention_capacity,
+            .native_load_queued_receive_timeout,
             => true,
             .application_rejection => false,
             else => false,
@@ -453,6 +580,7 @@ fn supportedMain() !void {
     const allocator = gpa.allocator();
 
     try validateNativeLoadRetentionCapacityDigestVector();
+    try validateNativeLoadQueuedReceiveTimeoutDigestVector();
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
@@ -469,6 +597,10 @@ fn supportedMain() !void {
             u8,
             args[1],
             native_load_retention_capacity_mode,
+        ) or std.mem.eql(
+            u8,
+            args[1],
+            native_load_queued_receive_timeout_mode,
         )))
     {
         const native_profile: NativeLoadProfile =
@@ -478,8 +610,14 @@ fn supportedMain() !void {
                 native_load_mode,
             ))
                 .successful
+            else if (std.mem.eql(
+                u8,
+                args[1],
+                native_load_retention_capacity_mode,
+            ))
+                .retention_capacity
             else
-                .retention_capacity;
+                .queued_receive_timeout;
         return runNativeLoadSupervisor(
             allocator,
             args[2],
@@ -926,19 +1064,189 @@ const NativeLoadDecisionRecord = struct {
     work_retired: bool = false,
 };
 
+const NativeLoadQueuedAdmissionBarrier = struct {
+    mutex: std.Thread.Mutex = .{},
+    condition: std.Thread.Condition = .{},
+    enabled: bool = false,
+    aborted: bool = false,
+    invalid: bool = false,
+    admission_count: usize = 0,
+    reached_count: usize = 0,
+    released_count: usize = 0,
+
+    fn abortLocked(
+        self: *NativeLoadQueuedAdmissionBarrier,
+    ) void {
+        self.invalid = true;
+        self.aborted = true;
+        self.condition.broadcast();
+    }
+
+    fn enable(self: *NativeLoadQueuedAdmissionBarrier) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.enabled or self.aborted or
+            self.admission_count != 0 or
+            self.reached_count != 0 or
+            self.released_count != 0)
+        {
+            return error.InvalidNativeLoadAdmissionBarrier;
+        }
+        self.enabled = true;
+    }
+
+    fn admitted(
+        self: *NativeLoadQueuedAdmissionBarrier,
+    ) !http_server.WorkDispositionV1 {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.enabled) return .proceed;
+        if (self.aborted or
+            self.admission_count >=
+                native_load_queued_receive_timeout_epoch_count *
+                    native_load_queued_receive_timeout_running_per_epoch)
+        {
+            self.invalid = true;
+            return error.InvalidNativeLoadAdmissionBarrier;
+        }
+        const admission = self.admission_count;
+        self.admission_count += 1;
+        if (admission %
+            native_load_queued_receive_timeout_running_per_epoch != 0)
+        {
+            return .proceed;
+        }
+        const epoch = admission /
+            native_load_queued_receive_timeout_running_per_epoch;
+        if (epoch != self.reached_count or
+            self.released_count != epoch)
+        {
+            self.invalid = true;
+            return error.InvalidNativeLoadAdmissionBarrier;
+        }
+        self.reached_count += 1;
+        self.condition.broadcast();
+        var timer = std.time.Timer.start() catch {
+            self.abortLocked();
+            return error.NativeLoadAdmissionBarrierClockUnavailable;
+        };
+        while (!self.aborted and self.released_count <= epoch) {
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= worker_timeout_ns) {
+                self.abortLocked();
+                return error.NativeLoadAdmissionBarrierTimedOut;
+            }
+            self.condition.timedWait(
+                &self.mutex,
+                worker_timeout_ns - elapsed_ns,
+            ) catch {
+                self.abortLocked();
+                return error.NativeLoadAdmissionBarrierTimedOut;
+            };
+        }
+        if (self.aborted) {
+            self.invalid = true;
+            return error.NativeLoadAdmissionBarrierAborted;
+        }
+        return .proceed;
+    }
+
+    fn waitReached(
+        self: *NativeLoadQueuedAdmissionBarrier,
+        epoch: usize,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.enabled or
+            epoch >= native_load_queued_receive_timeout_epoch_count)
+        {
+            return error.InvalidNativeLoadAdmissionBarrier;
+        }
+        var timer = std.time.Timer.start() catch {
+            self.abortLocked();
+            return error.NativeLoadAdmissionBarrierClockUnavailable;
+        };
+        while (!self.aborted and self.reached_count <= epoch) {
+            const elapsed_ns = timer.read();
+            if (elapsed_ns >= worker_timeout_ns) {
+                self.abortLocked();
+                return error.NativeLoadAdmissionBarrierTimedOut;
+            }
+            self.condition.timedWait(
+                &self.mutex,
+                worker_timeout_ns - elapsed_ns,
+            ) catch {
+                self.abortLocked();
+                return error.NativeLoadAdmissionBarrierTimedOut;
+            };
+        }
+        if (self.aborted or self.invalid)
+            return error.InvalidNativeLoadAdmissionBarrier;
+    }
+
+    fn release(
+        self: *NativeLoadQueuedAdmissionBarrier,
+        epoch: usize,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (!self.enabled or self.aborted or self.invalid or
+            epoch != self.released_count or
+            self.reached_count != epoch + 1)
+        {
+            self.invalid = true;
+            return error.InvalidNativeLoadAdmissionBarrier;
+        }
+        self.released_count += 1;
+        self.condition.broadcast();
+    }
+
+    fn releaseAll(
+        self: *NativeLoadQueuedAdmissionBarrier,
+    ) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.aborted = true;
+        self.condition.broadcast();
+    }
+
+    fn validateComplete(
+        self: *NativeLoadQueuedAdmissionBarrier,
+    ) !void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        const expected_admissions =
+            native_load_queued_receive_timeout_epoch_count *
+            native_load_queued_receive_timeout_running_per_epoch;
+        if (!self.enabled or self.aborted or self.invalid or
+            self.admission_count != expected_admissions or
+            self.reached_count !=
+                native_load_queued_receive_timeout_epoch_count or
+            self.released_count !=
+                native_load_queued_receive_timeout_epoch_count)
+        {
+            return error.InvalidNativeLoadAdmissionBarrier;
+        }
+    }
+};
+
 const NativeLoadDecisionLog = struct {
     mutex: std.Thread.Mutex = .{},
     records: [native_load_record_count]NativeLoadDecisionRecord =
         undefined,
     count: usize = 0,
     invalid: bool = false,
+    admission_barrier: ?*NativeLoadQueuedAdmissionBarrier = null,
 
     fn admittedOpaque(
         context: *anyopaque,
         identity: http_server.WorkIdentityV1,
     ) anyerror!http_server.WorkDispositionV1 {
-        _ = context;
+        const self: *NativeLoadDecisionLog =
+            @ptrCast(@alignCast(context));
         _ = identity;
+        if (self.admission_barrier) |barrier|
+            return barrier.admitted();
         return .proceed;
     }
 
@@ -1072,7 +1380,7 @@ const NativeLoadDecisionLog = struct {
     ) !void {
         self.mutex.lock();
         defer self.mutex.unlock();
-        if (self.invalid or self.count != self.records.len)
+        if (self.invalid or self.count != profile.decisionCount())
             return error.InvalidNativeLoadDecisionLog;
         var completed: usize = 0;
         var rejected: usize = 0;
@@ -1098,7 +1406,7 @@ const NativeLoadDecisionLog = struct {
             }
         }
         if (completed != profile.completedCount() or
-            rejected != profile.rejectedCount())
+            rejected != profile.capacityRejectedCount())
         {
             return error.InvalidNativeLoadDecisionMix;
         }
@@ -1140,8 +1448,10 @@ fn collectNativeLoadServerRecords(
     profile: NativeLoadProfile,
     decision_log: *NativeLoadDecisionLog,
     event_log: *ConcurrentEventLog,
-    destination: *[native_load_record_count]NativeLoadServerRecord,
+    destination: []NativeLoadServerRecord,
 ) !void {
+    if (destination.len != profile.decisionCount())
+        return error.InvalidNativeLoadDecisionDestination;
     try decision_log.validateComplete(profile);
     decision_log.mutex.lock();
     defer decision_log.mutex.unlock();
@@ -1569,7 +1879,8 @@ fn runWorker(
         );
     }
     if (profile == .native_load or
-        profile == .native_load_retention_capacity)
+        profile == .native_load_retention_capacity or
+        profile == .native_load_queued_receive_timeout)
     {
         return runNativeLoadWorker(
             allocator,
@@ -1577,8 +1888,10 @@ fn runWorker(
             generation,
             if (profile == .native_load)
                 .successful
+            else if (profile == .native_load_retention_capacity)
+                .retention_capacity
             else
-                .retention_capacity,
+                .queued_receive_timeout,
         );
     }
     if (profile.isConcurrent()) {
@@ -2433,6 +2746,11 @@ fn runNativeLoadWorker(
             generation,
             profile,
         ),
+        .queued_receive_timeout => runNativeLoadQueuedReceiveTimeoutWorker(
+            allocator,
+            binding,
+            generation,
+        ),
     };
 }
 
@@ -2613,6 +2931,532 @@ fn runNativeLoadWorkerWithCapacity(
     {
         return error.InvalidNativeLoadCloseReceipt;
     }
+    const closure = [native_load_closure_u64_count]u64{
+        stopped.managed.accepted_connections,
+        stopped.managed.completed_connections,
+        stopped.managed.failed_connections,
+        stopped.queue_enqueued_connections,
+        stopped.queue_dispatched_connections,
+        stopped.queue_high_watermark,
+        stopped.running_high_watermark,
+        stopped.listener_backpressure_activations,
+        stopped.listener_backpressure_resumptions,
+        stopped.drain_cancelled_queued_connections,
+        stopped.failure_cancelled_queued_connections,
+        stopped.receive_timeout_queued_connections,
+        stopped.full_request_timeout_queued_connections,
+        stopped.managed.active_connections,
+        stopped.managed.queued_connections,
+        stopped.running_connections,
+        @intFromBool(stopped.cleanup_failed),
+        service_snapshot.active_requests,
+        service_snapshot.terminal_records,
+        service_snapshot.completed_records,
+        service_snapshot.cancelled_records,
+        service_snapshot.failed_records,
+        service_snapshot.recovery_required,
+        @intFromBool(scheduler_zero),
+        @intFromBool(bank_zero),
+        @intFromBool(joined),
+        @intFromBool(serving_after_join),
+        event_count,
+    };
+    try emitNativeLoadServerRecords(&server_records);
+    try emitNativeLoadClosure(&closure);
+}
+
+fn emitNativeLoadQueuedStep(
+    label: []const u8,
+    epoch: usize,
+    step: usize,
+) !void {
+    var storage: [128]u8 = undefined;
+    const frame = try std.fmt.bufPrint(
+        &storage,
+        "{s} {d} {d}\n",
+        .{ label, epoch, step },
+    );
+    try std.fs.File.stdout().writeAll(frame);
+}
+
+fn readNativeLoadQueuedControl(
+    stdin: std.fs.File,
+    expected_epoch: usize,
+    expected_offset: usize,
+) !protocol.Digest {
+    var storage: [frame_max_bytes]u8 = undefined;
+    const line = try readFrame(stdin, &storage);
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const name = fields.next() orelse return error.InvalidFrame;
+    const epoch = fields.next() orelse return error.InvalidFrame;
+    const offset = fields.next() orelse return error.InvalidFrame;
+    const request = fields.next() orelse return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(
+            u8,
+            name,
+            "native-load-queued",
+        ) or try parseCanonicalInt(
+        usize,
+        epoch,
+    ) != expected_epoch or try parseCanonicalInt(
+        usize,
+        offset,
+    ) != expected_offset) {
+        return error.InvalidNativeLoadQueuedControl;
+    }
+    const request_sha256 = try parseDigestHex(request);
+    if (std.mem.eql(
+        u8,
+        &request_sha256,
+        &native_load_zero_digest,
+    )) return error.InvalidNativeLoadQueuedRequestRoot;
+    return request_sha256;
+}
+
+fn waitForNativeLoadQueuedRunningGeometry(
+    lifecycle: *server_api.ManagedConcurrentLifecycleV1,
+) !void {
+    var timer = try std.time.Timer.start();
+    while (timer.read() < worker_timeout_ns) {
+        const snapshot = lifecycle.snapshotV1();
+        if (snapshot.managed.state != .ready)
+            return error.UnexpectedLifecycleState;
+        if (snapshot.running_connections ==
+            native_load_queued_receive_timeout_worker_count and
+            snapshot.managed.queued_connections == 0 and
+            snapshot.phase_counts.request_admitted == 1 and
+            snapshot.phase_counts.request_received == 1 and
+            snapshot.phase_counts.queued == 0 and
+            snapshot.phase_counts.receiving_head == 0 and
+            snapshot.phase_counts.request_head_received == 0 and
+            snapshot.phase_counts.response_ready == 0 and
+            snapshot.phase_counts.response_writing == 0 and
+            snapshot.phase_counts.response_written == 0)
+        {
+            return;
+        }
+        std.Thread.sleep(watchdog_poll_ns);
+    }
+    return error.NativeLoadQueuedRunningGeometryTimedOut;
+}
+
+fn runNativeLoadQueuedReceiveTimeoutWorker(
+    allocator: std.mem.Allocator,
+    binding: unary.ModelBindingV1,
+    generation: u64,
+) !void {
+    const profile: NativeLoadProfile = .queued_receive_timeout;
+    if (generation != profile.generation())
+        return error.InvalidNativeLoadGeneration;
+    var harness: ServiceHarness(
+        1,
+        native_load_queued_receive_timeout_completed_count,
+    ) = .{};
+    try harness.init(
+        allocator,
+        binding,
+        generation,
+    );
+    var service_closed = false;
+    defer if (!service_closed) {
+        _ = harness.service.closeV1() catch {};
+    };
+    var runtime = try http_server.initV1(
+        &harness.service,
+        binding.binding_sha256,
+    );
+    var lifecycle =
+        try server_api.ManagedConcurrentLifecycleV1.initV1(
+            generation,
+            .{
+                .worker_count = native_load_queued_receive_timeout_worker_count,
+                .pending_connection_capacity = native_load_queued_receive_timeout_pending_capacity,
+            },
+        );
+    try lifecycle.markReadyV1();
+
+    const bind_address =
+        try std.net.Address.parseIp(loopback_host, 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+    const listen_address = listener.listen_address;
+    var event_log: ConcurrentEventLog = .{};
+    var admission_barrier: NativeLoadQueuedAdmissionBarrier = .{};
+    var decision_log: NativeLoadDecisionLog = .{
+        .admission_barrier = &admission_barrier,
+    };
+    var serve_context: ConcurrentServeContext = .{
+        .listener = &listener,
+        .runtime = &runtime,
+        .lifecycle = &lifecycle,
+        .config = .{
+            .receive_timeout_ns = native_load_queued_receive_timeout_ns,
+        },
+        .event_observer = event_log.observer(),
+        .work_observer = decision_log.control(),
+    };
+    const serve_thread = try std.Thread.spawn(
+        .{},
+        ConcurrentServeContext.run,
+        .{&serve_context},
+    );
+    var joined = false;
+    defer if (!joined) {
+        admission_barrier.releaseAll();
+        server_api.requestManagedConcurrentDrainAndWakeV1(
+            &lifecycle,
+            &runtime,
+            listen_address,
+        ) catch {};
+        serve_thread.join();
+    };
+
+    try emitReady(
+        generation,
+        listen_address.getPort(),
+        &runtime.model_id,
+    );
+    const stdin = std.fs.File.stdin();
+    for (1..native_load_warmup_count + 1) |expected| {
+        var command_storage: [64]u8 = undefined;
+        const command = try std.fmt.bufPrint(
+            &command_storage,
+            "native-load-wave {d}\n",
+            .{expected},
+        );
+        try expectControlLine(stdin, command);
+        try event_log.waitForRetiredCount(expected);
+        if (expected == native_load_warmup_count)
+            try admission_barrier.enable();
+        try emitNativeLoadWave(expected);
+    }
+
+    var timed_out_records: [
+        native_load_queued_receive_timeout_timed_out_count
+    ]NativeLoadServerRecord = undefined;
+    for (0..native_load_queued_receive_timeout_epoch_count) |epoch| {
+        try admission_barrier.waitReached(epoch);
+        _ = try event_log.waitForKind(
+            .dispatched,
+            native_load_warmup_count +
+                epoch *
+                    native_load_queued_receive_timeout_running_per_epoch +
+                1,
+        );
+        try emitNativeLoadQueuedStep(
+            "NATIVE-LOAD-BLOCKER",
+            epoch,
+            0,
+        );
+        try waitForNativeLoadQueuedRunningGeometry(&lifecycle);
+        try emitNativeLoadQueuedStep(
+            "NATIVE-LOAD-QUEUE-READY",
+            epoch,
+            0,
+        );
+
+        var queued_events: [
+            native_load_queued_receive_timeout_queued_per_epoch
+        ]server_api.ManagedConcurrentEventV1 = undefined;
+        for (0..native_load_queued_receive_timeout_queued_per_epoch) |offset| {
+            const request_sha256 =
+                try readNativeLoadQueuedControl(
+                    stdin,
+                    epoch,
+                    offset,
+                );
+            // The queued socket is intentionally never parsed by the
+            // server.  The supervisor sends this client-computed request
+            // root only while it is the sole unjoined connection, and this
+            // acknowledgement closes that causal request-to-lease join.
+            const enqueue_occurrence =
+                native_load_warmup_count +
+                epoch * native_load_flow_count +
+                native_load_queued_receive_timeout_running_per_epoch +
+                offset + 1;
+            const enqueued = try event_log.waitForKind(
+                .enqueued,
+                enqueue_occurrence,
+            );
+            const lease = enqueued.lease orelse
+                return error.MissingNativeLoadQueuedLease;
+            if (enqueued.worker_index != null or
+                enqueued.linearized_monotonic_ns == 0 or
+                enqueued.queued_connections != offset + 1 or
+                enqueued.running_connections !=
+                    native_load_queued_receive_timeout_worker_count)
+            {
+                return error.InvalidNativeLoadQueuedEnqueue;
+            }
+            for (queued_events[0..offset]) |prior| {
+                if (std.meta.eql(
+                    prior.lease.?,
+                    lease,
+                )) return error.DuplicateNativeLoadQueuedLease;
+            }
+            queued_events[offset] = enqueued;
+            const record_index =
+                epoch *
+                native_load_queued_receive_timeout_queued_per_epoch +
+                offset;
+            timed_out_records[record_index] = .{
+                .outcome = .timed_out,
+                .request_sha256 = request_sha256,
+                .handle_sha256 = native_load_zero_digest,
+                .work_sequence = 0,
+                .process_generation = lease.process_generation,
+                .connection_sequence = lease.connection_sequence,
+                .slot_generation = lease.slot_generation,
+                .slot_index = lease.slot_index,
+                .worker_index = native_load_no_worker,
+                .enqueue_ordinal = enqueued.ordinal,
+                .dispatch_ordinal = 0,
+                .retired_ordinal = 0,
+                .enqueue_ns = enqueued.linearized_monotonic_ns,
+                .dispatch_ns = 0,
+                .decision_ns = 0,
+                .retired_ns = 0,
+            };
+            try emitNativeLoadQueuedStep(
+                "NATIVE-LOAD-QUEUED",
+                epoch,
+                offset,
+            );
+        }
+        const paused = try event_log.waitForKind(
+            .backpressure_paused,
+            epoch + 1,
+        );
+        if (paused.lease != null or
+            paused.worker_index != null or
+            paused.queued_connections !=
+                native_load_queued_receive_timeout_pending_capacity or
+            paused.running_connections !=
+                native_load_queued_receive_timeout_worker_count)
+        {
+            return error.InvalidNativeLoadQueuedBackpressure;
+        }
+
+        for (0..native_load_queued_receive_timeout_queued_per_epoch) |offset| {
+            const timeout_occurrence =
+                epoch *
+                native_load_queued_receive_timeout_queued_per_epoch +
+                offset + 1;
+            const timed_out = try event_log.waitForKind(
+                .queued_receive_timeout,
+                timeout_occurrence,
+            );
+            const timeout_lease = timed_out.lease orelse
+                return error.MissingNativeLoadQueuedTimeoutLease;
+            const enqueued = queued_events[offset];
+            if (!std.meta.eql(
+                timeout_lease,
+                enqueued.lease.?,
+            ) or timed_out.worker_index != null or
+                timed_out.linearized_monotonic_ns == 0 or
+                timed_out.ordinal <= enqueued.ordinal or
+                timed_out.linearized_monotonic_ns <
+                    enqueued.linearized_monotonic_ns or
+                timed_out.linearized_monotonic_ns -
+                    enqueued.linearized_monotonic_ns >
+                    native_load_queued_receive_timeout_max_queue_residence_ns or
+                timed_out.queued_connections !=
+                    native_load_queued_receive_timeout_queued_per_epoch -
+                        offset - 1 or
+                timed_out.running_connections !=
+                    native_load_queued_receive_timeout_worker_count)
+            {
+                return error.InvalidNativeLoadQueuedTimeout;
+            }
+            const record_index =
+                epoch *
+                native_load_queued_receive_timeout_queued_per_epoch +
+                offset;
+            timed_out_records[record_index].decision_ns =
+                timed_out.linearized_monotonic_ns;
+            // A pre-dispatch timeout has no worker `.retired` event.  This
+            // profile ABI uses the retired fields for the exact terminal
+            // queued-timeout event and keeps dispatch at the zero sentinel.
+            timed_out_records[record_index].retired_ordinal =
+                timed_out.ordinal;
+            timed_out_records[record_index].retired_ns =
+                timed_out.linearized_monotonic_ns;
+            try emitNativeLoadQueuedStep(
+                "NATIVE-LOAD-TIMEOUT",
+                epoch,
+                offset,
+            );
+        }
+        const resumed = try event_log.waitForKind(
+            .backpressure_resumed,
+            epoch + 1,
+        );
+        if (resumed.lease != null or
+            resumed.worker_index != null or
+            resumed.queued_connections >=
+                native_load_queued_receive_timeout_pending_capacity or
+            resumed.running_connections !=
+                native_load_queued_receive_timeout_worker_count)
+        {
+            return error.InvalidNativeLoadQueuedBackpressure;
+        }
+        var release_storage: [64]u8 = undefined;
+        const release_command = try std.fmt.bufPrint(
+            &release_storage,
+            "native-load-release {d}\n",
+            .{epoch},
+        );
+        try expectControlLine(stdin, release_command);
+        try admission_barrier.release(epoch);
+        const expected_retired =
+            native_load_warmup_count +
+            (epoch + 1) *
+                native_load_queued_receive_timeout_running_per_epoch;
+        try event_log.waitForRetiredCount(expected_retired);
+        try emitNativeLoadWave(expected_retired);
+    }
+
+    try expectControlLine(
+        stdin,
+        native_load_drain_command,
+    );
+    try server_api.requestManagedConcurrentDrainAndWakeV1(
+        &lifecycle,
+        &runtime,
+        listen_address,
+    );
+    serve_thread.join();
+    joined = true;
+    if (serve_context.thread_error) |err| return err;
+    try admission_barrier.validateComplete();
+
+    const stopped = lifecycle.snapshotV1();
+    const service_snapshot =
+        try harness.service.snapshotV1();
+    const scheduler_snapshot =
+        service_snapshot.scheduler orelse
+        return error.MissingNativeLoadSchedulerSnapshot;
+    const bank_snapshot = service_snapshot.bank orelse
+        return error.MissingNativeLoadBankSnapshot;
+    const scheduler_zero =
+        scheduler_snapshot.active == 0 and
+        scheduler_snapshot.finished == 0 and
+        scheduler_snapshot.used.isZero() and
+        !scheduler_snapshot.poisoned and
+        !scheduler_snapshot.closed;
+    const bank_zero =
+        bank_snapshot.used.isZero() and
+        bank_snapshot.active_reservations == 0 and
+        bank_snapshot.committed_receipts == 0;
+    lifecycle.managed.mutex.lock();
+    const serving_after_join = lifecycle.serving;
+    lifecycle.managed.mutex.unlock();
+    if (stopped.managed.state != .stopped or
+        stopped.worker_count !=
+            native_load_queued_receive_timeout_worker_count or
+        stopped.pending_connection_capacity !=
+            native_load_queued_receive_timeout_pending_capacity or
+        stopped.managed.accepted_connections !=
+            native_load_record_count or
+        stopped.managed.completed_connections !=
+            native_load_queued_receive_timeout_completed_count or
+        stopped.managed.failed_connections !=
+            native_load_queued_receive_timeout_timed_out_count or
+        stopped.queue_enqueued_connections !=
+            native_load_record_count or
+        stopped.queue_dispatched_connections !=
+            native_load_queued_receive_timeout_completed_count or
+        stopped.queue_high_watermark !=
+            native_load_queued_receive_timeout_pending_capacity or
+        stopped.running_high_watermark !=
+            native_load_queued_receive_timeout_worker_count or
+        stopped.listener_backpressure_activations !=
+            native_load_queued_receive_timeout_epoch_count or
+        stopped.listener_backpressure_resumptions !=
+            native_load_queued_receive_timeout_epoch_count or
+        stopped.drain_cancelled_queued_connections != 0 or
+        stopped.failure_cancelled_queued_connections != 0 or
+        stopped.receive_timeout_queued_connections !=
+            native_load_queued_receive_timeout_timed_out_count or
+        stopped.full_request_timeout_queued_connections != 0 or
+        stopped.managed.active_connections != 0 or
+        stopped.managed.queued_connections != 0 or
+        stopped.running_connections != 0 or
+        stopped.accept_paused or stopped.cleanup_failed or
+        service_snapshot.active_requests != 0 or
+        service_snapshot.terminal_records !=
+            native_load_queued_receive_timeout_completed_count or
+        service_snapshot.completed_records !=
+            native_load_queued_receive_timeout_completed_count or
+        service_snapshot.cancelled_records != 0 or
+        service_snapshot.failed_records != 0 or
+        service_snapshot.recovery_required != 0 or
+        !scheduler_zero or !bank_zero or
+        !joined or serving_after_join)
+    {
+        return error.InvalidNativeLoadQueuedClosure;
+    }
+
+    var completed_records: [
+        native_load_queued_receive_timeout_completed_count
+    ]NativeLoadServerRecord = undefined;
+    try collectNativeLoadServerRecords(
+        profile,
+        &decision_log,
+        &event_log,
+        &completed_records,
+    );
+    try event_log.validateOrdinals();
+    const event_count = try event_log.totalCount();
+    if (event_count !=
+        native_load_queued_receive_timeout_event_count or
+        event_count != stopped.event_ordinal)
+    {
+        return error.InvalidNativeLoadQueuedEventCount;
+    }
+
+    const close_receipt = try harness.service.closeV1();
+    service_closed = true;
+    if (!close_receipt.bank_snapshot.used.isZero() or
+        close_receipt.bank_snapshot.active_reservations != 0 or
+        close_receipt.bank_snapshot.committed_receipts != 0 or
+        close_receipt.terminal_records !=
+            native_load_queued_receive_timeout_completed_count)
+    {
+        return error.InvalidNativeLoadCloseReceipt;
+    }
+
+    var server_records: [native_load_record_count]NativeLoadServerRecord =
+        undefined;
+    for (0..native_load_warmup_count) |index|
+        server_records[index] = completed_records[index];
+    for (0..native_load_queued_receive_timeout_epoch_count) |epoch| {
+        const output_base =
+            native_load_warmup_count +
+            epoch * native_load_flow_count;
+        const completed_base =
+            native_load_warmup_count +
+            epoch *
+                native_load_queued_receive_timeout_running_per_epoch;
+        for (0..native_load_queued_receive_timeout_running_per_epoch) |offset| {
+            server_records[output_base + offset] =
+                completed_records[completed_base + offset];
+        }
+        const timeout_base =
+            epoch *
+            native_load_queued_receive_timeout_queued_per_epoch;
+        for (0..native_load_queued_receive_timeout_queued_per_epoch) |offset| {
+            server_records[
+                output_base +
+                    native_load_queued_receive_timeout_running_per_epoch +
+                    offset
+            ] = timed_out_records[timeout_base + offset];
+        }
+    }
+
     const closure = [native_load_closure_u64_count]u64{
         stopped.managed.accepted_connections,
         stopped.managed.completed_connections,
@@ -3450,6 +4294,7 @@ fn profileMatchesControl(
         .application_rejection,
         .native_load,
         .native_load_retention_capacity,
+        .native_load_queued_receive_timeout,
         => false,
         .standard,
         .drain_with_deadline,
@@ -5359,6 +6204,130 @@ const NativeLoadClientContext = struct {
     }
 };
 
+fn requireNativeLoadPeerSettlementWithoutResponse(
+    peer: std.net.Stream,
+) !void {
+    var response: [1]u8 = undefined;
+    const read_count = peer.read(&response) catch |read_error| {
+        const transport_error: anyerror = read_error;
+        switch (transport_error) {
+            error.ConnectionResetByPeer,
+            error.ConnectionAborted,
+            => return,
+            else => return read_error,
+        }
+    };
+    if (read_count != 0)
+        return error.UnexpectedNativeLoadTimeoutResponse;
+}
+
+const NativeLoadQueuedTimeoutClient = struct {
+    peer: ?std.net.Stream = null,
+    observation: NativeLoadClientObservation,
+
+    fn open(
+        ready: ReadyFrame,
+        planned_ordinal: u32,
+        flow_id: u32,
+    ) !NativeLoadQueuedTimeoutClient {
+        var idempotency_storage: [protocol.idempotency_key_max_bytes]u8 =
+            undefined;
+        const idempotency_key = try std.fmt.bufPrint(
+            &idempotency_storage,
+            "native-load-{d}",
+            .{planned_ordinal},
+        );
+        const tenant_key: u64 = 10_000 + flow_id;
+        const request: protocol.RequestV1 = .{
+            .model_id = &ready.model_id,
+            .tenant_key = tenant_key,
+            .idempotency_key = idempotency_key,
+            .prompt_utf8 = prompt,
+            .max_new_tokens = 1,
+        };
+        const request_sha256 =
+            try protocol.requestSha256V1(request);
+        var body_storage: [protocol.request_body_max_bytes]u8 =
+            undefined;
+        const body = try protocol.encodeRequestV1(
+            request,
+            &body_storage,
+        );
+        var head_storage: [1024]u8 = undefined;
+        const head = try std.fmt.bufPrint(
+            &head_storage,
+            "POST {s} HTTP/1.1\r\n" ++
+                "Host: {s}:{d}\r\n" ++
+                "Content-Type: {s}\r\n" ++
+                "Content-Length: {d}\r\n" ++
+                "{s}: {s}\r\n" ++
+                "{s}: {d}\r\n" ++
+                "Connection: close\r\n\r\n",
+            .{
+                protocol.completions_path_v1,
+                loopback_host,
+                ready.port,
+                protocol.json_content_type,
+                body.len,
+                protocol.idempotency_header,
+                idempotency_key,
+                protocol.tenant_header,
+                tenant_key,
+            },
+        );
+        const request_evidence_sha256 =
+            nativeLoadQueuedReceiveTimeoutRequestEvidence(
+                head,
+                body,
+            );
+        const arrival_ns = try nativeLoadMonotonicNs();
+        const address = try std.net.Address.parseIp(
+            loopback_host,
+            ready.port,
+        );
+        const peer =
+            try std.net.tcpConnectToAddress(address);
+        errdefer peer.close();
+        try peer.writeAll(head);
+        try peer.writeAll(body);
+        return .{
+            .peer = peer,
+            .observation = .{
+                .outcome = .timed_out,
+                .planned_ordinal = planned_ordinal,
+                .flow_id = flow_id,
+                .request_sha256 = request_sha256,
+                .response_handle_sha256 = request_evidence_sha256,
+                .arrival_ns = arrival_ns,
+            },
+        };
+    }
+
+    fn settle(
+        self: *NativeLoadQueuedTimeoutClient,
+    ) !NativeLoadClientObservation {
+        const peer = self.peer orelse
+            return error.MissingNativeLoadQueuedPeer;
+        // A queued timeout can surface as FIN, reset, or abort depending on
+        // the host transport.  The retained fact is peer settlement with
+        // zero response bytes, not an orderly-FIN claim.
+        try requireNativeLoadPeerSettlementWithoutResponse(peer);
+        const settlement_ns = try nativeLoadMonotonicNs();
+        peer.close();
+        self.peer = null;
+        self.observation.client_settlement_ns =
+            settlement_ns;
+        return self.observation;
+    }
+
+    fn deinit(
+        self: *NativeLoadQueuedTimeoutClient,
+    ) void {
+        if (self.peer) |peer| peer.close();
+        self.peer = null;
+    }
+};
+
 const NativeLoadResponseStatus = enum {
     ok,
     too_many_requests,
@@ -5595,6 +6564,25 @@ fn parseNativeLoadWave(
     }
 }
 
+fn parseNativeLoadQueuedStep(
+    line: []const u8,
+    expected_label: []const u8,
+    expected_epoch: usize,
+    expected_step: usize,
+) !void {
+    var fields = std.mem.splitScalar(u8, line, ' ');
+    const label = fields.next() orelse return error.InvalidFrame;
+    const epoch = fields.next() orelse return error.InvalidFrame;
+    const step = fields.next() orelse return error.InvalidFrame;
+    if (fields.next() != null or
+        !std.mem.eql(u8, label, expected_label) or
+        try parseCanonicalInt(usize, epoch) != expected_epoch or
+        try parseCanonicalInt(usize, step) != expected_step)
+    {
+        return error.InvalidNativeLoadQueuedStep;
+    }
+}
+
 fn parseNativeLoadServerRecord(
     line: []const u8,
     expected_index: usize,
@@ -5725,31 +6713,50 @@ fn parseNativeLoadServerRecord(
             &result.handle_sha256,
             &native_load_zero_digest,
         );
-    if ((!completed_work_valid and !rejected_work_valid) or
+    const timed_out_work_valid =
+        result.outcome == .timed_out and
+        result.work_sequence == 0 and
+        std.mem.eql(
+            u8,
+            &result.handle_sha256,
+            &native_load_zero_digest,
+        );
+    const dispatched_timeline_valid =
+        (result.outcome == .completed or
+            result.outcome == .capacity_rejected) and
+        result.worker_index < profile.workerCount() and
+        result.dispatch_ordinal != 0 and
+        result.dispatch_ns != 0 and
+        result.enqueue_ordinal < result.dispatch_ordinal and
+        result.dispatch_ordinal < result.retired_ordinal and
+        result.enqueue_ns <= result.dispatch_ns and
+        result.dispatch_ns <= result.decision_ns and
+        result.decision_ns <= result.retired_ns;
+    const timed_out_timeline_valid =
+        result.outcome == .timed_out and
+        result.worker_index == native_load_no_worker and
+        result.dispatch_ordinal == 0 and
+        result.dispatch_ns == 0 and
+        result.enqueue_ordinal < result.retired_ordinal and
+        result.enqueue_ns <= result.retired_ns and
+        result.decision_ns == result.retired_ns;
+    if ((!completed_work_valid and !rejected_work_valid and
+        !timed_out_work_valid) or
+        (!dispatched_timeline_valid and
+            !timed_out_timeline_valid) or
         result.outcome !=
             profile.expectedOutcome(expected_index) or
         result.process_generation != profile.generation() or
         result.connection_sequence == 0 or
         result.slot_index >=
-            native_load_worker_count +
-                native_load_pending_capacity or
+            profile.workerCount() +
+                profile.pendingCapacity() or
         result.slot_generation == 0 or
-        result.worker_index >=
-            native_load_worker_count or
         result.enqueue_ordinal == 0 or
-        result.dispatch_ordinal == 0 or
         result.retired_ordinal == 0 or
         result.enqueue_ns == 0 or
-        result.dispatch_ns == 0 or
         result.decision_ns == 0 or
-        result.retired_ns == 0 or
-        result.enqueue_ordinal >=
-            result.dispatch_ordinal or
-        result.dispatch_ordinal >=
-            result.retired_ordinal or
-        result.enqueue_ns > result.dispatch_ns or
-        result.dispatch_ns > result.decision_ns or
-        result.decision_ns > result.retired_ns)
+        result.retired_ns == 0)
     {
         return error.InvalidNativeLoadServerRecord;
     }
@@ -5875,6 +6882,82 @@ fn nativeLoadRetentionCapacityCompletionRoot(
     return finishNativeLoadHash(&hash);
 }
 
+fn nativeLoadQueuedReceiveTimeoutRequestEvidence(
+    head: []const u8,
+    body: []const u8,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        native_load_queued_receive_timeout_http_request_domain,
+    );
+    hash.update(head);
+    hash.update(body);
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadQueuedReceiveTimeoutSemanticRoot(
+    request_sha256: protocol.Digest,
+    server: NativeLoadServerRecord,
+    response_bytes: u32,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        native_load_queued_receive_timeout_transport_semantics_domain,
+    );
+    hash.update(&request_sha256);
+    hash.update(&.{
+        native_load_queued_receive_timeout_kind_wire,
+        native_load_queued_phase_wire,
+        native_load_no_worker,
+    });
+    hashNativeLoadU64(
+        &hash,
+        native_load_queued_receive_timeout_ns,
+    );
+    hashNativeLoadU64(&hash, server.process_generation);
+    hashNativeLoadU64(&hash, server.connection_sequence);
+    hash.update(&.{server.slot_index});
+    hashNativeLoadU64(&hash, server.slot_generation);
+    hashNativeLoadU64(&hash, server.enqueue_ordinal);
+    hashNativeLoadU64(&hash, server.enqueue_ns);
+    hashNativeLoadU64(&hash, server.retired_ordinal);
+    hashNativeLoadU64(&hash, server.retired_ns);
+    hashNativeLoadU32(&hash, response_bytes);
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadQueuedReceiveTimeoutTerminalRoot(
+    request_sha256: protocol.Digest,
+    transport_semantics_sha256: protocol.Digest,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        native_load_queued_receive_timeout_terminal_domain,
+    );
+    hash.update(&request_sha256);
+    hash.update(&transport_semantics_sha256);
+    return finishNativeLoadHash(&hash);
+}
+
+fn nativeLoadQueuedReceiveTimeoutCompletionRoot(
+    request_sha256: protocol.Digest,
+    request_evidence_sha256: protocol.Digest,
+    transport_semantics_sha256: protocol.Digest,
+    response_bytes: u32,
+    terminal_sha256: protocol.Digest,
+) protocol.Digest {
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update(
+        native_load_queued_receive_timeout_completion_domain,
+    );
+    hash.update(&request_sha256);
+    hash.update(&request_evidence_sha256);
+    hash.update(&transport_semantics_sha256);
+    hashNativeLoadU32(&hash, response_bytes);
+    hash.update(&terminal_sha256);
+    return finishNativeLoadHash(&hash);
+}
+
 fn validateNativeLoadRetentionCapacityDigestVector() !void {
     const request_sha256 = [_]u8{0x5a} ** 32;
     const response_evidence_sha256 = [_]u8{0xa5} ** 32;
@@ -5922,6 +7005,88 @@ fn validateNativeLoadRetentionCapacityDigestVector() !void {
         &expected_completion,
     )) {
         return error.InvalidNativeLoadRetentionCapacityDigestVector;
+    }
+}
+
+fn validateNativeLoadQueuedReceiveTimeoutDigestVector() !void {
+    const request_sha256 = [_]u8{0x5a} ** 32;
+    const request_evidence_sha256 = [_]u8{0xa5} ** 32;
+    const computed_request_evidence =
+        nativeLoadQueuedReceiveTimeoutRequestEvidence(
+            "POST /v1/chat/completions HTTP/1.1\r\n\r\n",
+            "{\"profile\":\"queued-timeout\"}",
+        );
+    const server: NativeLoadServerRecord = .{
+        .outcome = .timed_out,
+        .request_sha256 = request_sha256,
+        .handle_sha256 = native_load_zero_digest,
+        .work_sequence = 0,
+        .process_generation = generation_native_load_queued_receive_timeout,
+        .connection_sequence = 9,
+        .slot_generation = 7,
+        .slot_index = 1,
+        .worker_index = native_load_no_worker,
+        .enqueue_ordinal = 11,
+        .dispatch_ordinal = 0,
+        .retired_ordinal = 19,
+        .enqueue_ns = 1_000,
+        .dispatch_ns = 0,
+        .decision_ns = 2_000_001_000,
+        .retired_ns = 2_000_001_000,
+    };
+    const transport_semantics_sha256 =
+        nativeLoadQueuedReceiveTimeoutSemanticRoot(
+            request_sha256,
+            server,
+            0,
+        );
+    const terminal_sha256 =
+        nativeLoadQueuedReceiveTimeoutTerminalRoot(
+            request_sha256,
+            transport_semantics_sha256,
+        );
+    const completion_sha256 =
+        nativeLoadQueuedReceiveTimeoutCompletionRoot(
+            request_sha256,
+            request_evidence_sha256,
+            transport_semantics_sha256,
+            0,
+            terminal_sha256,
+        );
+    const expected_semantics = try parseDigestHex(
+        "499c69faff1ba3ca4dc790e2c55e77d0" ++
+            "c28a47e7a3dbccd805ce92c431362fc1",
+    );
+    const expected_terminal = try parseDigestHex(
+        "d3049a94d7330676b6d8ab2aa1223f15" ++
+            "b091216480b25e901f677f5479ca4e6b",
+    );
+    const expected_completion = try parseDigestHex(
+        "a64eb21b3131992cfd5c67ba9cd6fd27" ++
+            "806fcfee030af0b1c806e642002c9fdc",
+    );
+    const expected_request_evidence = try parseDigestHex(
+        "141379cabcc44e0d4d6602df7de57c01" ++
+            "87003ee2a09c45c1834802c9fce24ae5",
+    );
+    if (!std.mem.eql(
+        u8,
+        &computed_request_evidence,
+        &expected_request_evidence,
+    ) or !std.mem.eql(
+        u8,
+        &transport_semantics_sha256,
+        &expected_semantics,
+    ) or !std.mem.eql(
+        u8,
+        &terminal_sha256,
+        &expected_terminal,
+    ) or !std.mem.eql(
+        u8,
+        &completion_sha256,
+        &expected_completion,
+    )) {
+        return error.InvalidNativeLoadQueuedReceiveTimeoutDigestVector;
     }
 }
 
@@ -6077,7 +7242,7 @@ fn nativeLoadTimestamps(
             joined.client.terminal_ns,
             settlement_ns,
         },
-        .capacity_rejected => [native_report.event_count]u64{
+        .capacity_rejected, .timed_out => [native_report.event_count]u64{
             joined.client.arrival_ns,
             0,
             0,
@@ -6098,7 +7263,7 @@ fn nativeLoadTimestamps(
                     return error.InvalidNativeLoadJoinedTimeline;
             }
         },
-        .capacity_rejected => {
+        .capacity_rejected, .timed_out => {
             if (result[0] == 0 or result[5] == 0 or
                 result[6] == 0 or result[0] > result[5] or
                 result[5] > result[6])
@@ -6116,7 +7281,7 @@ fn nativeLoadPresenceMask(
 ) !u8 {
     return switch (outcome) {
         .completed => native_report.event_presence_all,
-        .capacity_rejected => native_report.capacity_rejected_presence,
+        .capacity_rejected, .timed_out => native_report.capacity_rejected_presence,
         else => error.InvalidNativeLoadJoinedOutcome,
     };
 }
@@ -6175,8 +7340,8 @@ fn makeNativeLoadScenario(
         .warmup_count = native_load_warmup_count,
         .measured_count = native_load_measured_count,
         .max_in_flight = native_load_flow_count,
-        .queue_count = native_load_worker_count +
-            native_load_pending_capacity,
+        .queue_count = profile.workerCount() +
+            profile.pendingCapacity(),
         .flow_count = native_load_flow_count,
         .workload_sha256 = native_report.digestV1(
             "glacier-f1-native-unary-load-workload/v1",
@@ -6194,7 +7359,7 @@ fn makeNativeLoadScenario(
             "host-cpu-device-physical-metrics-unavailable/v1",
         ),
         .placement_sha256 = native_report.digestV1(
-            "managed-concurrent-loopback-2-worker-8-pending/v1",
+            profile.placementIdentity(),
         ),
         .host_source_sha256 = native_report.digestV1(
             "f1-native-load-parent-child-observers/v1",
@@ -6418,6 +7583,45 @@ fn buildNativeLoadInnerReport(
                         ),
                     },
                 });
+        } else if (record.client.outcome == .timed_out) {
+            record_storage[index] =
+                try native_report.makeRecordV1(.{
+                    .ordinal = ordinal,
+                    .cohort = if (index <
+                        native_load_warmup_count)
+                        .warmup
+                    else
+                        .measured,
+                    .outcome = .timed_out,
+                    .correctness = .not_applicable,
+                    .fallback = false,
+                    .flow_id = record.client.flow_id,
+                    .work_units = 1,
+                    .adapter_queue_slot = native_report.no_queue_slot,
+                    .host = host,
+                    .roots = .{
+                        .request_sha256 = record.client.request_sha256,
+                        .terminal_sha256 = record.client.terminal_sha256,
+                        .completion_sha256 = record.client.completion_sha256,
+                    },
+                    .device_timing = .{
+                        .availability = .unsupported,
+                        .source_sha256 = scenario.device_source_sha256,
+                        .clock_sha256 = scenario.device_clock_sha256,
+                        .reason_sha256 = nativeLoadUnavailableReason(
+                            "device timing",
+                            ordinal,
+                        ),
+                    },
+                    .allocated_context = .{
+                        .availability = .unsupported,
+                        .source_sha256 = scenario.device_source_sha256,
+                        .reason_sha256 = nativeLoadUnavailableReason(
+                            "allocated context",
+                            ordinal,
+                        ),
+                    },
+                });
         } else {
             return error.InvalidNativeLoadJoinedOutcome;
         }
@@ -6514,6 +7718,44 @@ fn validateNativeLoadClosureValues(
     profile: NativeLoadProfile,
     values: *const [native_load_closure_u64_count]u64,
 ) !void {
+    if (profile == .queued_receive_timeout) {
+        if (values[0] != native_load_record_count or
+            values[1] !=
+                native_load_queued_receive_timeout_completed_count or
+            values[2] !=
+                native_load_queued_receive_timeout_timed_out_count or
+            values[3] != native_load_record_count or
+            values[4] !=
+                native_load_queued_receive_timeout_completed_count or
+            values[5] !=
+                native_load_queued_receive_timeout_pending_capacity or
+            values[6] !=
+                native_load_queued_receive_timeout_worker_count or
+            values[7] !=
+                native_load_queued_receive_timeout_epoch_count or
+            values[8] !=
+                native_load_queued_receive_timeout_epoch_count or
+            values[9] != 0 or values[10] != 0 or
+            values[11] !=
+                native_load_queued_receive_timeout_timed_out_count or
+            values[12] != 0 or values[13] != 0 or
+            values[14] != 0 or values[15] != 0 or
+            values[16] != 0 or values[17] != 0 or
+            values[18] !=
+                native_load_queued_receive_timeout_completed_count or
+            values[19] !=
+                native_load_queued_receive_timeout_completed_count or
+            values[20] != 0 or values[21] != 0 or
+            values[22] != 0 or values[23] != 1 or
+            values[24] != 1 or values[25] != 1 or
+            values[26] != 0 or
+            values[27] !=
+                native_load_queued_receive_timeout_event_count)
+        {
+            return error.InvalidNativeLoadClosure;
+        }
+        return;
+    }
     const expected_completed: u64 =
         @intCast(profile.completedCount());
     if (values[0] != native_load_record_count or
@@ -6645,6 +7887,54 @@ fn encodeNativeLoadOuter(
                     return error.InvalidNativeLoadRejectedSidecar;
                 }
             },
+            .timed_out => {
+                const expected_semantics =
+                    nativeLoadQueuedReceiveTimeoutSemanticRoot(
+                        record.client.request_sha256,
+                        record.server,
+                        record.client.response_bytes,
+                    );
+                const expected_terminal =
+                    nativeLoadQueuedReceiveTimeoutTerminalRoot(
+                        record.client.request_sha256,
+                        expected_semantics,
+                    );
+                const expected_completion =
+                    nativeLoadQueuedReceiveTimeoutCompletionRoot(
+                        record.client.request_sha256,
+                        record.client.response_handle_sha256,
+                        expected_semantics,
+                        record.client.response_bytes,
+                        expected_terminal,
+                    );
+                if (record.client.response_bytes != 0 or
+                    record.server.work_sequence != 0 or
+                    !std.mem.eql(
+                        u8,
+                        &record.server.handle_sha256,
+                        &native_load_zero_digest,
+                    ) or std.mem.eql(
+                    u8,
+                    &record.client.response_handle_sha256,
+                    &native_load_zero_digest,
+                ) or !std.mem.eql(
+                    u8,
+                    &record.client.output_sha256,
+                    &expected_semantics,
+                ) or record.client.output_token != 0 or
+                    record.client.content_byte != 0 or
+                    !std.mem.eql(
+                        u8,
+                        &record.client.terminal_sha256,
+                        &expected_terminal,
+                    ) or !std.mem.eql(
+                    u8,
+                    &record.client.completion_sha256,
+                    &expected_completion,
+                )) {
+                    return error.InvalidNativeLoadTimedOutSidecar;
+                }
+            },
             else => return error.InvalidNativeLoadSidecarOutcome,
         }
         const sidecar_start = writer.position;
@@ -6733,6 +8023,403 @@ fn encodeNativeLoadOuter(
     return output;
 }
 
+fn runNativeLoadQueuedReceiveTimeoutSupervisor(
+    allocator: std.mem.Allocator,
+    challenge_hex: []const u8,
+    build_hex: []const u8,
+    machine_hex: []const u8,
+) !void {
+    const profile: NativeLoadProfile = .queued_receive_timeout;
+    const challenge_sha256 =
+        try parseDigestHex(challenge_hex);
+    const build_sha256 =
+        try parseDigestHex(build_hex);
+    const machine_sha256 =
+        try parseDigestHex(machine_hex);
+
+    var fixture = try Fixture.init(allocator);
+    defer fixture.deinit();
+    const executable =
+        try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(executable);
+    const oracle =
+        try makeLocalOracle(allocator, &fixture);
+    var child = try spawnWorker(
+        allocator,
+        executable,
+        &fixture,
+        profile.generation(),
+        .native_load_queued_receive_timeout,
+    );
+    var waited = false;
+    defer if (!waited) terminateChild(&child);
+
+    var frame_storage: [frame_max_bytes]u8 = undefined;
+    const ready = try parseReady(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    if (ready.generation != profile.generation() or
+        !std.mem.eql(
+            u8,
+            &ready.model_id,
+            &oracle.model_id,
+        ))
+    {
+        return error.InvalidNativeLoadReady;
+    }
+
+    var client_observations: [native_load_record_count]NativeLoadClientObservation =
+        undefined;
+    for (0..native_load_warmup_count) |planned| {
+        var start: std.Thread.ResetEvent = .{};
+        start.set();
+        var context: NativeLoadClientContext = .{
+            .profile = profile,
+            .ready = ready,
+            .oracle = oracle,
+            .planned_ordinal = @intCast(planned),
+            .flow_id = @intCast(planned),
+            .start = &start,
+        };
+        try context.execute();
+        client_observations[planned] =
+            context.observation;
+        const expected = planned + 1;
+        var command_storage: [64]u8 = undefined;
+        const command = try std.fmt.bufPrint(
+            &command_storage,
+            "native-load-wave {d}\n",
+            .{expected},
+        );
+        try child.stdin.?.writeAll(command);
+        try parseNativeLoadWave(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            expected,
+        );
+    }
+
+    for (0..native_load_queued_receive_timeout_epoch_count) |epoch| {
+        var first_start: std.Thread.ResetEvent = .{};
+        var second_start: std.Thread.ResetEvent = .{};
+        const planned_base =
+            native_load_warmup_count +
+            epoch * native_load_flow_count;
+        var contexts = [2]NativeLoadClientContext{
+            .{
+                .profile = profile,
+                .ready = ready,
+                .oracle = oracle,
+                .planned_ordinal = @intCast(planned_base),
+                .flow_id = @intCast(epoch %
+                    native_load_flow_count),
+                .start = &first_start,
+            },
+            .{
+                .profile = profile,
+                .ready = ready,
+                .oracle = oracle,
+                .planned_ordinal = @intCast(planned_base + 1),
+                .flow_id = @intCast((epoch + 1) %
+                    native_load_flow_count),
+                .start = &second_start,
+            },
+        };
+        var threads: [2]std.Thread = undefined;
+        var spawned: usize = 0;
+        var queued_clients: [
+            native_load_queued_receive_timeout_queued_per_epoch
+        ]NativeLoadQueuedTimeoutClient = undefined;
+        var opened: usize = 0;
+        errdefer {
+            if (!waited) {
+                terminateChild(&child);
+                waited = true;
+            }
+            first_start.set();
+            second_start.set();
+            for (threads[0..spawned]) |thread| thread.join();
+            for (queued_clients[0..opened]) |*client|
+                client.deinit();
+        }
+
+        threads[0] = try std.Thread.spawn(
+            .{},
+            NativeLoadClientContext.run,
+            .{&contexts[0]},
+        );
+        spawned = 1;
+        first_start.set();
+        try parseNativeLoadQueuedStep(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            "NATIVE-LOAD-BLOCKER",
+            epoch,
+            0,
+        );
+
+        threads[1] = try std.Thread.spawn(
+            .{},
+            NativeLoadClientContext.run,
+            .{&contexts[1]},
+        );
+        spawned = 2;
+        second_start.set();
+        try parseNativeLoadQueuedStep(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            "NATIVE-LOAD-QUEUE-READY",
+            epoch,
+            0,
+        );
+
+        for (0..native_load_queued_receive_timeout_queued_per_epoch) |offset| {
+            const planned =
+                planned_base +
+                native_load_queued_receive_timeout_running_per_epoch +
+                offset;
+            queued_clients[offset] =
+                try NativeLoadQueuedTimeoutClient.open(
+                    ready,
+                    @intCast(planned),
+                    @intCast((epoch +
+                        native_load_queued_receive_timeout_running_per_epoch +
+                        offset) % native_load_flow_count),
+                );
+            opened += 1;
+            const request_hex = std.fmt.bytesToHex(
+                queued_clients[offset]
+                    .observation.request_sha256,
+                .lower,
+            );
+            var control_storage: [192]u8 = undefined;
+            const control = try std.fmt.bufPrint(
+                &control_storage,
+                "native-load-queued {d} {d} {s}\n",
+                .{ epoch, offset, &request_hex },
+            );
+            try child.stdin.?.writeAll(control);
+            try parseNativeLoadQueuedStep(
+                try readFrame(
+                    child.stdout.?,
+                    &frame_storage,
+                ),
+                "NATIVE-LOAD-QUEUED",
+                epoch,
+                offset,
+            );
+        }
+
+        for (0..native_load_queued_receive_timeout_queued_per_epoch) |offset| {
+            try parseNativeLoadQueuedStep(
+                try readFrame(
+                    child.stdout.?,
+                    &frame_storage,
+                ),
+                "NATIVE-LOAD-TIMEOUT",
+                epoch,
+                offset,
+            );
+            const planned =
+                planned_base +
+                native_load_queued_receive_timeout_running_per_epoch +
+                offset;
+            client_observations[planned] =
+                try queued_clients[offset].settle();
+        }
+        var release_storage: [64]u8 = undefined;
+        const release_command = try std.fmt.bufPrint(
+            &release_storage,
+            "native-load-release {d}\n",
+            .{epoch},
+        );
+        try child.stdin.?.writeAll(release_command);
+        for (threads) |thread| thread.join();
+        spawned = 0;
+        for (contexts, 0..) |context, offset| {
+            if (context.thread_error) |err| return err;
+            client_observations[planned_base + offset] =
+                context.observation;
+        }
+        const expected_retired =
+            native_load_warmup_count +
+            (epoch + 1) *
+                native_load_queued_receive_timeout_running_per_epoch;
+        try parseNativeLoadWave(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            expected_retired,
+        );
+    }
+
+    try child.stdin.?.writeAll(
+        native_load_drain_command,
+    );
+    child.stdin.?.close();
+    child.stdin = null;
+
+    var server_records: [native_load_record_count]NativeLoadServerRecord =
+        undefined;
+    for (&server_records, 0..) |*record, index| {
+        record.* = try parseNativeLoadServerRecord(
+            try readFrame(
+                child.stdout.?,
+                &frame_storage,
+            ),
+            index,
+            profile,
+        );
+    }
+    const closure = try parseNativeLoadClosure(
+        try readFrame(child.stdout.?, &frame_storage),
+    );
+    try requireWorkerEof(child.stdout.?);
+    const term = try child.wait();
+    waited = true;
+    switch (term) {
+        .Exited => |code| if (code != 0)
+            return error.NativeLoadWorkerFailed,
+        else => return error.UnexpectedWorkerTermination,
+    }
+
+    var joined: [native_load_record_count]NativeLoadJoinedRecord =
+        undefined;
+    var matched =
+        [_]bool{false} ** native_load_record_count;
+    for (&client_observations, 0..) |
+        *client,
+        client_index,
+    | {
+        var found: ?usize = null;
+        for (server_records, 0..) |
+            server,
+            server_index,
+        | {
+            if (!std.mem.eql(
+                u8,
+                &client.request_sha256,
+                &server.request_sha256,
+            )) continue;
+            if (found != null or matched[server_index])
+                return error.DuplicateNativeLoadCorrelation;
+            found = server_index;
+        }
+        const server_index = found orelse
+            return error.MissingNativeLoadCorrelation;
+        const server = server_records[server_index];
+        const expected_outcome = profile.expectedOutcome(
+            client.planned_ordinal,
+        );
+        if (client.outcome != expected_outcome or
+            server.outcome != expected_outcome)
+        {
+            return error.InvalidNativeLoadJoinedOutcome;
+        }
+        switch (expected_outcome) {
+            .completed => {
+                if (!std.mem.eql(
+                    u8,
+                    &client.response_handle_sha256,
+                    &server.handle_sha256,
+                )) return error.NativeLoadResponseHandleMismatch;
+            },
+            .timed_out => {
+                if (server.work_sequence != 0 or
+                    !std.mem.eql(
+                        u8,
+                        &server.handle_sha256,
+                        &native_load_zero_digest,
+                    ) or std.mem.eql(
+                    u8,
+                    &client.response_handle_sha256,
+                    &native_load_zero_digest,
+                ) or client.response_bytes != 0 or
+                    client.first_output_ns != 0 or
+                    client.arrival_ns > server.enqueue_ns or
+                    server.retired_ns >
+                        client.client_settlement_ns or
+                    client.client_settlement_ns -
+                        client.arrival_ns <
+                        native_load_queued_receive_timeout_ns or
+                    client.client_settlement_ns -
+                        client.arrival_ns >
+                        native_load_queued_receive_timeout_max_observation_ns or
+                    client.client_settlement_ns -
+                        server.retired_ns >
+                        native_load_queued_receive_timeout_max_settlement_propagation_ns)
+                {
+                    return error.InvalidNativeLoadTimedOutCorrelation;
+                }
+                client.output_sha256 =
+                    nativeLoadQueuedReceiveTimeoutSemanticRoot(
+                        client.request_sha256,
+                        server,
+                        client.response_bytes,
+                    );
+                client.terminal_sha256 =
+                    nativeLoadQueuedReceiveTimeoutTerminalRoot(
+                        client.request_sha256,
+                        client.output_sha256,
+                    );
+                client.completion_sha256 =
+                    nativeLoadQueuedReceiveTimeoutCompletionRoot(
+                        client.request_sha256,
+                        client.response_handle_sha256,
+                        client.output_sha256,
+                        client.response_bytes,
+                        client.terminal_sha256,
+                    );
+                client.terminal_ns = server.retired_ns;
+            },
+            else => return error.InvalidNativeLoadJoinedOutcome,
+        }
+        matched[server_index] = true;
+        joined[client_index] = .{
+            .client = client.*,
+            .server = server,
+        };
+    }
+    for (matched) |present| {
+        if (!present)
+            return error.MissingNativeLoadCorrelation;
+    }
+
+    var report_records: [native_load_record_count]native_report.RecordV1 =
+        undefined;
+    var inner_storage: [native_load_inner_bytes]u8 = undefined;
+    const inner = try buildNativeLoadInnerReport(
+        profile,
+        &fixture,
+        &joined,
+        challenge_sha256,
+        build_sha256,
+        machine_sha256,
+        &report_records,
+        &inner_storage,
+    );
+    var outer_storage: [native_load_outer_bytes]u8 = undefined;
+    const outer = try encodeNativeLoadOuter(
+        profile,
+        &joined,
+        &closure,
+        inner,
+        &outer_storage,
+    );
+    var stdout_storage: [8192]u8 = undefined;
+    var stdout =
+        std.fs.File.stdout().writer(&stdout_storage);
+    try stdout.interface.writeAll(outer);
+    try stdout.interface.flush();
+}
+
 fn runNativeLoadSupervisor(
     allocator: std.mem.Allocator,
     challenge_hex: []const u8,
@@ -6744,6 +8431,14 @@ fn runNativeLoadSupervisor(
         builtin.os.tag == .wasi or builtin.os.tag == .uefi)
     {
         return error.NativeLoadUnsupported;
+    }
+    if (profile == .queued_receive_timeout) {
+        return runNativeLoadQueuedReceiveTimeoutSupervisor(
+            allocator,
+            challenge_hex,
+            build_hex,
+            machine_hex,
+        );
     }
     _ = try nativeLoadMonotonicNs();
     const challenge_sha256 =
@@ -9639,7 +11334,8 @@ fn spawnWorker(
     child.stdin_behavior = .Pipe;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = if (profile == .native_load or
-        profile == .native_load_retention_capacity)
+        profile == .native_load_retention_capacity or
+        profile == .native_load_queued_receive_timeout)
         .Inherit
     else
         .Ignore;

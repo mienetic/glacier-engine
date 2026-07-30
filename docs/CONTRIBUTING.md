@@ -51,14 +51,17 @@ hardware evidence it did not collect.
 The real Phase F1 native-load profiles are deliberately manual. No automatic
 GitHub CI profile runs them, so hosted-machine contention and uncontrolled
 environment state are not reported as native load evidence. The default
-all-completed profile and
-`-Dunary-server-native-load-profile=retention-capacity-v1` reuse the same
+all-completed profile,
+`-Dunary-server-native-load-profile=retention-capacity-v1`, and
+`-Dunary-server-native-load-profile=queued-receive-timeout-v1` reuse the same
 target, managed-process artifact, and compile root. Pure Python
-envelope/verifier tests remain ordinary correctness checks.
-The selector proves retained-record capacity saturation only. It is not
-transient, general, or open-loop overload; queued-timeout evidence; throughput
-superiority; production-model behavior; fairness; GPU behavior; or cross-OS
-evidence.
+envelope/verifier tests remain ordinary correctness checks. The capacity
+selector proves retained-record saturation only. The queued receive-timeout
+selector proves its declared deterministic closed-loop queue-pressure shape
+only; it is not explicit open-loop, transient, or general overload evidence.
+No fixed profile establishes generic queue latency, throughput superiority,
+production-model behavior, fairness, physical parallelism, first-token
+latency, GPU behavior, or native foreign-OS evidence.
 
 Then choose a bounded item from [Contributor projects](PROJECTS.md), open a
 **Claim a contributor slice** issue, and tell us what command will prove it is
@@ -150,7 +153,7 @@ hides the checks required by another changed path.
 | Bounded unary prepared-text service kernel or its focused acceptance root | A focused acceptance-only change runs `unary-text-service-test` alone. A kernel implementation change selects the service, HTTP, and managed-process roots in one host Zig invocation. Complete affected verification selects the corresponding compile-only companions on each retained target without pulling the broad model-forward suite |
 | Bounded unary HTTP contract, client, or focused acceptance root | `affected-fast` runs `unary-http-test` once; complete affected verification selects only `unary-http-compile` on retained targets |
 | Managed unary server adapter/API or process acceptance root | A shared server implementation change selects `unary-http-test` and `unary-server-process-test` without the service-only root; a process-fixture-only change selects `unary-server-process-test` alone. Complete affected verification selects only the corresponding compile companions; foreign compilation is not native serving evidence |
-| Native unary load producer or verifier | Run `python3 -m unittest bench.tests.test_native_unary_server_load`. Producer/process changes also compile the existing `unary-server-process-compile` root; a verifier-only change adds no foreign Zig target. Run `unary-server-native-load-test` only as an explicit native macOS/Linux capture. The `retention-capacity-v1` selector must retain 8 completed warmups, measured `32 completed / 32 HTTP 429 service_capacity`, per-flow `4/4`, service terminal capacity 40, and zero ownership. For each rejection, verify the exact request/`service_capacity`/`same_request_after_backoff`/HTTP-429/response-byte-count semantic tuple and transport correlation. Treat the sidecar response handle as a domain-separated opaque producer digest whose raw HTTP source is not retained or reconstructable offline; independently recompute the separately domain-separated semantic root in the sidecar `output_sha256` slot, require completion to bind both, and keep the embedded W6 output root zero. Never treat a CI skip, foreign compile, structural verifier pass, or this retained-record saturation profile as general overload or performance evidence |
+| Native unary load producer or verifier | Run `python3 -m unittest bench.tests.test_native_unary_server_load`. Producer/process changes also compile the existing `unary-server-process-compile` root; a verifier-only change adds no foreign Zig target. Run `unary-server-native-load-test` only as an explicit native macOS/Linux capture. The `retention-capacity-v1` selector must retain 8 completed warmups, measured `32 completed / 32 HTTP 429 service_capacity`, per-flow `4/4`, service terminal capacity 40, and zero ownership. For each rejection, verify the exact request/`service_capacity`/`same_request_after_backoff`/HTTP-429/response-byte-count semantic tuple and transport correlation. Treat the sidecar response handle as a domain-separated opaque producer digest whose raw HTTP source is not retained or reconstructable offline; independently recompute the separately domain-separated semantic root in the sidecar `output_sha256` slot, require completion to bind both, and keep the embedded W6 output root zero. The closed-loop `queued-receive-timeout-v1` selector must retain 8 sequential completed warmups plus 8 deterministic measured epochs, each with 2 running completions and 6 queued receive timeouts, rotated to measured `2 completed / 6 timed_out` per flow. Require enqueued `72`, dispatched/completed `24`, failed/queued-receive-timeout `48`, queue/running high-water `6/2`, pause/resume `8/8`, 24 completed Service records, event ordinal `184`, and zero ownership. Its verifier admits client arrival to timeout only in `2..4` seconds, enqueue to timeout at no more than 3 seconds, and timeout to peer-close/no-response settlement at no more than 1 second; settlement requires zero response bytes and permits a zero-length read or connection reset/abort. A timed-out W6 record has arrival/terminal/settlement only, not-applicable correctness, and no Bank/work/dispatch/output; its outer record retains the client-observed canonical request root, opaque raw-outbound-HTTP digest, exact enqueue/lease/`.queued_receive_timeout` evidence, and recomputable semantic/terminal/completion roots. The queued connection emits no separate `.retired` event, and request-to-lease association is deterministic single-outstanding client-plan/transmit correlation rather than server-parsed request attestation. Never treat a CI skip, foreign compile, structural verifier pass, retained-record saturation, or this deterministic queue-pressure shape as general overload, generic queue latency, throughput superiority, fairness, physical parallelism, first-token, production-model, GPU, native foreign-OS, or other performance evidence |
 | Ordinary model package producer, strict tensor-profile admission module, package-aware `text-run`, its explicit POSIX supervisor protocol/death controller, process-local variable-terminal module, or bounded-input helper | `affected-fast` reuses the existing installed-CLI `text-runtime-golden-path-test` host DAG once; supervisor/death cases add no executable or compile root, and the complete affected tier cross-compiles only the existing CLI artifact through `text-runtime-golden-path-compile` |
 | Package/raw-input Python oracle implementation | Changed-file syntax plus the CLI-backed `text-runtime-golden-path-test`, which checks the independent oracle against executable output in one host DAG; no foreign target |
 | Package/raw-input Python test only | Changed-file syntax plus exactly `bench.tests.test_prepared_text_raw_input` and `bench.tests.test_prepared_text_package`; no Zig build, generic host DAG, full Python discovery, or foreign target |
@@ -198,6 +201,10 @@ zig build unary-server-native-load-test \
 zig build unary-server-native-load-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j1 \
   -Dunary-server-native-load-profile=retention-capacity-v1
+
+zig build unary-server-native-load-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j1 \
+  -Dunary-server-native-load-profile=queued-receive-timeout-v1
 
 zig build unary-server-native-load-test \
   -Dmetal=false -Doptimize=ReleaseSafe -j1 \

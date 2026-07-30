@@ -126,7 +126,7 @@ pub fn build(b: *std.Build) void {
     const unary_server_native_load_profile = b.option(
         []const u8,
         "unary-server-native-load-profile",
-        "Native unary load profile: successful-v1 or retention-capacity-v1",
+        "Native unary load profile: successful-v1, retention-capacity-v1, or queued-receive-timeout-v1",
     ) orelse "successful-v1";
     if (!std.mem.eql(
         u8,
@@ -136,10 +136,15 @@ pub fn build(b: *std.Build) void {
         u8,
         unary_server_native_load_profile,
         "retention-capacity-v1",
+    ) and !std.mem.eql(
+        u8,
+        unary_server_native_load_profile,
+        "queued-receive-timeout-v1",
     )) {
         @panic(
             "-Dunary-server-native-load-profile must be " ++
-                "successful-v1 or retention-capacity-v1",
+                "successful-v1, retention-capacity-v1, or " ++
+                "queued-receive-timeout-v1",
         );
     }
     const unary_server_native_load_output = b.option(

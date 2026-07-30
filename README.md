@@ -455,6 +455,20 @@ formats, and independent verifiers.
   evidence. macOS captures may pass the environment publication gate; Linux
   runs remain diagnostic until external CPU-load attribution is available.
 
+  A third selector,
+  `-Dunary-server-native-load-profile=queued-receive-timeout-v1`, reuses the
+  same artifact for a deterministic closed-loop queue-pressure profile. After
+  8 completed warmups, each of 8 measured epochs holds 2 running controls
+  while 6 accepted FIFO peers reach their exact 2-second queued receive
+  deadline. The measured result is 16 completed and 48 timed-out attempts,
+  rotated so every flow retains `2 completed / 6 timed_out`. The verifier
+  requires zero response bytes for every timeout, exact enqueue/lease/timeout
+  evidence, bounded client settlement, joined cleanup, and zero connection,
+  Service, Scheduler, and Bank ownership. This is not explicit open-loop or
+  general overload evidence, a generic queue-latency promise, first-token
+  latency, physical parallelism, production-model, GPU, or native foreign-OS
+  evidence.
+
   Phase F1 concurrent serving is explicitly unsupported on Windows today: the
   entrypoint returns
   `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it
@@ -1556,9 +1570,10 @@ hardware-independent surface without those native backend dependencies.
 | Runtime Workload Lab | W0 deterministic mixed-media open-loop conformance, W1 scheduler-coupled media execution, the W2 four-seed/32-case generated corpus, W3 finite-source closed-loop conformance, W4a mixed typed-perception conformance, the W4b-a typed tool transaction, W4b-b ActionOutbox record recovery, the W4b-c durable POSIX store, W4b-d generation-fenced fake dispatch/status, W5a native observation, a bounded Linux host-source implementation, native macOS Metal readiness, pinned-allocation and bounded two-slot pressure gates, the portable W6a raw-record/summary/closure foundation, the W6b production-native 20-request Metal report producer, W7a finite controlled disruption, W7b-b3 paired-thread concurrent-caller cancellation, W7b-b4 controlled event-blocked in-flight process kill with a fresh production control, W7b-a bounded segmented soak, W7b-b1 quiescent-worker process kill, the W7b-b2 production-publisher/reference-recovery campaign-store process-death/error roll-forward, and W7b-b5 generation-six supervisor-death plus prepared-generation-twelve recovery-process-death cover overload, fairness, timeout, cancellation, turnover, typed publication/effect delivery, uncertain external handoff, fenced safe retry, deterministic crash modeling, explicit machine-state availability, fail-closed pre-run admission, retained post-run contamination, strict unavailable-not-zero behavior, independently recomputed workload evidence, correctness-gated accelerator dispatches, clean and forced worker restart, canonical checkpoint publication/offline audit, and controlled recovery without performance or physical-residency claims | Complete W7b-b active-kernel, broader supervisor/recovery interruption, adapter, and physical device/storage/driver/power campaigns; retain native Linux and broader accelerator campaign matrices; add trustworthy direct CPU/GPU metrics where platform sources exist; then W8 multi-OS replication |
 | Tooling | Zig build, exported `glacier`/`glacier_core` package modules, deterministic demos, benchmark harnesses, five domain compile profiles plus one complete consumer-closure profile, CLI-only default install, and opt-in benchmark installation | Distributable product profiles, installer, stable library API, and simpler fixture workflow |
 
-The AI-runtime and Serving rows now include two fixed native CPU load profiles:
-all-completed and retained-record-capacity. References to collecting native-load
-evidence next mean queued-timeout and broader overload/rejection campaigns,
+The AI-runtime and Serving rows now include three fixed native CPU load
+profiles: all-completed, retained-record-capacity, and deterministic
+queued-receive-timeout. References to collecting broader native-load evidence
+next mean explicit open-loop and transient/general overload campaigns,
 production models, repeated machines, publication-eligible native Linux, and
 separately declared GPU campaigns.
 

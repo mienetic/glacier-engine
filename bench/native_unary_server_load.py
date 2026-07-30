@@ -41,6 +41,8 @@ MAGIC = b"GF1LOAD1"
 OUTER_ABI = 0x4746314C00000001
 RETENTION_CAPACITY_MAGIC = b"GF1CAP01"
 RETENTION_CAPACITY_OUTER_ABI = 0x4746314300000001
+QUEUED_RECEIVE_TIMEOUT_MAGIC = b"GF1QRT01"
+QUEUED_RECEIVE_TIMEOUT_OUTER_ABI = 0x4746315100000001
 HEADER_BYTES = 40
 SIDECAR_BYTES = 296
 CLOSURE_U64_COUNT = 28
@@ -79,6 +81,12 @@ RETENTION_CAPACITY_BODY_DOMAIN = (
 RETENTION_CAPACITY_FOOTER_DOMAIN = (
     b"glacier-f1-native-unary-retention-capacity-footer-v1\x00"
 )
+QUEUED_RECEIVE_TIMEOUT_BODY_DOMAIN = (
+    b"glacier-f1-native-unary-queued-receive-timeout-body-v1\x00"
+)
+QUEUED_RECEIVE_TIMEOUT_FOOTER_DOMAIN = (
+    b"glacier-f1-native-unary-queued-receive-timeout-footer-v1\x00"
+)
 PIN_DOMAIN = b"glacier-f1-native-unary-load-pin-v1\x00"
 DISPATCH_DOMAIN = b"glacier-f1-native-unary-load-dispatch-v1\x00"
 SUBMISSION_DOMAIN = b"glacier-f1-native-unary-load-submission-v1\x00"
@@ -97,6 +105,18 @@ RETENTION_CAPACITY_TERMINAL_DOMAIN = (
 RETENTION_CAPACITY_COMPLETION_DOMAIN = (
     b"glacier-f1-native-unary-retention-capacity-completion-v1\x00"
 )
+QUEUED_RECEIVE_TIMEOUT_HTTP_REQUEST_DOMAIN = (
+    b"glacier-f1-native-unary-queued-receive-timeout-http-request-v1\x00"
+)
+QUEUED_RECEIVE_TIMEOUT_TRANSPORT_SEMANTICS_DOMAIN = (
+    b"glacier-f1-native-unary-queued-receive-timeout-transport-semantics-v1\x00"
+)
+QUEUED_RECEIVE_TIMEOUT_TERMINAL_DOMAIN = (
+    b"glacier-f1-native-unary-queued-receive-timeout-terminal-v1\x00"
+)
+QUEUED_RECEIVE_TIMEOUT_COMPLETION_DOMAIN = (
+    b"glacier-f1-native-unary-queued-receive-timeout-completion-v1\x00"
+)
 
 WORKLOAD_ID = b"glacier-f1-native-unary-load-workload/v1"
 PROFILE_ID = (
@@ -108,27 +128,84 @@ RETENTION_CAPACITY_PROFILE_ID = (
     b"retention-capacity-8-warmup-32-completed-32-rejected-"
     b"8-flow-2-worker-40-record/v1"
 )
+QUEUED_RECEIVE_TIMEOUT_PROFILE_ID = (
+    b"glacier-f1-native-unary-load-profile/"
+    b"queued-receive-timeout-8-warmup-16-completed-48-timed-out-"
+    b"8-flow-2-worker-6-pending-2000000000ns-timeout-"
+    b"4000000000ns-observation-cap-3000000000ns-queue-cap-"
+    b"1000000000ns-settlement-cap/v1"
+)
 BACKEND_ID = b"glacier-prepared-text-unary-cpu-backend/v1"
 DEVICE_ID = b"host-cpu-device-physical-metrics-unavailable/v1"
 PLACEMENT_ID = b"managed-concurrent-loopback-2-worker-8-pending/v1"
+QUEUED_RECEIVE_TIMEOUT_PLACEMENT_ID = (
+    b"managed-concurrent-loopback-2-worker-6-pending/v1"
+)
 HOST_SOURCE_ID = b"f1-native-load-parent-child-observers/v1"
 DEVICE_SOURCE_ID = b"f1-native-load-device-observer-unsupported/v1"
 DEVICE_CLOCK_ID = b"f1-native-load-device-clock-unsupported/v1"
 PROCESS_GENERATION = 0x4753505200000116
 RETENTION_CAPACITY_PROCESS_GENERATION = 0x4753505200000117
+QUEUED_RECEIVE_TIMEOUT_PROCESS_GENERATION = 0x4753505200000118
 ZERO_DIGEST = b"\x00" * 32
 NO_QUEUE_SLOT = (1 << 32) - 1
 OUTCOME_COMPLETED = 0
 OUTCOME_CAPACITY_REJECTED = 1
+OUTCOME_TIMED_OUT = 4
 CAPACITY_REJECTED_PRESENCE = 0x61
 SUCCESSFUL_PROFILE_NAME = "successful-v1"
 RETENTION_CAPACITY_PROFILE_NAME = "retention-capacity-v1"
+QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME = "queued-receive-timeout-v1"
 RETENTION_CAPACITY_COMPLETED_RECORDS = 40
 RETENTION_CAPACITY_MEASURED_COMPLETED = 32
 RETENTION_CAPACITY_MEASURED_REJECTED = 32
 RETENTION_CAPACITY_ERROR_CODE = 11
 RETENTION_CAPACITY_RETRY_DISPOSITION = 1
 RETENTION_CAPACITY_HTTP_STATUS = 429
+QUEUED_RECEIVE_TIMEOUT_MEASURED_COMPLETED = 16
+QUEUED_RECEIVE_TIMEOUT_MEASURED_TIMED_OUT = 48
+QUEUED_RECEIVE_TIMEOUT_SERVICE_COMPLETED_RECORDS = 24
+QUEUED_RECEIVE_TIMEOUT_WORKER_COUNT = 2
+QUEUED_RECEIVE_TIMEOUT_PENDING_CAPACITY = 6
+QUEUED_RECEIVE_TIMEOUT_QUEUE_COUNT = 8
+QUEUED_RECEIVE_TIMEOUT_MAX_IN_FLIGHT = 8
+QUEUED_RECEIVE_TIMEOUT_NS = 2_000_000_000
+QUEUED_RECEIVE_TIMEOUT_MAX_TERMINAL_NS = 4_000_000_000
+QUEUED_RECEIVE_TIMEOUT_MAX_QUEUE_RESIDENCE_NS = 3_000_000_000
+QUEUED_RECEIVE_TIMEOUT_MAX_SETTLEMENT_PROPAGATION_NS = 1_000_000_000
+QUEUED_RECEIVE_TIMEOUT_EVENT_KIND = 6
+QUEUED_RECEIVE_TIMEOUT_PHASE = 8
+NO_WORKER_INDEX = (1 << 8) - 1
+QUEUED_RECEIVE_TIMEOUT_CLOSURE = (
+    72,
+    24,
+    48,
+    72,
+    24,
+    6,
+    2,
+    8,
+    8,
+    0,
+    0,
+    48,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    24,
+    24,
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    0,
+    184,
+)
 
 SIDECAR_STRUCT = struct.Struct(
     "<II11Q4BI32s32s32s32s32s32s"
@@ -152,38 +229,76 @@ class CampaignProfile:
     process_generation: int
     measured_completed: int
     measured_capacity_rejected: int
+    measured_timed_out: int
     service_completed_records: int
+    max_in_flight: int
+    queue_count: int
+    worker_count: int
+    pending_capacity: int
+    placement_id: bytes
 
 
 SUCCESSFUL_PROFILE = CampaignProfile(
-    SUCCESSFUL_PROFILE_NAME,
-    "--native-load",
-    MAGIC,
-    OUTER_ABI,
-    BODY_DOMAIN,
-    FOOTER_DOMAIN,
-    PROFILE_ID,
-    PROCESS_GENERATION,
-    MEASURED_COUNT,
-    0,
-    RECORD_COUNT,
+    name=SUCCESSFUL_PROFILE_NAME,
+    producer_mode="--native-load",
+    magic=MAGIC,
+    outer_abi=OUTER_ABI,
+    body_domain=BODY_DOMAIN,
+    footer_domain=FOOTER_DOMAIN,
+    profile_id=PROFILE_ID,
+    process_generation=PROCESS_GENERATION,
+    measured_completed=MEASURED_COUNT,
+    measured_capacity_rejected=0,
+    measured_timed_out=0,
+    service_completed_records=RECORD_COUNT,
+    max_in_flight=FLOW_COUNT,
+    queue_count=QUEUE_COUNT,
+    worker_count=WORKER_COUNT,
+    pending_capacity=PENDING_CAPACITY,
+    placement_id=PLACEMENT_ID,
 )
 RETENTION_CAPACITY_PROFILE = CampaignProfile(
-    RETENTION_CAPACITY_PROFILE_NAME,
-    "--native-load-retention-capacity",
-    RETENTION_CAPACITY_MAGIC,
-    RETENTION_CAPACITY_OUTER_ABI,
-    RETENTION_CAPACITY_BODY_DOMAIN,
-    RETENTION_CAPACITY_FOOTER_DOMAIN,
-    RETENTION_CAPACITY_PROFILE_ID,
-    RETENTION_CAPACITY_PROCESS_GENERATION,
-    RETENTION_CAPACITY_MEASURED_COMPLETED,
-    RETENTION_CAPACITY_MEASURED_REJECTED,
-    RETENTION_CAPACITY_COMPLETED_RECORDS,
+    name=RETENTION_CAPACITY_PROFILE_NAME,
+    producer_mode="--native-load-retention-capacity",
+    magic=RETENTION_CAPACITY_MAGIC,
+    outer_abi=RETENTION_CAPACITY_OUTER_ABI,
+    body_domain=RETENTION_CAPACITY_BODY_DOMAIN,
+    footer_domain=RETENTION_CAPACITY_FOOTER_DOMAIN,
+    profile_id=RETENTION_CAPACITY_PROFILE_ID,
+    process_generation=RETENTION_CAPACITY_PROCESS_GENERATION,
+    measured_completed=RETENTION_CAPACITY_MEASURED_COMPLETED,
+    measured_capacity_rejected=RETENTION_CAPACITY_MEASURED_REJECTED,
+    measured_timed_out=0,
+    service_completed_records=RETENTION_CAPACITY_COMPLETED_RECORDS,
+    max_in_flight=FLOW_COUNT,
+    queue_count=QUEUE_COUNT,
+    worker_count=WORKER_COUNT,
+    pending_capacity=PENDING_CAPACITY,
+    placement_id=PLACEMENT_ID,
+)
+QUEUED_RECEIVE_TIMEOUT_PROFILE = CampaignProfile(
+    name=QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME,
+    producer_mode="--native-load-queued-receive-timeout",
+    magic=QUEUED_RECEIVE_TIMEOUT_MAGIC,
+    outer_abi=QUEUED_RECEIVE_TIMEOUT_OUTER_ABI,
+    body_domain=QUEUED_RECEIVE_TIMEOUT_BODY_DOMAIN,
+    footer_domain=QUEUED_RECEIVE_TIMEOUT_FOOTER_DOMAIN,
+    profile_id=QUEUED_RECEIVE_TIMEOUT_PROFILE_ID,
+    process_generation=QUEUED_RECEIVE_TIMEOUT_PROCESS_GENERATION,
+    measured_completed=QUEUED_RECEIVE_TIMEOUT_MEASURED_COMPLETED,
+    measured_capacity_rejected=0,
+    measured_timed_out=QUEUED_RECEIVE_TIMEOUT_MEASURED_TIMED_OUT,
+    service_completed_records=QUEUED_RECEIVE_TIMEOUT_SERVICE_COMPLETED_RECORDS,
+    max_in_flight=QUEUED_RECEIVE_TIMEOUT_MAX_IN_FLIGHT,
+    queue_count=QUEUED_RECEIVE_TIMEOUT_QUEUE_COUNT,
+    worker_count=QUEUED_RECEIVE_TIMEOUT_WORKER_COUNT,
+    pending_capacity=QUEUED_RECEIVE_TIMEOUT_PENDING_CAPACITY,
+    placement_id=QUEUED_RECEIVE_TIMEOUT_PLACEMENT_ID,
 )
 CAMPAIGN_PROFILES = {
     SUCCESSFUL_PROFILE.name: SUCCESSFUL_PROFILE,
     RETENTION_CAPACITY_PROFILE.name: RETENTION_CAPACITY_PROFILE,
+    QUEUED_RECEIVE_TIMEOUT_PROFILE.name: QUEUED_RECEIVE_TIMEOUT_PROFILE,
 }
 
 
@@ -192,6 +307,33 @@ def _campaign_profile(name: str) -> CampaignProfile:
         return CAMPAIGN_PROFILES[name]
     except KeyError as error:
         raise VerificationError("unsupported native load profile: %s" % name) from error
+
+
+def _expected_outcome(campaign: CampaignProfile, ordinal: int) -> int:
+    _require(0 <= ordinal < RECORD_COUNT, "record ordinal is out of range")
+    if campaign.name == SUCCESSFUL_PROFILE_NAME:
+        return OUTCOME_COMPLETED
+    if campaign.name == RETENTION_CAPACITY_PROFILE_NAME:
+        return (
+            OUTCOME_COMPLETED
+            if ordinal < campaign.service_completed_records
+            else OUTCOME_CAPACITY_REJECTED
+        )
+    if ordinal < WARMUP_COUNT:
+        return OUTCOME_COMPLETED
+    epoch_lane = (ordinal - WARMUP_COUNT) % FLOW_COUNT
+    return OUTCOME_COMPLETED if epoch_lane < 2 else OUTCOME_TIMED_OUT
+
+
+def _expected_flow(campaign: CampaignProfile, ordinal: int) -> int | None:
+    if campaign.name != QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
+        return None
+    if ordinal < WARMUP_COUNT:
+        return ordinal
+    measured_ordinal = ordinal - WARMUP_COUNT
+    epoch = measured_ordinal // FLOW_COUNT
+    epoch_lane = measured_ordinal % FLOW_COUNT
+    return (epoch + epoch_lane) % FLOW_COUNT
 
 
 def _require(condition: bool, message: str) -> None:
@@ -344,9 +486,14 @@ def _parse_sidecar_exact(
     ) = SIDECAR_STRUCT.unpack_from(encoded, offset)
     if campaign.name == SUCCESSFUL_PROFILE_NAME:
         _require(outcome == OUTCOME_COMPLETED, "sidecar reserved byte is nonzero")
-    else:
+    elif campaign.name == RETENTION_CAPACITY_PROFILE_NAME:
         _require(
             outcome in {OUTCOME_COMPLETED, OUTCOME_CAPACITY_REJECTED},
+            "sidecar outcome is invalid",
+        )
+    else:
+        _require(
+            outcome in {OUTCOME_COMPLETED, OUTCOME_TIMED_OUT},
             "sidecar outcome is invalid",
         )
     return Sidecar(
@@ -601,15 +748,83 @@ def _retention_capacity_completion_root(sidecar: Sidecar) -> bytes:
     )
 
 
+def _queued_receive_timeout_request_evidence(
+    raw_head: bytes,
+    raw_body: bytes,
+) -> bytes:
+    _require(type(raw_head) is bytes, "raw HTTP head must be bytes")
+    _require(type(raw_body) is bytes, "raw HTTP body must be bytes")
+    return _hash_parts(
+        QUEUED_RECEIVE_TIMEOUT_HTTP_REQUEST_DOMAIN,
+        raw_head,
+        raw_body,
+    )
+
+
+def _queued_receive_timeout_semantic_root(sidecar: Sidecar) -> bytes:
+    return _hash_parts(
+        QUEUED_RECEIVE_TIMEOUT_TRANSPORT_SEMANTICS_DOMAIN,
+        sidecar.request_sha256,
+        _u8(QUEUED_RECEIVE_TIMEOUT_EVENT_KIND),
+        _u8(QUEUED_RECEIVE_TIMEOUT_PHASE),
+        _u8(NO_WORKER_INDEX),
+        _u64(QUEUED_RECEIVE_TIMEOUT_NS),
+        _u64(sidecar.process_generation),
+        _u64(sidecar.connection_sequence),
+        _u8(sidecar.slot_index),
+        _u64(sidecar.slot_generation),
+        _u64(sidecar.enqueue_ordinal),
+        _u64(sidecar.enqueue_ns),
+        _u64(sidecar.retired_ordinal),
+        _u64(sidecar.retired_ns),
+        _u32(sidecar.response_bytes),
+    )
+
+
+def _queued_receive_timeout_terminal_root(
+    sidecar: Sidecar,
+) -> bytes:
+    return _hash_parts(
+        QUEUED_RECEIVE_TIMEOUT_TERMINAL_DOMAIN,
+        sidecar.request_sha256,
+        sidecar.output_sha256,
+    )
+
+
+def _queued_receive_timeout_completion_root(
+    sidecar: Sidecar,
+) -> bytes:
+    return _hash_parts(
+        QUEUED_RECEIVE_TIMEOUT_COMPLETION_DOMAIN,
+        sidecar.request_sha256,
+        sidecar.response_handle_sha256,
+        sidecar.output_sha256,
+        _u32(sidecar.response_bytes),
+        sidecar.terminal_sha256,
+    )
+
+
 def _verify_closure(
     closure: tuple[int, ...],
     profile_name: str = SUCCESSFUL_PROFILE_NAME,
 ) -> None:
     campaign = _campaign_profile(profile_name)
     _require(len(closure) == CLOSURE_U64_COUNT, "closure field count mismatch")
+    if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
+        _require(
+            closure == QUEUED_RECEIVE_TIMEOUT_CLOSURE,
+            "queued receive timeout closure mismatch",
+        )
+        return
     _require(closure[0:5] == (72, 72, 0, 72, 72), "connection conservation mismatch")
-    _require(1 <= closure[5] <= PENDING_CAPACITY, "queue high-water is invalid")
-    _require(1 <= closure[6] <= WORKER_COUNT, "running high-water is invalid")
+    _require(
+        1 <= closure[5] <= campaign.pending_capacity,
+        "queue high-water is invalid",
+    )
+    _require(
+        1 <= closure[6] <= campaign.worker_count,
+        "running high-water is invalid",
+    )
     _require(closure[7] == closure[8], "backpressure is not balanced")
     _require(closure[9:17] == (0,) * 8, "transport closure retains failure or ownership")
     _require(
@@ -650,7 +865,15 @@ def _verify_profile(
             profile.queue_count,
             profile.flow_count,
         )
-        == (0, 1, WARMUP_COUNT, MEASURED_COUNT, FLOW_COUNT, QUEUE_COUNT, FLOW_COUNT),
+        == (
+            0,
+            1,
+            WARMUP_COUNT,
+            MEASURED_COUNT,
+            campaign.max_in_flight,
+            campaign.queue_count,
+            FLOW_COUNT,
+        ),
         "inner scenario is not the fixed native load profile",
     )
     expected_identities = {
@@ -660,7 +883,7 @@ def _verify_profile(
         4: expected_machine,
         5: _identity(BACKEND_ID),
         6: _identity(DEVICE_ID),
-        7: _identity(PLACEMENT_ID),
+        7: _identity(campaign.placement_id),
         8: _identity(HOST_SOURCE_ID),
         9: _host_clock_identity(system),
         10: _identity(DEVICE_SOURCE_ID),
@@ -684,50 +907,40 @@ def _verify_profile(
     lifecycle_ordinals: set[int] = set()
     measured_completed_per_flow = [0] * FLOW_COUNT
     measured_rejected_per_flow = [0] * FLOW_COUNT
+    measured_timed_out_per_flow = [0] * FLOW_COUNT
     for index, (sidecar, record) in enumerate(zip(sidecars, profile.records)):
         _require(record.ordinal == index and sidecar.ordinal == index, "record order mismatch")
         expected_cohort = 0 if index < WARMUP_COUNT else 1
         _require(record.cohort == expected_cohort, "cohort mismatch")
-        expected_outcome = (
-            OUTCOME_COMPLETED
-            if campaign.name == SUCCESSFUL_PROFILE_NAME
-            or index < campaign.service_completed_records
-            else OUTCOME_CAPACITY_REJECTED
-        )
+        expected_outcome = _expected_outcome(campaign, index)
         _require(
             sidecar.outcome == expected_outcome
             and record.outcome == expected_outcome,
             "sidecar and record outcome mismatch",
         )
         _require(0 <= record.flow_id < FLOW_COUNT, "flow id is out of range")
+        expected_flow = _expected_flow(campaign, index)
+        if expected_flow is not None:
+            _require(
+                record.flow_id == expected_flow,
+                "queued receive timeout flow schedule mismatch",
+            )
         if record.cohort == 1:
             if expected_outcome == OUTCOME_COMPLETED:
                 measured_completed_per_flow[record.flow_id] += 1
-            else:
+            elif expected_outcome == OUTCOME_CAPACITY_REJECTED:
                 measured_rejected_per_flow[record.flow_id] += 1
+            else:
+                measured_timed_out_per_flow[record.flow_id] += 1
         _require(
             sidecar.process_generation == campaign.process_generation,
             "process generation mismatch",
         )
         _require(sidecar.connection_sequence > 0, "connection sequence is zero")
         _require(sidecar.slot_generation > 0, "slot generation is zero")
-        _require(0 <= sidecar.slot_index < QUEUE_COUNT, "slot index is out of range")
-        _require(0 <= sidecar.worker_index < WORKER_COUNT, "worker index is out of range")
-        _require(0 < sidecar.response_bytes <= 16 * 1024, "response byte count is invalid")
         _require(
-            0 < sidecar.enqueue_ordinal < sidecar.dispatch_ordinal < sidecar.retired_ordinal,
-            "lifecycle ordinals are not causal",
-        )
-        _require(
-            0
-            < sidecar.enqueue_ns
-            <= sidecar.dispatch_ns
-            <= sidecar.published_ns
-            <= sidecar.retired_ns,
-            "server observations are not monotonic",
-        )
-        lifecycle_ordinals.update(
-            (sidecar.enqueue_ordinal, sidecar.dispatch_ordinal, sidecar.retired_ordinal)
+            0 <= sidecar.slot_index < campaign.queue_count,
+            "slot index is out of range",
         )
         owner = (
             sidecar.process_generation,
@@ -740,8 +953,41 @@ def _verify_profile(
         _require(sidecar.request_sha256 != ZERO_DIGEST, "request root is absent")
         owners.add(owner)
         requests.add(sidecar.request_sha256)
-        _require(record.points[6][0] >= sidecar.retired_ns, "joined settlement precedes retirement")
         if expected_outcome == OUTCOME_COMPLETED:
+            _require(
+                0 < sidecar.response_bytes <= 16 * 1024,
+                "response byte count is invalid",
+            )
+            _require(
+                0 <= sidecar.worker_index < campaign.worker_count,
+                "worker index is out of range",
+            )
+            _require(
+                0
+                < sidecar.enqueue_ordinal
+                < sidecar.dispatch_ordinal
+                < sidecar.retired_ordinal,
+                "lifecycle ordinals are not causal",
+            )
+            _require(
+                0
+                < sidecar.enqueue_ns
+                <= sidecar.dispatch_ns
+                <= sidecar.published_ns
+                <= sidecar.retired_ns,
+                "server observations are not monotonic",
+            )
+            lifecycle_ordinals.update(
+                (
+                    sidecar.enqueue_ordinal,
+                    sidecar.dispatch_ordinal,
+                    sidecar.retired_ordinal,
+                )
+            )
+            _require(
+                record.points[6][0] >= sidecar.retired_ns,
+                "joined settlement precedes retirement",
+            )
             _require(
                 (
                     record.correctness,
@@ -795,7 +1041,41 @@ def _verify_profile(
                 sidecar.terminal_sha256,
                 sidecar.completion_sha256,
             )
-        else:
+        elif expected_outcome == OUTCOME_CAPACITY_REJECTED:
+            _require(
+                0 < sidecar.response_bytes <= 16 * 1024,
+                "response byte count is invalid",
+            )
+            _require(
+                0 <= sidecar.worker_index < campaign.worker_count,
+                "worker index is out of range",
+            )
+            _require(
+                0
+                < sidecar.enqueue_ordinal
+                < sidecar.dispatch_ordinal
+                < sidecar.retired_ordinal,
+                "lifecycle ordinals are not causal",
+            )
+            _require(
+                0
+                < sidecar.enqueue_ns
+                <= sidecar.dispatch_ns
+                <= sidecar.published_ns
+                <= sidecar.retired_ns,
+                "server observations are not monotonic",
+            )
+            lifecycle_ordinals.update(
+                (
+                    sidecar.enqueue_ordinal,
+                    sidecar.dispatch_ordinal,
+                    sidecar.retired_ordinal,
+                )
+            )
+            _require(
+                record.points[6][0] >= sidecar.retired_ns,
+                "joined settlement precedes retirement",
+            )
             _require(
                 (
                     record.correctness,
@@ -866,13 +1146,151 @@ def _verify_profile(
                 sidecar.terminal_sha256,
                 sidecar.completion_sha256,
             )
+        else:
+            _require(
+                expected_outcome == OUTCOME_TIMED_OUT,
+                "unsupported expected outcome",
+            )
+            # For this profile, retired_* are wire aliases for the single
+            # queued_receive_timeout terminal event, not a second retirement.
+            _require(
+                sidecar.response_bytes == 0,
+                "queued timeout claims response bytes",
+            )
+            _require(
+                sidecar.dispatch_ordinal == 0
+                and sidecar.dispatch_ns == 0
+                and sidecar.worker_index == NO_WORKER_INDEX,
+                "queued timeout claims worker dispatch",
+            )
+            _require(
+                0
+                < sidecar.enqueue_ordinal
+                < sidecar.retired_ordinal,
+                "queued timeout lifecycle ordinals are not causal",
+            )
+            _require(
+                0
+                < sidecar.enqueue_ns
+                <= sidecar.published_ns
+                == sidecar.retired_ns,
+                "queued timeout server observations are not monotonic",
+            )
+            lifecycle_ordinals.update(
+                (sidecar.enqueue_ordinal, sidecar.retired_ordinal)
+            )
+            _require(
+                (
+                    record.correctness,
+                    record.fallback,
+                    record.work_units,
+                    record.queue_slot,
+                    record.presence_mask,
+                )
+                == (0, 0, 1, NO_QUEUE_SLOT, CAPACITY_REJECTED_PRESENCE),
+                "queued timeout record shape mismatch",
+            )
+            _require(
+                all(
+                    record.points[event] == (0, 0)
+                    for event in (1, 2, 3, 4)
+                ),
+                "queued timeout claims absent workload events",
+            )
+            _require(
+                0
+                < record.points[0][0]
+                <= sidecar.enqueue_ns
+                <= sidecar.retired_ns
+                <= record.points[5][0]
+                <= record.points[6][0],
+                "queued timeout observations are not monotonic",
+            )
+            _require(
+                QUEUED_RECEIVE_TIMEOUT_NS
+                <= sidecar.retired_ns - record.points[0][0]
+                <= QUEUED_RECEIVE_TIMEOUT_MAX_TERMINAL_NS,
+                "queued receive timeout terminal observation is outside fixed bound",
+            )
+            _require(
+                sidecar.retired_ns - sidecar.enqueue_ns
+                <= QUEUED_RECEIVE_TIMEOUT_MAX_QUEUE_RESIDENCE_NS,
+                "queued receive timeout queue residence exceeds fixed bound",
+            )
+            _require(
+                record.points[6][0] - sidecar.retired_ns
+                <= QUEUED_RECEIVE_TIMEOUT_MAX_SETTLEMENT_PROPAGATION_NS,
+                "queued receive timeout peer-close/no-response transport "
+                "settlement propagation exceeds fixed bound",
+            )
+            _require(
+                0
+                < record.points[0][1]
+                < record.points[5][1]
+                < record.points[6][1],
+                "queued timeout event sequence is not causal",
+            )
+            _require(
+                sidecar.work_sequence == 0
+                and sidecar.handle_sha256 == ZERO_DIGEST
+                and sidecar.output_token == 0
+                and sidecar.content_byte == 0,
+                "queued timeout retains work payload",
+            )
+            _require(
+                sidecar.response_handle_sha256 != ZERO_DIGEST,
+                "queued timeout request evidence is absent",
+            )
+            _require(
+                sidecar.response_handle_sha256 not in response_evidence,
+                "queued timeout request evidence is duplicated",
+            )
+            response_evidence.add(sidecar.response_handle_sha256)
+            _require(
+                sidecar.output_sha256
+                == _queued_receive_timeout_semantic_root(sidecar),
+                "queued timeout transport semantic root mismatch",
+            )
+            _require(
+                sidecar.terminal_sha256
+                == _queued_receive_timeout_terminal_root(sidecar),
+                "queued timeout terminal root mismatch",
+            )
+            _require(
+                sidecar.completion_sha256
+                == _queued_receive_timeout_completion_root(sidecar),
+                "queued timeout completion root mismatch",
+            )
+            expected_roots = (
+                sidecar.request_sha256,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                ZERO_DIGEST,
+                sidecar.terminal_sha256,
+                sidecar.completion_sha256,
+            )
         _require(record.roots == expected_roots, "transport root composition mismatch")
-    _require(len(lifecycle_ordinals) == RECORD_COUNT * 3, "lifecycle ordinal is duplicated")
+    expected_lifecycle_ordinals = (
+        campaign.service_completed_records * 3
+        + (
+            (RECORD_COUNT - campaign.service_completed_records) * 2
+            if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+            else (RECORD_COUNT - campaign.service_completed_records) * 3
+        )
+    )
+    _require(
+        len(lifecycle_ordinals) == expected_lifecycle_ordinals,
+        "lifecycle ordinal is duplicated",
+    )
     _require(max(lifecycle_ordinals) <= closure[27], "lifecycle ordinal exceeds event closure")
     expected_completed_per_flow = campaign.measured_completed // FLOW_COUNT
     expected_rejected_per_flow = (
         campaign.measured_capacity_rejected // FLOW_COUNT
     )
+    expected_timed_out_per_flow = campaign.measured_timed_out // FLOW_COUNT
     _require(
         measured_completed_per_flow
         == [expected_completed_per_flow] * FLOW_COUNT,
@@ -882,6 +1300,11 @@ def _verify_profile(
         measured_rejected_per_flow
         == [expected_rejected_per_flow] * FLOW_COUNT,
         "measured rejected flow balance mismatch",
+    )
+    _require(
+        measured_timed_out_per_flow
+        == [expected_timed_out_per_flow] * FLOW_COUNT,
+        "measured timed-out flow balance mismatch",
     )
     _require(
         (
@@ -1298,7 +1721,11 @@ def run_campaign(
         "claim_scope": (
             "native-loopback-unary-retention-capacity-and-serialized-fixture-only"
             if campaign.name == RETENTION_CAPACITY_PROFILE_NAME
-            else "native-loopback-unary-transport-and-serialized-fixture-only"
+            else (
+                "native-loopback-unary-queued-receive-timeout-and-serialized-fixture-only"
+                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                else "native-loopback-unary-transport-and-serialized-fixture-only"
+            )
         ),
         "producer": {
             "sha256": build_before.hex(),
@@ -1319,13 +1746,23 @@ def run_campaign(
             "admission_p99_ns": verified.profile.admission_p99_ns,
             "queue_p99_ns": verified.profile.queue_p99_ns,
             "http_first_byte_p99_ns": verified.profile.first_byte_p99_ns,
-            "terminal_response_p99_ns": verified.profile.terminal_p99_ns,
+            **(
+                {
+                    "queued_timeout_terminal_observation_p99_ns": (
+                        verified.profile.terminal_p99_ns
+                    ),
+                }
+                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                else {
+                    "terminal_response_p99_ns": verified.profile.terminal_p99_ns,
+                }
+            ),
             "outcomes": {
                 "completed": campaign.measured_completed,
                 "capacity_rejected": campaign.measured_capacity_rejected,
                 "failed": 0,
                 "cancelled": 0,
-                "timed_out": 0,
+                "timed_out": campaign.measured_timed_out,
             },
         },
         "environment": {
@@ -1342,7 +1779,24 @@ def run_campaign(
             (
                 "Capacity rejection proves retained-record saturation, not active-work or transport-queue saturation."
                 if campaign.name == RETENTION_CAPACITY_PROFILE_NAME
-                else "The successful profile contains no capacity-rejection evidence."
+                else (
+                    "Queued receive timeout proves the fixed accept-origin queued-expiry profile, not full-request timeout or application overload."
+                    if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                    else "The successful profile contains no capacity-rejection evidence."
+                )
+            ),
+            (
+                "Queued sockets are never server-parsed; request-to-lease binding is a deterministic "
+                "single-outstanding client-plan/transmit correlation, not server-parsed request attestation."
+                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                else "Every retained request root is correlated under its profile-specific producer ABI."
+            ),
+            (
+                "The queued-timeout campaign is deterministic closed-loop pressure, not open-loop, "
+                "transient, or general overload evidence; W6 queue latency and throughput include "
+                "completed work only."
+                if campaign.name == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                else "The campaign mode is closed-loop."
             ),
             "Logical queue and in-flight facts do not prove physical CPU parallelism.",
             "No GPU performance, fairness, power, energy, temperature, or foreign-OS result is inferred.",
@@ -1389,10 +1843,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("error: %s" % error, file=sys.stderr)
         return 1
     profile = verified.profile
+    terminal_metric_name = (
+        "queued_timeout_terminal_observation_p99_ns"
+        if arguments.profile == QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+        else "terminal_response_p99_ns"
+    )
     print(
         "ok native-unary-server-load-v1 profile=%s "
         "records=%d warmup=%d measured=%d "
-        "http_first_byte_p99_ns=%d terminal_response_p99_ns=%d "
+        "http_first_byte_p99_ns=%d %s=%d "
         "throughput=%d/%dns publication_eligible=%s"
         % (
             arguments.profile,
@@ -1400,6 +1859,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             WARMUP_COUNT,
             MEASURED_COUNT,
             profile.first_byte_p99_ns,
+            terminal_metric_name,
             profile.terminal_p99_ns,
             profile.throughput_numerator,
             profile.throughput_denominator_ns,

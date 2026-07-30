@@ -208,6 +208,40 @@ before the first stable release.
   Bank ownership. This is retained-record capacity saturation, not transient,
   general overload, queued-timeout evidence, throughput superiority,
   production-model behavior, fairness, GPU behavior, or cross-OS evidence.
+- Added
+  `-Dunary-server-native-load-profile=queued-receive-timeout-v1` to the same
+  manual target and `glacier-unary-server-process-test` artifact without a new
+  compile root. Eight sequential warmups complete before eight deterministic
+  measured epochs; every epoch holds two running requests while six queued
+  FIFO peers reach the exact 2-second receive deadline, then completes
+  the two running controls. Flow rotation retains measured `2 completed /
+  6 timed_out` in each of eight flows. Exact closure binds
+  enqueued `72`, dispatched/completed `24`, failed/queued-receive-timeout
+  `48`, queue/running high-water `6/2`, pause/resume `8/8`, 24 completed
+  Service records, event ordinal `184`, and zero live connection, Service,
+  Scheduler, and Bank ownership.
+  The verifier admits client arrival to server timeout only in `2..4` seconds,
+  enqueue to timeout at no more than 3 seconds, and timeout to
+  peer-close/no-response transport settlement at no more than 1 second.
+  Settlement requires zero response bytes and accepts a zero-length read or
+  connection reset/abort. These are campaign-admissibility bounds, not general
+  runtime latency promises. The fixed profile identity binds the configured
+  2-second timeout and all three caps.
+  Timed-out W6 records contain only arrival, terminal, and settlement with
+  not-applicable correctness and no Bank, work, dispatch, or output. Their
+  outer records retain the client-observed canonical request root, an opaque
+  raw-outbound-HTTP digest, exact enqueue/lease/`.queued_receive_timeout`
+  evidence, and independently recomputable semantic, terminal, and completion
+  roots. A queued connection emits only `.queued_receive_timeout`, never a separate
+  `.retired` event; any `retired_*` sidecar fields are profile-defined aliases
+  of that terminal event. These queued sockets are never server-parsed.
+  Request-to-lease association is deterministic single-outstanding
+  client-plan/transmit correlation, not server-parsed request attestation.
+  This is deterministic closed-loop queued pressure. It does not establish
+  transient or general overload, generic queue latency, throughput superiority,
+  fairness, physical parallelism, first-token latency, production-model, GPU,
+  or native foreign-OS evidence.
+  The live campaign stays manual and absent from GitHub CI.
   Phase F1 concurrent serving is explicitly unsupported on Windows today: the
   entrypoint returns
   `ConcurrentListenerModeUnsupported` before worker/watchdog startup because it

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import os
-import struct
 import sys
 import unittest
 from unittest import mock
@@ -76,6 +75,8 @@ def _valid_closure(
     profile_name: str = load.SUCCESSFUL_PROFILE_NAME,
 ) -> tuple[int, ...]:
     campaign = load._campaign_profile(profile_name)
+    if campaign.name == load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME:
+        return load.QUEUED_RECEIVE_TIMEOUT_CLOSURE
     return (
         72,
         72,
@@ -124,19 +125,36 @@ def _profile_fixture(
     challenge = _digest("challenge")
     sidecars = []
     records = []
+    next_lifecycle_ordinal = 1
     for ordinal in range(load.RECORD_COUNT):
-        base = 1_000 + ordinal * 100
+        base = (
+            1_000_000 + ordinal * 3_000_000_000
+            if campaign.name
+            == load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+            else 1_000 + ordinal * 100
+        )
         request = _digest("request-%d" % ordinal)
         handle = _digest("handle-%d" % ordinal)
         output = _digest("output-%d" % ordinal)
         terminal = _digest("terminal-%d" % ordinal)
         completion = _digest("completion-%d" % ordinal)
+        expected_outcome = load._expected_outcome(campaign, ordinal)
+        timed_out = expected_outcome == load.OUTCOME_TIMED_OUT
+        enqueue_ordinal = next_lifecycle_ordinal
+        if timed_out:
+            dispatch_ordinal = 0
+            retired_ordinal = enqueue_ordinal + 1
+            next_lifecycle_ordinal += 2
+        else:
+            dispatch_ordinal = enqueue_ordinal + 1
+            retired_ordinal = enqueue_ordinal + 2
+            next_lifecycle_ordinal += 3
         sidecar = load.Sidecar(
             ordinal=ordinal,
             response_bytes=512,
-            enqueue_ordinal=ordinal * 3 + 1,
-            dispatch_ordinal=ordinal * 3 + 2,
-            retired_ordinal=ordinal * 3 + 3,
+            enqueue_ordinal=enqueue_ordinal,
+            dispatch_ordinal=dispatch_ordinal,
+            retired_ordinal=retired_ordinal,
             enqueue_ns=base + 1,
             dispatch_ns=base + 2,
             published_ns=base + 3,
@@ -144,9 +162,9 @@ def _profile_fixture(
             work_sequence=ordinal + 1,
             process_generation=campaign.process_generation,
             connection_sequence=ordinal + 1,
-            slot_generation=ordinal // load.QUEUE_COUNT + 1,
-            slot_index=ordinal % load.QUEUE_COUNT,
-            worker_index=ordinal % load.WORKER_COUNT,
+            slot_generation=ordinal // campaign.queue_count + 1,
+            slot_index=ordinal % campaign.queue_count,
+            worker_index=ordinal % campaign.worker_count,
             content_byte=65,
             output_token=65,
             request_sha256=request,
@@ -212,6 +230,76 @@ def _profile_fixture(
                 (base + 5, ordinal * 7 + 6),
                 (base + 7, ordinal * 7 + 7),
             )
+        elif timed_out:
+            timeout_ns = base + load.QUEUED_RECEIVE_TIMEOUT_NS + 10
+            raw_request_evidence = (
+                load._queued_receive_timeout_request_evidence(
+                    ("head-%d" % ordinal).encode("ascii"),
+                    ("body-%d" % ordinal).encode("ascii"),
+                )
+            )
+            sidecar = replace(
+                sidecar,
+                response_bytes=0,
+                dispatch_ordinal=0,
+                dispatch_ns=0,
+                published_ns=timeout_ns,
+                retired_ns=timeout_ns,
+                work_sequence=0,
+                worker_index=load.NO_WORKER_INDEX,
+                content_byte=0,
+                output_token=0,
+                response_handle_sha256=raw_request_evidence,
+                handle_sha256=load.ZERO_DIGEST,
+                output_sha256=load.ZERO_DIGEST,
+                terminal_sha256=load.ZERO_DIGEST,
+                completion_sha256=load.ZERO_DIGEST,
+                outcome=load.OUTCOME_TIMED_OUT,
+            )
+            sidecar = replace(
+                sidecar,
+                output_sha256=(
+                    load._queued_receive_timeout_semantic_root(
+                        sidecar
+                    )
+                ),
+            )
+            sidecar = replace(
+                sidecar,
+                terminal_sha256=(
+                    load._queued_receive_timeout_terminal_root(
+                        sidecar
+                    )
+                ),
+            )
+            sidecar = replace(
+                sidecar,
+                completion_sha256=(
+                    load._queued_receive_timeout_completion_root(
+                        sidecar
+                    )
+                ),
+            )
+            roots = (
+                request,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                load.ZERO_DIGEST,
+                sidecar.terminal_sha256,
+                sidecar.completion_sha256,
+            )
+            points = (
+                (base, ordinal * 7 + 1),
+                (0, 0),
+                (0, 0),
+                (0, 0),
+                (0, 0),
+                (timeout_ns + 1, ordinal * 7 + 6),
+                (timeout_ns + 2, ordinal * 7 + 7),
+            )
         else:
             pin = load._pin_root(sidecar)
             roots = (
@@ -240,19 +328,24 @@ def _profile_fixture(
                 cohort=0 if ordinal < load.WARMUP_COUNT else 1,
                 outcome=sidecar.outcome,
                 correctness=(
-                    0 if rejected else 1
+                    0 if rejected or timed_out else 1
                 ),
                 fallback=0,
-                flow_id=ordinal % load.FLOW_COUNT,
+                flow_id=(
+                    load._expected_flow(campaign, ordinal)
+                    if campaign.name
+                    == load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                    else ordinal % load.FLOW_COUNT
+                ),
                 work_units=1,
                 queue_slot=(
                     load.NO_QUEUE_SLOT
-                    if rejected
+                    if rejected or timed_out
                     else sidecar.slot_index
                 ),
                 presence_mask=(
                     load.CAPACITY_REJECTED_PRESENCE
-                    if rejected
+                    if rejected or timed_out
                     else 0x7F
                 ),
                 points=points,
@@ -268,7 +361,7 @@ def _profile_fixture(
         machine,
         load._identity(load.BACKEND_ID),
         load._identity(load.DEVICE_ID),
-        load._identity(load.PLACEMENT_ID),
+        load._identity(campaign.placement_id),
         load._identity(load.HOST_SOURCE_ID),
         load._host_clock_identity("Darwin"),
         load._identity(load.DEVICE_SOURCE_ID),
@@ -280,8 +373,8 @@ def _profile_fixture(
         evidence=1,
         warmup_count=load.WARMUP_COUNT,
         measured_count=load.MEASURED_COUNT,
-        max_in_flight=load.FLOW_COUNT,
-        queue_count=load.QUEUE_COUNT,
+        max_in_flight=campaign.max_in_flight,
+        queue_count=campaign.queue_count,
         flow_count=load.FLOW_COUNT,
         identities=identities,
         records=tuple(records),
@@ -609,6 +702,148 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
             "2909d6a14d92d87a117510a44f66dee2",
         )
 
+    def test_queued_timeout_outer_abi_and_outcome_are_isolated(self) -> None:
+        queued = _seal_structural_outer(
+            load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+        )
+        self.assertEqual(len(queued), load.OUTER_BYTES)
+        self.assertEqual(
+            len(
+                load._parse_outer(
+                    queued,
+                    profile_name=(
+                        load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                    ),
+                )[0]
+            ),
+            load.RECORD_COUNT,
+        )
+        for old_profile in (
+            load.SUCCESSFUL_PROFILE_NAME,
+            load.RETENTION_CAPACITY_PROFILE_NAME,
+        ):
+            with self.subTest(old_profile=old_profile):
+                with self.assertRaisesRegex(
+                    load.VerificationError,
+                    "invalid outer magic",
+                ):
+                    load._parse_outer(
+                        queued,
+                        profile_name=old_profile,
+                    )
+
+        outcome_offset = load.HEADER_BYTES + 99
+        timed_out = bytearray(queued)
+        timed_out[outcome_offset] = load.OUTCOME_TIMED_OUT
+        timed_out_wire = _reseal_outer(
+            timed_out,
+            load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME,
+        )
+        parsed = load._parse_outer(
+            timed_out_wire,
+            profile_name=load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME,
+        )[0]
+        self.assertEqual(
+            parsed[0].outcome,
+            load.OUTCOME_TIMED_OUT,
+        )
+        for old_campaign in (
+            load.SUCCESSFUL_PROFILE,
+            load.RETENTION_CAPACITY_PROFILE,
+        ):
+            with self.subTest(old_campaign=old_campaign.name):
+                with self.assertRaises(load.VerificationError):
+                    load._parse_sidecar_exact(
+                        timed_out_wire,
+                        load.HEADER_BYTES,
+                        old_campaign,
+                    )
+
+        capacity_outcome = bytearray(queued)
+        capacity_outcome[outcome_offset] = (
+            load.OUTCOME_CAPACITY_REJECTED
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "sidecar outcome is invalid",
+        ):
+            load._parse_outer(
+                _reseal_outer(
+                    capacity_outcome,
+                    load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME,
+                ),
+                profile_name=(
+                    load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                ),
+            )
+
+    def test_queued_timeout_cross_language_root_vectors(self) -> None:
+        raw_request = (
+            load._queued_receive_timeout_request_evidence(
+                b"POST /v1/chat/completions HTTP/1.1\r\n\r\n",
+                b'{"profile":"queued-timeout"}',
+            )
+        )
+        sidecar = load.Sidecar(
+            ordinal=10,
+            response_bytes=0,
+            enqueue_ordinal=11,
+            dispatch_ordinal=0,
+            retired_ordinal=19,
+            enqueue_ns=1_000,
+            dispatch_ns=0,
+            published_ns=2_000_001_000,
+            retired_ns=2_000_001_000,
+            work_sequence=0,
+            process_generation=(
+                load.QUEUED_RECEIVE_TIMEOUT_PROCESS_GENERATION
+            ),
+            connection_sequence=9,
+            slot_generation=7,
+            slot_index=1,
+            worker_index=load.NO_WORKER_INDEX,
+            content_byte=0,
+            output_token=0,
+            request_sha256=b"\x5a" * 32,
+            response_handle_sha256=b"\xa5" * 32,
+            handle_sha256=load.ZERO_DIGEST,
+            output_sha256=load.ZERO_DIGEST,
+            terminal_sha256=load.ZERO_DIGEST,
+            completion_sha256=load.ZERO_DIGEST,
+            outcome=load.OUTCOME_TIMED_OUT,
+        )
+        semantic = load._queued_receive_timeout_semantic_root(
+            sidecar
+        )
+        bound = replace(sidecar, output_sha256=semantic)
+        terminal = load._queued_receive_timeout_terminal_root(
+            bound
+        )
+        bound = replace(bound, terminal_sha256=terminal)
+        completion = (
+            load._queued_receive_timeout_completion_root(bound)
+        )
+        self.assertEqual(
+            raw_request.hex(),
+            "141379cabcc44e0d4d6602df7de57c018"
+            "7003ee2a09c45c1834802c9fce24ae5",
+        )
+        self.assertEqual(
+            semantic.hex(),
+            "8318b0766be34ec3bd6454060ef8b47f"
+            "3d27c1d8b8d657f6d102702921616d7b",
+        )
+        self.assertEqual(
+            terminal.hex(),
+            "a4d614bd88a46b98607d5687cc6fbe01"
+            "aca2c2f56c5cfd58223eaaae869cfcf1",
+        )
+        self.assertEqual(
+            completion.hex(),
+            "9bed6ceaf46ad62bb09dcd9c20938e62"
+            "dacc9a3a4c5b5a62f039e0638f5d901a",
+        )
+
     def test_retention_capacity_profile_binds_mixed_outcomes(self) -> None:
         sidecars, closure, profile, build, machine, challenge = (
             _profile_fixture(load.RETENTION_CAPACITY_PROFILE_NAME)
@@ -848,6 +1083,585 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
         ):
             verify(candidate_closure=tuple(invalid_closure))
 
+    def test_queued_receive_timeout_profile_binds_exact_epoch_mix(
+        self,
+    ) -> None:
+        sidecars, closure, profile, build, machine, challenge = (
+            _profile_fixture(
+                load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+            )
+        )
+
+        def verify(
+            candidate_sidecars: tuple[load.Sidecar, ...] = sidecars,
+            candidate_closure: tuple[int, ...] = closure,
+            candidate_profile: load.InnerProfile = profile,
+        ) -> None:
+            load._verify_profile(
+                candidate_sidecars,
+                candidate_closure,
+                candidate_profile,
+                expected_build=build,
+                expected_machine=machine,
+                expected_challenge=challenge,
+                system="Darwin",
+                profile_name=(
+                    load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                ),
+            )
+
+        verify()
+        self.assertEqual(
+            closure,
+            load.QUEUED_RECEIVE_TIMEOUT_CLOSURE,
+        )
+        measured = profile.records[load.WARMUP_COUNT :]
+        self.assertEqual(
+            sum(
+                record.outcome == load.OUTCOME_COMPLETED
+                for record in measured
+            ),
+            load.QUEUED_RECEIVE_TIMEOUT_MEASURED_COMPLETED,
+        )
+        self.assertEqual(
+            sum(
+                record.outcome == load.OUTCOME_TIMED_OUT
+                for record in measured
+            ),
+            load.QUEUED_RECEIVE_TIMEOUT_MEASURED_TIMED_OUT,
+        )
+        for epoch in range(8):
+            records = measured[
+                epoch * load.FLOW_COUNT :
+                (epoch + 1) * load.FLOW_COUNT
+            ]
+            self.assertEqual(
+                [record.outcome for record in records],
+                [
+                    load.OUTCOME_COMPLETED,
+                    load.OUTCOME_COMPLETED,
+                    *([load.OUTCOME_TIMED_OUT] * 6),
+                ],
+            )
+            self.assertEqual(
+                [record.flow_id for record in records],
+                [
+                    (epoch + lane) % load.FLOW_COUNT
+                    for lane in range(load.FLOW_COUNT)
+                ],
+            )
+        for flow in range(load.FLOW_COUNT):
+            records = [
+                record
+                for record in measured
+                if record.flow_id == flow
+            ]
+            self.assertEqual(
+                sum(
+                    record.outcome == load.OUTCOME_COMPLETED
+                    for record in records
+                ),
+                2,
+            )
+            self.assertEqual(
+                sum(
+                    record.outcome == load.OUTCOME_TIMED_OUT
+                    for record in records
+                ),
+                6,
+            )
+
+        timed_out_index = load.WARMUP_COUNT + 2
+        timed_out = sidecars[timed_out_index]
+        timed_out_record = profile.records[timed_out_index]
+        self.assertEqual(
+            timed_out.worker_index,
+            load.NO_WORKER_INDEX,
+        )
+        self.assertEqual(timed_out.response_bytes, 0)
+        self.assertEqual(timed_out.dispatch_ordinal, 0)
+        self.assertEqual(timed_out.dispatch_ns, 0)
+        self.assertEqual(
+            timed_out.published_ns,
+            timed_out.retired_ns,
+        )
+        self.assertNotEqual(
+            timed_out.response_handle_sha256,
+            load.ZERO_DIGEST,
+        )
+        self.assertNotEqual(
+            timed_out.output_sha256,
+            load.ZERO_DIGEST,
+        )
+        self.assertEqual(
+            timed_out_record.roots[1:7],
+            (load.ZERO_DIGEST,) * 6,
+        )
+
+        sidecar_mutations = {
+            "outcome": replace(
+                timed_out,
+                outcome=load.OUTCOME_COMPLETED,
+            ),
+            "response-bytes": replace(
+                timed_out,
+                response_bytes=1,
+            ),
+            "dispatch-ordinal": replace(
+                timed_out,
+                dispatch_ordinal=1,
+            ),
+            "dispatch-time": replace(
+                timed_out,
+                dispatch_ns=1,
+            ),
+            "decision-time": replace(
+                timed_out,
+                published_ns=timed_out.published_ns + 1,
+            ),
+            "timeout-ordinal": replace(
+                timed_out,
+                retired_ordinal=timed_out.enqueue_ordinal,
+            ),
+            "worker": replace(timed_out, worker_index=0),
+            "work": replace(timed_out, work_sequence=1),
+            "handle": replace(
+                timed_out,
+                handle_sha256=_digest("forged-timeout-handle"),
+            ),
+            "token": replace(timed_out, output_token=1),
+            "content": replace(timed_out, content_byte=1),
+            "request-evidence": replace(
+                timed_out,
+                response_handle_sha256=load.ZERO_DIGEST,
+            ),
+            "transport-semantics": replace(
+                timed_out,
+                output_sha256=_digest(
+                    "forged-timeout-semantics"
+                ),
+            ),
+            "terminal": replace(
+                timed_out,
+                terminal_sha256=_digest(
+                    "forged-timeout-terminal"
+                ),
+            ),
+            "completion": replace(
+                timed_out,
+                completion_sha256=_digest(
+                    "forged-timeout-completion"
+                ),
+            ),
+            "connection": replace(
+                timed_out,
+                connection_sequence=999,
+            ),
+            "slot-generation": replace(
+                timed_out,
+                slot_generation=999,
+            ),
+            "enqueue-time": replace(
+                timed_out,
+                enqueue_ns=timed_out.enqueue_ns + 1,
+            ),
+        }
+        for label, mutation in sidecar_mutations.items():
+            candidate = list(sidecars)
+            candidate[timed_out_index] = mutation
+            with self.subTest(sidecar_mutation=label):
+                with self.assertRaises(load.VerificationError):
+                    verify(tuple(candidate))
+
+        record_mutations = {
+            "outcome": replace(
+                timed_out_record,
+                outcome=load.OUTCOME_COMPLETED,
+            ),
+            "flow": replace(
+                timed_out_record,
+                flow_id=(timed_out_record.flow_id + 1)
+                % load.FLOW_COUNT,
+            ),
+            "presence": replace(
+                timed_out_record,
+                presence_mask=0x7F,
+            ),
+            "queue": replace(timed_out_record, queue_slot=0),
+            "admission": replace(
+                timed_out_record,
+                points=(
+                    timed_out_record.points[0],
+                    (1, 1),
+                    *timed_out_record.points[2:],
+                ),
+            ),
+            "too-early": replace(
+                timed_out_record,
+                points=(
+                    *timed_out_record.points[:5],
+                    (
+                        timed_out_record.points[0][0]
+                        + load.QUEUED_RECEIVE_TIMEOUT_NS
+                        - 1,
+                        timed_out_record.points[5][1],
+                    ),
+                    timed_out_record.points[6],
+                ),
+            ),
+            "sequence": replace(
+                timed_out_record,
+                points=(
+                    timed_out_record.points[0],
+                    *timed_out_record.points[1:5],
+                    (
+                        timed_out_record.points[5][0],
+                        timed_out_record.points[0][1],
+                    ),
+                    timed_out_record.points[6],
+                ),
+            ),
+            "output-root": replace(
+                timed_out_record,
+                roots=(
+                    *timed_out_record.roots[:5],
+                    _digest("forged-timeout-output"),
+                    *timed_out_record.roots[6:],
+                ),
+            ),
+            "completion-root": replace(
+                timed_out_record,
+                roots=(
+                    *timed_out_record.roots[:8],
+                    _digest("forged-timeout-record-completion"),
+                ),
+            ),
+        }
+        for label, mutation in record_mutations.items():
+            records = list(profile.records)
+            records[timed_out_index] = mutation
+            with self.subTest(record_mutation=label):
+                with self.assertRaises(load.VerificationError):
+                    verify(
+                        candidate_profile=replace(
+                            profile,
+                            records=tuple(records),
+                        )
+                    )
+
+        alternate_evidence = replace(
+            timed_out,
+            response_handle_sha256=_digest(
+                "alternate-opaque-timeout-request"
+            ),
+        )
+        alternate_evidence = replace(
+            alternate_evidence,
+            completion_sha256=(
+                load._queued_receive_timeout_completion_root(
+                    alternate_evidence
+                )
+            ),
+        )
+        alternate_sidecars = list(sidecars)
+        alternate_sidecars[timed_out_index] = alternate_evidence
+        alternate_records = list(profile.records)
+        alternate_records[timed_out_index] = replace(
+            timed_out_record,
+            roots=(
+                *timed_out_record.roots[:8],
+                alternate_evidence.completion_sha256,
+            ),
+        )
+        verify(
+            tuple(alternate_sidecars),
+            candidate_profile=replace(
+                profile,
+                records=tuple(alternate_records),
+            ),
+        )
+
+        duplicate_evidence = list(sidecars)
+        duplicate_evidence[timed_out_index + 1] = replace(
+            duplicate_evidence[timed_out_index + 1],
+            response_handle_sha256=(
+                timed_out.response_handle_sha256
+            ),
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "request evidence is duplicated",
+        ):
+            verify(tuple(duplicate_evidence))
+
+        duplicate_owner = list(sidecars)
+        duplicate_owner[timed_out_index + 1] = replace(
+            duplicate_owner[timed_out_index + 1],
+            process_generation=timed_out.process_generation,
+            connection_sequence=timed_out.connection_sequence,
+            slot_index=timed_out.slot_index,
+            slot_generation=timed_out.slot_generation,
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "transport owner is duplicated",
+        ):
+            verify(tuple(duplicate_owner))
+
+        duplicate_request = list(sidecars)
+        duplicate_request[timed_out_index + 1] = replace(
+            duplicate_request[timed_out_index + 1],
+            request_sha256=timed_out.request_sha256,
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "request root is duplicated",
+        ):
+            verify(tuple(duplicate_request))
+
+        identities = list(profile.identities)
+        identities[7] = load._identity(load.PLACEMENT_ID)
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "scenario identity 7 mismatch",
+        ):
+            verify(
+                candidate_profile=replace(
+                    profile,
+                    identities=tuple(identities),
+                )
+            )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "inner scenario",
+        ):
+            verify(
+                candidate_profile=replace(
+                    profile,
+                    queue_count=load.QUEUE_COUNT,
+                )
+            )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "throughput identity mismatch",
+        ):
+            verify(
+                candidate_profile=replace(
+                    profile,
+                    throughput_numerator=(
+                        profile.throughput_numerator + 1
+                    ),
+                )
+            )
+
+        for closure_index in (
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            8,
+            11,
+            18,
+            19,
+            23,
+            25,
+            27,
+        ):
+            invalid_closure = list(closure)
+            invalid_closure[closure_index] ^= 1
+            with self.subTest(closure_index=closure_index):
+                with self.assertRaisesRegex(
+                    load.VerificationError,
+                    "queued receive timeout closure mismatch",
+                ):
+                    verify(
+                        candidate_closure=tuple(
+                            invalid_closure
+                        )
+                    )
+
+    def test_queued_timeout_rejects_resealed_timing_overruns(
+        self,
+    ) -> None:
+        sidecars, closure, profile, build, machine, challenge = (
+            _profile_fixture(
+                load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+            )
+        )
+        timed_out_index = load.WARMUP_COUNT + 2
+        original_sidecar = sidecars[timed_out_index]
+        original_record = profile.records[timed_out_index]
+        arrival_ns = original_record.points[0][0]
+
+        def candidate(
+            *,
+            enqueue_ns: int,
+            terminal_event_ns: int,
+            client_terminal_ns: int,
+            joined_settlement_ns: int,
+        ) -> tuple[
+            tuple[load.Sidecar, ...],
+            load.InnerProfile,
+        ]:
+            rebound = replace(
+                original_sidecar,
+                enqueue_ns=enqueue_ns,
+                published_ns=terminal_event_ns,
+                retired_ns=terminal_event_ns,
+                output_sha256=load.ZERO_DIGEST,
+                terminal_sha256=load.ZERO_DIGEST,
+                completion_sha256=load.ZERO_DIGEST,
+            )
+            rebound = replace(
+                rebound,
+                output_sha256=(
+                    load._queued_receive_timeout_semantic_root(
+                        rebound
+                    )
+                ),
+            )
+            rebound = replace(
+                rebound,
+                terminal_sha256=(
+                    load._queued_receive_timeout_terminal_root(
+                        rebound
+                    )
+                ),
+            )
+            rebound = replace(
+                rebound,
+                completion_sha256=(
+                    load._queued_receive_timeout_completion_root(
+                        rebound
+                    )
+                ),
+            )
+
+            points = list(original_record.points)
+            points[5] = (
+                client_terminal_ns,
+                original_record.points[5][1],
+            )
+            points[6] = (
+                joined_settlement_ns,
+                original_record.points[6][1],
+            )
+            rebound_record = replace(
+                original_record,
+                points=tuple(points),
+                roots=(
+                    rebound.request_sha256,
+                    *([load.ZERO_DIGEST] * 6),
+                    rebound.terminal_sha256,
+                    rebound.completion_sha256,
+                ),
+            )
+            candidate_sidecars = list(sidecars)
+            candidate_sidecars[timed_out_index] = rebound
+            candidate_records = list(profile.records)
+            candidate_records[timed_out_index] = rebound_record
+            return (
+                tuple(candidate_sidecars),
+                replace(
+                    profile,
+                    records=tuple(candidate_records),
+                ),
+            )
+
+        def verify(
+            candidate_sidecars: tuple[load.Sidecar, ...],
+            candidate_profile: load.InnerProfile,
+        ) -> None:
+            load._verify_profile(
+                candidate_sidecars,
+                closure,
+                candidate_profile,
+                expected_build=build,
+                expected_machine=machine,
+                expected_challenge=challenge,
+                system="Darwin",
+                profile_name=(
+                    load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME
+                ),
+            )
+
+        terminal_event_ns = (
+            arrival_ns
+            + load.QUEUED_RECEIVE_TIMEOUT_MAX_TERMINAL_NS
+        )
+        verify(
+            *candidate(
+                enqueue_ns=(
+                    terminal_event_ns
+                    - load.QUEUED_RECEIVE_TIMEOUT_MAX_QUEUE_RESIDENCE_NS
+                ),
+                terminal_event_ns=terminal_event_ns,
+                client_terminal_ns=terminal_event_ns,
+                joined_settlement_ns=(
+                    terminal_event_ns
+                    + load.QUEUED_RECEIVE_TIMEOUT_MAX_SETTLEMENT_PROPAGATION_NS
+                ),
+            )
+        )
+
+        late_terminal_event_ns = terminal_event_ns + 1
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "terminal observation is outside fixed bound",
+        ):
+            verify(
+                *candidate(
+                    enqueue_ns=(
+                        late_terminal_event_ns
+                        - load.QUEUED_RECEIVE_TIMEOUT_MAX_QUEUE_RESIDENCE_NS
+                    ),
+                    terminal_event_ns=late_terminal_event_ns,
+                    client_terminal_ns=late_terminal_event_ns,
+                    joined_settlement_ns=late_terminal_event_ns + 1,
+                )
+            )
+
+        queue_overrun_terminal_event_ns = (
+            arrival_ns
+            + load.QUEUED_RECEIVE_TIMEOUT_MAX_QUEUE_RESIDENCE_NS
+            + 2
+        )
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "queue residence exceeds fixed bound",
+        ):
+            verify(
+                *candidate(
+                    enqueue_ns=arrival_ns + 1,
+                    terminal_event_ns=queue_overrun_terminal_event_ns,
+                    client_terminal_ns=queue_overrun_terminal_event_ns,
+                    joined_settlement_ns=(
+                        queue_overrun_terminal_event_ns + 1
+                    ),
+                )
+            )
+
+        original_terminal_event_ns = original_sidecar.retired_ns
+        with self.assertRaisesRegex(
+            load.VerificationError,
+            "transport settlement propagation exceeds fixed bound",
+        ):
+            verify(
+                *candidate(
+                    enqueue_ns=original_sidecar.enqueue_ns,
+                    terminal_event_ns=original_terminal_event_ns,
+                    client_terminal_ns=original_terminal_event_ns,
+                    joined_settlement_ns=(
+                        original_terminal_event_ns
+                        + load.QUEUED_RECEIVE_TIMEOUT_MAX_SETTLEMENT_PROPAGATION_NS
+                        + 1
+                    ),
+                )
+            )
+
     def test_producer_mode_is_selected_without_another_artifact(self) -> None:
         executable = load.Path("/tmp/glacier-fake-producer")
         digest = _digest("identity")
@@ -856,6 +1670,10 @@ class NativeUnaryServerLoadTests(unittest.TestCase):
             (
                 load.RETENTION_CAPACITY_PROFILE_NAME,
                 "--native-load-retention-capacity",
+            ),
+            (
+                load.QUEUED_RECEIVE_TIMEOUT_PROFILE_NAME,
+                "--native-load-queued-receive-timeout",
             ),
         ):
             captured: list[list[str]] = []
