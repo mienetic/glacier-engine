@@ -1203,17 +1203,22 @@ const ConcurrentDrainCall = struct {
     listen_address: std.net.Address,
     start: *std.Thread.ResetEvent,
     done: std.Thread.ResetEvent = .{},
+    receipt: ?server_api.ManagedDrainInitiationReceiptV1 = null,
     thread_error: ?anyerror = null,
 
     fn run(self: *ConcurrentDrainCall) void {
         self.start.wait();
-        server_api.requestManagedConcurrentDrainAndWakeV1(
-            self.lifecycle,
-            self.runtime,
-            self.listen_address,
-        ) catch |err| {
-            self.thread_error = err;
-        };
+        self.receipt =
+            server_api.requestManagedConcurrentDrainAndWakeWithPolicyV1(
+                self.lifecycle,
+                self.runtime,
+                self.listen_address,
+                .cancel_active,
+            ) catch |err| {
+                self.thread_error = err;
+                self.done.set();
+                return;
+            };
         self.done.set();
     }
 };
@@ -1943,6 +1948,47 @@ fn runConcurrentDrainScenario(
     if (first_drain.thread_error) |err| return err;
     if (second_drain.thread_error) |err| return err;
 
+    const first_receipt = first_drain.receipt orelse
+        return error.TestUnexpectedResult;
+    const second_receipt = second_drain.receipt orelse
+        return error.TestUnexpectedResult;
+    try testing.expect(
+        first_receipt.drain_was_new !=
+            second_receipt.drain_was_new,
+    );
+    const initial_receipt = if (first_receipt.drain_was_new)
+        first_receipt
+    else
+        second_receipt;
+    const settlement_session =
+        try server_api.openManagedConcurrentDrainSettlementSessionV1(
+            &lifecycle,
+            &initial_receipt,
+        );
+    try testing.expectEqual(
+        @as(u8, 2),
+        settlement_session.cohort_connections,
+    );
+    try testing.expectEqual(
+        server_api.ManagedDrainPolicyV1.cancel_active,
+        settlement_session.initial_effective_policy,
+    );
+    const settlement_progress =
+        try server_api.inspectManagedConcurrentDrainSettlementsV1(
+            &lifecycle,
+            &settlement_session,
+        );
+    try testing.expectEqual(
+        settlement_progress.cohort_connections,
+        settlement_progress.active_connections +
+            settlement_progress.transport_closing_connections +
+            settlement_progress.settled_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 0),
+        settlement_progress.resumable_connections,
+    );
+
     const queued_drain =
         try event_log.waitForKind(.queued_drain, 1);
     try testing.expectEqual(
@@ -2005,6 +2051,163 @@ fn runConcurrentDrainScenario(
     try testing.expectEqual(
         final_snapshot.event_ordinal,
         @as(u64, @intCast(try event_log.totalCount())),
+    );
+    const final_settlements =
+        try server_api.inspectManagedConcurrentDrainSettlementsV1(
+            &lifecycle,
+            &settlement_session,
+        );
+    try testing.expect(final_settlements.settled);
+    try testing.expectEqual(
+        @as(u8, 0),
+        final_settlements.active_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 0),
+        final_settlements.transport_closing_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 2),
+        final_settlements.settled_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 0),
+        final_settlements.logically_completed_connections,
+    );
+    try testing.expectEqual(
+        @as(u8, 2),
+        final_settlements.logically_failed_connections,
+    );
+
+    const active_inspection =
+        try server_api.inspectManagedConcurrentDrainConnectionByOwnerV1(
+            &lifecycle,
+            &settlement_session,
+            .{
+                .process_generation = active_dispatch.lease.?.process_generation,
+                .connection_sequence = active_dispatch.lease.?.connection_sequence,
+                .slot_index = active_dispatch.lease.?.slot_index,
+                .slot_generation = active_dispatch.lease.?.slot_generation,
+            },
+        );
+    const active_settlement = active_inspection.settlement orelse
+        return error.TestUnexpectedResult;
+    try testing.expectEqual(
+        server_api.ManagedDrainConnectionRetirementStateV1.settled,
+        active_inspection.retirement_state,
+    );
+    try testing.expectEqual(
+        server_api.ManagedConnectionPhaseV1.receiving_head,
+        active_settlement.phase_at_first_linearization,
+    );
+    try testing.expectEqual(
+        server_api.ManagedDrainConnectionTerminalStatusV1.failed,
+        active_settlement.terminal_status,
+    );
+    try testing.expectEqual(
+        server_api.ManagedDrainConnectionTerminalCauseV1.drain,
+        active_settlement.terminal_cause,
+    );
+    try testing.expectEqual(
+        server_api.ManagedDrainTransportCloseEvidenceV1.owner_confirmed,
+        active_settlement.transport_close_evidence,
+    );
+    try testing.expect(active_settlement.transport_close_confirmed);
+    try testing.expect(active_settlement.evidence_complete);
+    try testing.expect(!active_settlement.resumable);
+
+    const queued_inspection =
+        try server_api.inspectManagedConcurrentDrainConnectionByOwnerV1(
+            &lifecycle,
+            &settlement_session,
+            .{
+                .process_generation = queued_event.lease.?.process_generation,
+                .connection_sequence = queued_event.lease.?.connection_sequence,
+                .slot_index = queued_event.lease.?.slot_index,
+                .slot_generation = queued_event.lease.?.slot_generation,
+            },
+        );
+    const queued_settlement = queued_inspection.settlement orelse
+        return error.TestUnexpectedResult;
+    try testing.expectEqual(
+        server_api.ManagedDrainConnectionRetirementStateV1.settled,
+        queued_inspection.retirement_state,
+    );
+    try testing.expectEqual(
+        server_api.ManagedConnectionPhaseV1.queued,
+        queued_settlement.phase_at_first_linearization,
+    );
+    try testing.expectEqual(
+        server_api.ManagedDrainConnectionTerminalStatusV1.failed,
+        queued_settlement.terminal_status,
+    );
+    try testing.expectEqual(
+        server_api.ManagedDrainConnectionTerminalCauseV1.drain,
+        queued_settlement.terminal_cause,
+    );
+    try testing.expectEqual(
+        server_api.ManagedDrainTransportCloseEvidenceV1
+            .detached_owner_confirmed,
+        queued_settlement.transport_close_evidence,
+    );
+    try testing.expect(queued_settlement.transport_close_confirmed);
+    try testing.expect(queued_settlement.evidence_complete);
+    try testing.expect(!queued_settlement.resumable);
+    try testing.expectEqual(
+        @as(u64, 0),
+        active_settlement.completed_counter_ordinal,
+    );
+    try testing.expectEqual(
+        @as(u64, 0),
+        queued_settlement.completed_counter_ordinal,
+    );
+    try testing.expect(
+        (active_settlement.failed_counter_ordinal == 1 and
+            queued_settlement.failed_counter_ordinal == 2) or
+            (active_settlement.failed_counter_ordinal == 2 and
+                queued_settlement.failed_counter_ordinal == 1),
+    );
+    try testing.expect(
+        (active_settlement.logical_retirement_ordinal == 1 and
+            queued_settlement.logical_retirement_ordinal == 2) or
+            (active_settlement.logical_retirement_ordinal == 2 and
+                queued_settlement.logical_retirement_ordinal == 1),
+    );
+    try testing.expect(
+        (active_settlement.settlement_ordinal == 1 and
+            queued_settlement.settlement_ordinal == 2) or
+            (active_settlement.settlement_ordinal == 2 and
+                queued_settlement.settlement_ordinal == 1),
+    );
+
+    var wrong_owner = active_settlement.owner;
+    wrong_owner.connection_sequence += 1;
+    try testing.expectError(
+        server_api.LifecycleError.DrainSettlementMismatch,
+        server_api.inspectManagedConcurrentDrainConnectionByOwnerV1(
+            &lifecycle,
+            &settlement_session,
+            wrong_owner,
+        ),
+    );
+    var forged_session = settlement_session;
+    forged_session.drain_epoch += 1;
+    try testing.expectError(
+        server_api.LifecycleError.DrainSettlementMismatch,
+        server_api.inspectManagedConcurrentDrainSettlementsV1(
+            &lifecycle,
+            &forged_session,
+        ),
+    );
+    const immutable_active =
+        try server_api.inspectManagedConcurrentDrainConnectionByOwnerV1(
+            &lifecycle,
+            &settlement_session,
+            active_settlement.owner,
+        );
+    try testing.expectEqualDeep(
+        active_settlement,
+        immutable_active.settlement.?,
     );
     try expectModelOnlyServiceCleanup(
         &service_harness.service,

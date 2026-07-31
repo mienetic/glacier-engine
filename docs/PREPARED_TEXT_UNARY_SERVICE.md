@@ -681,8 +681,12 @@ Service, Scheduler, and Bank ownership. The late `request_received` and
 `response_written` cases intentionally retain no drain-action phase counter
 because receive or response work has already retired; their held-phase
 snapshots and client outcomes provide the evidence instead. This establishes
-the legacy cancel policy's phase-aware bounded-cleanup evidence. The retained
-matrix does not yet exercise the new finish policy, expose a checkpoint
+the legacy cancel policy's phase-aware bounded-cleanup evidence. A separate
+native-process case holds exact admitted work, starts with `finish_published`,
+checks that no cancellation was selected, then escalates to `cancel_active`.
+It retains policy revision two, the exact drain cancellation winner, immutable
+final settlement after the native socket closes, and the existing clean
+zero-ownership boundary. The retained evidence does not expose a checkpoint
 ordinal, bind committed-token progress, recover resumable state, or prove peer
 delivery.
 
@@ -726,13 +730,30 @@ failure may still win, and `response_written` proves only local write
 completion. `inspectManagedDrainV1` and
 `inspectManagedConcurrentDrainV1` return aggregate counter deltas, remaining
 active and queued connections, current effective policy, and whether lifecycle
-convergence is final. They do not attribute each connection to a final outcome.
-A receipt is an unkeyed caller-owned source value: inspection checks its
-version, conservation shape, process generation, and monotonic lifecycle
-counters, but does not authenticate it as external authority.
+convergence is final.
+
+The first initiation receipt opens one retained
+`ManagedDrainSettlementSessionV1`. Its bounded members bind the exact transport
+owner, first captured phase, initial and latest policy decision, monotonic
+policy revision, work identity, and work-stop evidence. Inspection separates
+`active`, `transport_closing`, and `settled`: logical retirement records the
+terminal lifecycle status, independent terminal cause, counter ordinal, retired
+resources, and local-write facts, but an immutable
+`ManagedDrainConnectionSettlementReceiptV1` is not published until the exact
+transport owner confirms native socket close. Concurrent queued retirement
+uses its detached owner and forced after-join convergence remains explicitly
+incomplete evidence. Exact session, generation, member-index, and owner checks
+fail closed; aggregate member conservation must equal the post-linearization
+completed/failed counter deltas. Neither local write completion nor transport
+close claims peer receipt or processing.
+
+Both initiation and settlement values are unkeyed caller-owned source values:
+inspection checks version, conservation shape, process generation, and exact
+retained identity, but does not authenticate either as external authority.
 A later `cancel_active` call can bound a `finish_published` wait; a later finish
 request cannot undo cancellation already selected. The next contract slice is
-a per-connection final settlement receipt plus committed continuation binding.
+committed-progress identity and continuation authority before any nonzero
+drain-resumable result or durable restart claim.
 
 Generation B then loads the same package with a new process generation and
 idempotency key, proves the same model, binding, content, and output identity,

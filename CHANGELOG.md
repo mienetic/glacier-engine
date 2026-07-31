@@ -8,6 +8,17 @@ before the first stable release.
 
 ### Added
 
+- Added Managed Drain Settlement V1 as a source-level Zig contract. The first
+  versioned drain receipt opens an exact bounded cohort whose members retain
+  transport owner, first phase, initial/latest policy decision, monotonic
+  revision, work-stop evidence, logical terminal status/cause, lifecycle
+  counter ordinal, and explicit native-close provenance. Final receipts remain
+  unavailable until both logical retirement and socket-close confirmation,
+  conserve exactly against lifecycle deltas, fail closed on forged session or
+  owner input, never claim peer delivery, and keep resumable at zero. Existing
+  HTTP and native-process roots now cover concurrent queued/active settlement
+  and `finish_published` to `cancel_active` escalation without adding an
+  executable, compile root, or CI lane.
 - Added a test-only forced process-death matrix to the existing managed unary
   process artifact and compile root. Nine fresh native POSIX victims cover all
   eight owned connection phases, including separate live and

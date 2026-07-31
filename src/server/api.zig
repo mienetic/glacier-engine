@@ -64,6 +64,9 @@ pub const LifecycleError = error{
     WorkIdentityMismatch,
     WorkCancellationRecoveryRequired,
     DrainReceiptMismatch,
+    DrainSettlementMismatch,
+    DrainSettlementUnavailable,
+    DrainSettlementMemberOutOfRange,
     CounterOverflow,
 };
 
@@ -389,10 +392,12 @@ pub const ManagedDrainDecisionCountsV1 = struct {
 
 /// Evidence returned when a host initiates or revisits managed drain.
 ///
-/// This is a source-level Zig contract, not a C layout or final settlement.
-/// Decision counts describe selection at one lifecycle-mutex boundary;
-/// transport failure, timeout, reset, and peer close may still win later. The
-/// caller-owned, unkeyed value is inspection input, not authentic authority.
+/// This is a source-level Zig contract, not a C layout or per-connection final
+/// settlement. Decision counts describe selection at one lifecycle-mutex
+/// boundary; transport failure, timeout, reset, and peer close may still win
+/// later. The first receipt opens the separate retained settlement session.
+/// The caller-owned, unkeyed value is inspection input, not authentic
+/// authority.
 pub const ManagedDrainInitiationReceiptV1 = struct {
     receipt_abi_version: u16 =
         managed_drain_receipt_abi_version_v1,
@@ -423,9 +428,10 @@ pub const ManagedDrainInitiationReceiptV1 = struct {
 
 /// Current aggregate settlement progress for one initiation receipt.
 ///
-/// This inspection cannot attribute each retired connection to a final drain
-/// outcome or authenticate a caller-owned receipt. That requires a future
-/// settlement receipt and, where needed, a separate authority boundary.
+/// This compatibility inspection does not attribute each retired connection
+/// to a final drain outcome. Use `openManagedDrainSettlementSessionV1` and its
+/// member inspections for retained per-connection evidence. Neither surface
+/// authenticates its caller-owned source value as external authority.
 pub const ManagedDrainInspectionV1 = struct {
     process_generation: u64,
     effective_policy: ManagedDrainPolicyV1,
@@ -434,6 +440,156 @@ pub const ManagedDrainInspectionV1 = struct {
     failed_since_linearization: u64,
     active_connections: u8,
     queued_connections: u8,
+    settled: bool,
+};
+
+pub const managed_drain_settlement_abi_version_v1: u16 = 1;
+
+/// Stable identity for the one bounded settlement cohort created by a
+/// ready-to-draining transition. The caller-owned value is correlation
+/// evidence, not authentication or continuation authority. ABI V1 describes
+/// this source-level Zig contract; it is not a stable binary C layout.
+pub const ManagedDrainSettlementSessionV1 = struct {
+    settlement_abi_version: u16 =
+        managed_drain_settlement_abi_version_v1,
+    process_generation: u64,
+    drain_epoch: u64,
+    initial_policy_revision: u16,
+    initial_effective_policy: ManagedDrainPolicyV1,
+    accepted_connections: u64,
+    completed_connections: u64,
+    failed_connections: u64,
+    cohort_connections: u8,
+};
+
+pub const ManagedDrainConnectionDecisionV1 = enum(u8) {
+    abort_selected = 1,
+    finish_selected = 2,
+    reject_unpublished = 3,
+    preexisting_stop = 4,
+    resumable = 5,
+};
+
+pub const ManagedDrainConnectionRetirementStateV1 = enum(u8) {
+    active = 1,
+    transport_closing = 2,
+    settled = 3,
+};
+
+/// Lifecycle accounting and the actual terminal cause are deliberately
+/// separate. A locally completed HTTP error can still have `drain` as its
+/// terminal cause.
+pub const ManagedDrainConnectionTerminalStatusV1 = enum(u8) {
+    completed = 1,
+    failed = 2,
+};
+
+pub const ManagedDrainConnectionTerminalCauseV1 = enum(u8) {
+    normal_completion = 1,
+    drain = 2,
+    reject_unpublished = 3,
+    receive_timeout = 4,
+    full_request_timeout = 5,
+    peer_reset = 6,
+    peer_send_close = 7,
+    response_transport_failure = 8,
+    transport_failure = 9,
+    lifecycle_failure = 10,
+    application_failure = 11,
+    preexisting_work_stop = 12,
+};
+
+/// Describes how the transport owner proved that its native stream was no
+/// longer owned. `forced_after_join` is conservative recovery evidence and
+/// never upgrades `evidence_complete`.
+pub const ManagedDrainTransportCloseEvidenceV1 = enum(u8) {
+    owner_confirmed = 1,
+    detached_owner_confirmed = 2,
+    forced_after_join = 3,
+};
+
+/// Selection retained for one exact member of the first drain cohort.
+///
+/// The initial fields never change. A finish-to-cancel escalation may update
+/// only the latest fields while this member is still active.
+pub const ManagedDrainConnectionSelectionV1 = struct {
+    member_index: u8,
+    owner: prepared_http.TransportOwnerTokenV1,
+    phase_at_first_linearization: ManagedConnectionPhaseV1,
+    initial_decision: ManagedDrainConnectionDecisionV1,
+    initial_effective_policy: ManagedDrainPolicyV1,
+    latest_decision: ManagedDrainConnectionDecisionV1,
+    latest_effective_policy: ManagedDrainPolicyV1,
+    latest_policy_revision: u16,
+    work_identity: ?prepared_http.WorkIdentityV1 = null,
+    work_cancellation: prepared_http.DrainCancellationOutcomeV1 = .none,
+    work_cancellation_winner: ?prepared_http.WorkCancellationCauseV1 = null,
+    resumable: bool = false,
+};
+
+/// Immutable final receipt for one drain-cohort connection.
+///
+/// It is published only after logical retirement and an explicit native
+/// transport-close confirmation. `local_write_completed` is not peer receipt
+/// or peer processing. ABI V1 cannot report resumable work.
+pub const ManagedDrainConnectionSettlementReceiptV1 = struct {
+    settlement_abi_version: u16 =
+        managed_drain_settlement_abi_version_v1,
+    process_generation: u64,
+    drain_epoch: u64,
+    member_index: u8,
+    owner: prepared_http.TransportOwnerTokenV1,
+    phase_at_first_linearization: ManagedConnectionPhaseV1,
+    initial_decision: ManagedDrainConnectionDecisionV1,
+    initial_effective_policy: ManagedDrainPolicyV1,
+    latest_decision: ManagedDrainConnectionDecisionV1,
+    latest_effective_policy: ManagedDrainPolicyV1,
+    latest_policy_revision: u16,
+    phase_at_logical_retirement: ManagedConnectionPhaseV1,
+    /// Cohort-local, one-based order in which logical ownership retired.
+    logical_retirement_ordinal: u8,
+    /// Cohort-local, one-based order in which native-close evidence finalized.
+    settlement_ordinal: u8,
+    terminal_status: ManagedDrainConnectionTerminalStatusV1,
+    terminal_cause: ManagedDrainConnectionTerminalCauseV1,
+    /// Absolute post-increment lifecycle counter; zero for a failed member.
+    completed_counter_ordinal: u64,
+    /// Absolute post-increment lifecycle counter; zero for a completed member.
+    failed_counter_ordinal: u64,
+    work_identity: ?prepared_http.WorkIdentityV1 = null,
+    work_cancellation: prepared_http.DrainCancellationOutcomeV1 = .none,
+    work_cancellation_winner: ?prepared_http.WorkCancellationCauseV1 = null,
+    receive_retired: bool,
+    full_request_timeout_retired: bool,
+    work_retired: bool,
+    response_retired: bool,
+    response_write_progress_bytes: u64,
+    local_write_completed: bool,
+    transport_close_confirmed: bool,
+    transport_close_evidence: ManagedDrainTransportCloseEvidenceV1,
+    evidence_complete: bool,
+    resumable: bool = false,
+};
+
+pub const ManagedDrainConnectionInspectionV1 = struct {
+    selection: ManagedDrainConnectionSelectionV1,
+    retirement_state: ManagedDrainConnectionRetirementStateV1,
+    settlement: ?ManagedDrainConnectionSettlementReceiptV1 = null,
+};
+
+pub const ManagedDrainSettlementsInspectionV1 = struct {
+    process_generation: u64,
+    drain_epoch: u64,
+    current_policy_revision: u16,
+    effective_policy: ManagedDrainPolicyV1,
+    state: ManagedStateV1,
+    cohort_connections: u8,
+    active_connections: u8,
+    transport_closing_connections: u8,
+    settled_connections: u8,
+    logically_completed_connections: u8,
+    logically_failed_connections: u8,
+    resumable_connections: u8,
     settled: bool,
 };
 
@@ -561,6 +717,92 @@ fn validateManagedDrainReceiptShapeV1(
     }
 }
 
+fn validateManagedDrainSettlementSessionShapeV1(
+    session: *const ManagedDrainSettlementSessionV1,
+) LifecycleError!void {
+    if (session.settlement_abi_version !=
+        managed_drain_settlement_abi_version_v1 or
+        session.process_generation == 0 or
+        session.drain_epoch == 0 or
+        session.initial_policy_revision != 1 or
+        session.cohort_connections >
+            maximum_managed_connection_slots_v1)
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
+    const accounted =
+        @as(u128, session.completed_connections) +
+        @as(u128, session.failed_connections) +
+        @as(u128, session.cohort_connections);
+    if (accounted != @as(u128, session.accepted_connections))
+        return LifecycleError.DrainSettlementMismatch;
+}
+
+fn validateManagedDrainConnectionSettlementReceiptShapeV1(
+    receipt: *const ManagedDrainConnectionSettlementReceiptV1,
+    session: *const ManagedDrainSettlementSessionV1,
+    current_policy_revision: u16,
+) LifecycleError!void {
+    if (receipt.settlement_abi_version !=
+        managed_drain_settlement_abi_version_v1 or
+        receipt.process_generation != session.process_generation or
+        receipt.drain_epoch != session.drain_epoch or
+        receipt.member_index >= session.cohort_connections or
+        receipt.latest_policy_revision <
+            session.initial_policy_revision or
+        receipt.latest_policy_revision >
+            current_policy_revision or
+        receipt.phase_at_first_linearization == .none or
+        receipt.phase_at_logical_retirement == .none or
+        receipt.logical_retirement_ordinal == 0 or
+        receipt.settlement_ordinal == 0 or
+        !receipt.transport_close_confirmed or
+        receipt.resumable or
+        (receipt.transport_close_evidence ==
+            .forced_after_join and receipt.evidence_complete))
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
+    switch (receipt.terminal_status) {
+        .completed => if (receipt.completed_counter_ordinal == 0 or
+            receipt.failed_counter_ordinal != 0)
+        {
+            return LifecycleError.DrainSettlementMismatch;
+        },
+        .failed => if (receipt.failed_counter_ordinal == 0 or
+            receipt.completed_counter_ordinal != 0)
+        {
+            return LifecycleError.DrainSettlementMismatch;
+        },
+    }
+    if (receipt.work_cancellation == .none and
+        receipt.work_cancellation_winner != null)
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
+    if (receipt.local_write_completed and
+        (receipt.phase_at_logical_retirement != .response_written or
+            !receipt.response_retired))
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
+    if (receipt.evidence_complete and
+        (!receipt.receive_retired or
+            !receipt.full_request_timeout_retired or
+            (receipt.work_identity != null and
+                !receipt.work_retired) or
+            ((receipt.phase_at_logical_retirement ==
+                .response_ready or
+                receipt.phase_at_logical_retirement ==
+                    .response_writing or
+                receipt.phase_at_logical_retirement ==
+                    .response_written) and
+                !receipt.response_retired)))
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
+}
+
 pub const ManagedConcurrentSnapshotV1 = struct {
     managed: ManagedSnapshotV1,
     worker_count: u8,
@@ -611,6 +853,8 @@ const ActiveConnectionV1 = struct {
     work_retired: bool = false,
     finish_published_selected: bool = false,
     preexisting_work_stop_selected: bool = false,
+    work_stop_outcome: prepared_http.DrainCancellationOutcomeV1 = .none,
+    work_stop_winner: ?prepared_http.WorkCancellationCauseV1 = null,
     drain_work_cancelled: bool = false,
     failure_signaled: bool = false,
     failure_work_cancelled: bool = false,
@@ -627,9 +871,48 @@ const ActiveConnectionV1 = struct {
     response_write_progress_bytes: u64 = 0,
 };
 
+const ManagedDrainLogicalSettlementV1 = struct {
+    phase: ManagedConnectionPhaseV1,
+    ordinal: u8,
+    terminal_status: ManagedDrainConnectionTerminalStatusV1,
+    terminal_cause: ManagedDrainConnectionTerminalCauseV1,
+    completed_counter_ordinal: u64,
+    failed_counter_ordinal: u64,
+    work_identity: ?prepared_http.WorkIdentityV1,
+    work_cancellation: prepared_http.DrainCancellationOutcomeV1,
+    work_cancellation_winner: ?prepared_http.WorkCancellationCauseV1,
+    receive_retired: bool,
+    full_request_timeout_retired: bool,
+    work_retired: bool,
+    response_retired: bool,
+    response_write_progress_bytes: u64,
+    local_write_completed: bool,
+    evidence_complete: bool,
+};
+
+const ManagedDrainTrackedConnectionV1 = struct {
+    selection: ManagedDrainConnectionSelectionV1,
+    logical: ?ManagedDrainLogicalSettlementV1 = null,
+    transport_close_confirmed: bool = false,
+    transport_close_evidence: ?ManagedDrainTransportCloseEvidenceV1 = null,
+    settlement: ?ManagedDrainConnectionSettlementReceiptV1 = null,
+};
+
+fn managedDrainTerminalCauseForResponseStopV1(
+    cause: ResponseStopCauseV1,
+) ManagedDrainConnectionTerminalCauseV1 {
+    return switch (cause) {
+        .drain => .drain,
+        .full_request_timeout => .full_request_timeout,
+        .failure => .lifecycle_failure,
+        .peer_send_close => .peer_send_close,
+    };
+}
+
 const ManagedConnectionSlotV1 = struct {
     generation: u64 = 0,
     active: ?ActiveConnectionV1 = null,
+    drain_member: ?ManagedDrainTrackedConnectionV1 = null,
 };
 
 /// Process-lifetime listener state only. Request execution and retained
@@ -671,6 +954,11 @@ pub const ManagedLifecycleV1 = struct {
     drain_requested_response_write_connections: u64 = 0,
     drain_cancelled_response_write_connections: u64 = 0,
     response_write_transport_failed_connections: u64 = 0,
+    drain_settlement_session: ?ManagedDrainSettlementSessionV1 = null,
+    drain_opening_receipt: ?ManagedDrainInitiationReceiptV1 = null,
+    drain_policy_revision: u16 = 0,
+    drain_logical_retirement_count: u8 = 0,
+    drain_settlement_count: u8 = 0,
     last_drain_signaled_phase: ManagedConnectionPhaseV1 = .none,
     last_receive_timeout_signaled_phase: ManagedConnectionPhaseV1 = .none,
     last_full_request_timeout_signaled_phase: ManagedConnectionPhaseV1 = .none,
@@ -816,6 +1104,8 @@ pub const ManagedLifecycleV1 = struct {
         const slot_index = self.findFreeConnectionSlotLockedV1() orelse
             return LifecycleError.ConnectionAlreadyActive;
         const slot = &self.connection_slots[slot_index];
+        if (slot.drain_member != null)
+            return LifecycleError.DrainSettlementMismatch;
         const sequence = std.math.add(
             u64,
             self.accepted_connections,
@@ -1163,6 +1453,11 @@ pub const ManagedLifecycleV1 = struct {
             return LifecycleError.WorkIdentityMismatch;
         if (!std.meta.eql(existing, work_identity))
             return LifecycleError.WorkIdentityMismatch;
+        try retainWorkStopReceiptOnActiveV1(
+            active,
+            receipt.outcome,
+            receipt.winner,
+        );
 
         switch (receipt.requested_cause) {
             .peer_reset => {
@@ -1895,24 +2190,84 @@ pub const ManagedLifecycleV1 = struct {
         }
         if (!active.full_request_timeout_retired)
             return LifecycleError.ConnectionInterrupted;
-        if (succeeded) {
-            self.completed_connections = std.math.add(
-                u64,
-                self.completed_connections,
-                1,
-            ) catch return LifecycleError.CounterOverflow;
-        } else {
-            self.failed_connections = std.math.add(
-                u64,
-                self.failed_connections,
-                1,
-            ) catch return LifecycleError.CounterOverflow;
-        }
-        self.active_connections = std.math.sub(
+        const next_completed_connections =
+            if (succeeded)
+                std.math.add(
+                    u64,
+                    self.completed_connections,
+                    1,
+                ) catch return LifecycleError.CounterOverflow
+            else
+                self.completed_connections;
+        const next_failed_connections =
+            if (succeeded)
+                self.failed_connections
+            else
+                std.math.add(
+                    u64,
+                    self.failed_connections,
+                    1,
+                ) catch return LifecycleError.CounterOverflow;
+        const next_active_connections = std.math.sub(
             u8,
             self.active_connections,
             1,
         ) catch return LifecycleError.CounterOverflow;
+        try self.recordDrainLogicalSettlementLockedV1(
+            lease,
+            &active,
+            succeeded,
+            if (succeeded) next_completed_connections else 0,
+            if (succeeded) 0 else next_failed_connections,
+            active.receive_retired and
+                active.full_request_timeout_retired and
+                (active.work_identity == null or
+                    active.work_retired) and
+                ((active.phase != .response_ready and
+                    active.phase != .response_writing and
+                    active.phase != .response_written) or
+                    active.response_retired),
+            null,
+        );
+        self.completed_connections = next_completed_connections;
+        self.failed_connections = next_failed_connections;
+        self.active_connections = next_active_connections;
+        self.connection_slots[lease.slot_index].active = null;
+    }
+
+    fn forceRetireConnectionForCleanupLockedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+        terminal_cause: ManagedDrainConnectionTerminalCauseV1,
+    ) LifecycleError!void {
+        const active_ptr =
+            try self.activeConnectionForLeaseLockedV1(lease);
+        active_ptr.receive_retired = true;
+        active_ptr.full_request_timeout_retired = true;
+        active_ptr.work_retired = true;
+        active_ptr.response_retired = true;
+        const active = active_ptr.*;
+        const next_failed = std.math.add(
+            u64,
+            self.failed_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        const next_active = std.math.sub(
+            u8,
+            self.active_connections,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        try self.recordDrainLogicalSettlementLockedV1(
+            lease,
+            &active,
+            false,
+            0,
+            next_failed,
+            false,
+            terminal_cause,
+        );
+        self.failed_connections = next_failed;
+        self.active_connections = next_active;
         self.connection_slots[lease.slot_index].active = null;
     }
 
@@ -1926,6 +2281,17 @@ pub const ManagedLifecycleV1 = struct {
             self.hasOccupiedConnectionSlotLockedV1())
         {
             return LifecycleError.InvalidTransition;
+        }
+        if (self.drain_settlement_session) |*session| {
+            const settlement =
+                try self.inspectDrainSettlementsLockedV1(session);
+            if (settlement.active_connections != 0 or
+                settlement.transport_closing_connections != 0 or
+                settlement.settled_connections !=
+                    settlement.cohort_connections)
+            {
+                return LifecycleError.DrainSettlementMismatch;
+            }
         }
         self.state = .stopped;
     }
@@ -2041,50 +2407,16 @@ pub const ManagedLifecycleV1 = struct {
         var decisions: ManagedDrainDecisionCountsV1 = .{};
         for (self.connection_slots[0..self.connection_capacity]) |slot| {
             const active = slot.active orelse continue;
-            if (active.phase == .response_written) {
-                decisions.finish_selected += 1;
-                continue;
-            }
-            if (self.connectionHadStopBeforeDrainLockedV1(
+            switch (self.drainDecisionForConnectionLockedV1(
                 &active,
+                policy,
                 work_receipt,
             )) {
-                decisions.preexisting_stop += 1;
-                continue;
-            }
-            switch (active.phase) {
-                .queued,
-                .receiving_head,
-                .request_head_received,
-                => decisions.abort_selected += 1,
-                .request_received => decisions.reject_unpublished += 1,
-                .request_admitted => switch (policy) {
-                    .finish_published => decisions.finish_selected += 1,
-                    .cancel_active => {
-                        const exact_active_work =
-                            work_receipt.active_work != null and
-                            active.work_identity != null and
-                            std.meta.eql(
-                                work_receipt.active_work.?,
-                                active.work_identity.?,
-                            );
-                        if (active.work_retired or
-                            (exact_active_work and
-                                work_receipt.cancellation ==
-                                    .already_terminal))
-                        {
-                            decisions.finish_selected += 1;
-                        } else {
-                            decisions.abort_selected += 1;
-                        }
-                    },
-                },
-                .response_ready, .response_writing => switch (policy) {
-                    .cancel_active => decisions.abort_selected += 1,
-                    .finish_published => decisions.finish_selected += 1,
-                },
-                .response_written => unreachable,
-                .none => unreachable,
+                .abort_selected => decisions.abort_selected += 1,
+                .finish_selected => decisions.finish_selected += 1,
+                .reject_unpublished => decisions.reject_unpublished += 1,
+                .preexisting_stop => decisions.preexisting_stop += 1,
+                .resumable => decisions.resumable += 1,
             }
         }
         std.debug.assert(decisions.resumable == 0);
@@ -2093,6 +2425,640 @@ pub const ManagedLifecycleV1 = struct {
                 @as(u16, self.active_connections),
         );
         return decisions;
+    }
+
+    fn drainDecisionForConnectionLockedV1(
+        self: *ManagedLifecycleV1,
+        active: *const ActiveConnectionV1,
+        policy: ManagedDrainPolicyV1,
+        work_receipt: prepared_http.DrainReceiptV1,
+    ) ManagedDrainConnectionDecisionV1 {
+        if (active.phase == .response_written)
+            return .finish_selected;
+        if (self.connectionHadStopBeforeDrainLockedV1(
+            active,
+            work_receipt,
+        )) {
+            return .preexisting_stop;
+        }
+        return switch (active.phase) {
+            .queued,
+            .receiving_head,
+            .request_head_received,
+            => .abort_selected,
+            .request_received => .reject_unpublished,
+            .request_admitted => switch (policy) {
+                .finish_published => .finish_selected,
+                .cancel_active => blk: {
+                    const exact_active_work =
+                        work_receipt.active_work != null and
+                        active.work_identity != null and
+                        std.meta.eql(
+                            work_receipt.active_work.?,
+                            active.work_identity.?,
+                        );
+                    break :blk if (active.work_retired or
+                        (exact_active_work and
+                            work_receipt.cancellation ==
+                                .already_terminal))
+                        .finish_selected
+                    else
+                        .abort_selected;
+                },
+            },
+            .response_ready, .response_writing => switch (policy) {
+                .cancel_active => .abort_selected,
+                .finish_published => .finish_selected,
+            },
+            .response_written, .none => unreachable,
+        };
+    }
+
+    fn captureDrainSettlementCohortLockedV1(
+        self: *ManagedLifecycleV1,
+        policy: ManagedDrainPolicyV1,
+        work_receipt: prepared_http.DrainReceiptV1,
+        phase_counts: ManagedConnectionPhaseCountsV1,
+        decisions: ManagedDrainDecisionCountsV1,
+    ) LifecycleError!void {
+        if (self.drain_settlement_session != null or
+            self.drain_opening_receipt != null or
+            self.drain_policy_revision != 0 or
+            self.drain_logical_retirement_count != 0 or
+            self.drain_settlement_count != 0)
+        {
+            return LifecycleError.DrainSettlementMismatch;
+        }
+        const cohort_total = managedDrainPhaseTotalV1(phase_counts);
+        if (cohort_total != @as(u16, self.active_connections) or
+            managedDrainDecisionTotalV1(decisions) != cohort_total or
+            decisions.resumable != 0)
+        {
+            return LifecycleError.DrainSettlementMismatch;
+        }
+        for (
+            self.connection_slots[0..self.connection_capacity],
+        ) |slot| {
+            if (slot.active != null and slot.drain_member != null)
+                return LifecycleError.DrainSettlementMismatch;
+        }
+
+        var member_index: u8 = 0;
+        for (
+            self.connection_slots[0..self.connection_capacity],
+            0..,
+        ) |*slot, slot_index| {
+            const active = if (slot.active) |*connection|
+                connection
+            else
+                continue;
+            const decision =
+                self.drainDecisionForConnectionLockedV1(
+                    active,
+                    policy,
+                    work_receipt,
+                );
+            slot.drain_member = .{
+                .selection = .{
+                    .member_index = member_index,
+                    .owner = .{
+                        .process_generation = active.process_generation,
+                        .connection_sequence = active.sequence,
+                        .slot_index = @intCast(slot_index),
+                        .slot_generation = slot.generation,
+                    },
+                    .phase_at_first_linearization = active.phase,
+                    .initial_decision = decision,
+                    .initial_effective_policy = policy,
+                    .latest_decision = decision,
+                    .latest_effective_policy = policy,
+                    .latest_policy_revision = 1,
+                    .work_identity = active.work_identity,
+                    .work_cancellation = active.work_stop_outcome,
+                    .work_cancellation_winner = active.work_stop_winner,
+                },
+            };
+            member_index += 1;
+        }
+        if (@as(u16, member_index) != cohort_total)
+            return LifecycleError.DrainSettlementMismatch;
+        self.drain_settlement_session = .{
+            .process_generation = self.process_generation,
+            .drain_epoch = 1,
+            .initial_policy_revision = 1,
+            .initial_effective_policy = policy,
+            .accepted_connections = self.accepted_connections,
+            .completed_connections = self.completed_connections,
+            .failed_connections = self.failed_connections,
+            .cohort_connections = member_index,
+        };
+        self.drain_policy_revision = 1;
+    }
+
+    fn reviseDrainSettlementCohortLockedV1(
+        self: *ManagedLifecycleV1,
+        policy: ManagedDrainPolicyV1,
+        work_receipt: prepared_http.DrainReceiptV1,
+    ) LifecycleError!void {
+        if (policy != .cancel_active)
+            return LifecycleError.DrainSettlementMismatch;
+        _ = self.drain_settlement_session orelse
+            return LifecycleError.DrainSettlementUnavailable;
+        const next_revision = std.math.add(
+            u16,
+            self.drain_policy_revision,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        for (
+            self.connection_slots[0..self.connection_capacity],
+        ) |*slot| {
+            const active = if (slot.active) |*connection|
+                connection
+            else
+                continue;
+            const member = if (slot.drain_member) |*tracked|
+                tracked
+            else
+                return LifecycleError.DrainSettlementMismatch;
+            if (member.logical != null)
+                return LifecycleError.DrainSettlementMismatch;
+            member.selection.latest_decision =
+                self.drainDecisionForConnectionLockedV1(
+                    active,
+                    policy,
+                    work_receipt,
+                );
+            member.selection.latest_effective_policy = policy;
+            member.selection.latest_policy_revision =
+                next_revision;
+            member.selection.work_cancellation =
+                active.work_stop_outcome;
+            member.selection.work_cancellation_winner =
+                active.work_stop_winner;
+        }
+        self.drain_policy_revision = next_revision;
+    }
+
+    fn terminalCauseForDrainConnectionLockedV1(
+        self: *ManagedLifecycleV1,
+        active: *const ActiveConnectionV1,
+        succeeded: bool,
+        decision: ManagedDrainConnectionDecisionV1,
+    ) ManagedDrainConnectionTerminalCauseV1 {
+        if (active.hard_stop_cause) |cause| {
+            return switch (cause) {
+                .receive_timeout => .receive_timeout,
+                .full_request_timeout => .full_request_timeout,
+                .peer_reset => .peer_reset,
+                .peer_send_close => .peer_send_close,
+                .response_transport_failure => .response_transport_failure,
+            };
+        }
+        if (active.response_cancel_before_write_cause) |cause|
+            return managedDrainTerminalCauseForResponseStopV1(cause);
+        switch (active.response_write_stop_state) {
+            .requested => |cause| return managedDrainTerminalCauseForResponseStopV1(
+                cause,
+            ),
+            .observed => |cause| return managedDrainTerminalCauseForResponseStopV1(
+                cause,
+            ),
+            .none => {},
+        }
+        if (active.work_stop_winner) |winner| {
+            return switch (winner) {
+                .drain => .drain,
+                .peer_reset => .peer_reset,
+                .full_request_timeout => .full_request_timeout,
+                .transport_failure => .transport_failure,
+                .preexisting => .preexisting_work_stop,
+                .peer_send_close => .peer_send_close,
+            };
+        }
+        if (active.drain_signaled or
+            active.drain_work_cancelled)
+        {
+            return .drain;
+        }
+        if (active.failure_signaled or
+            active.failure_work_cancelled)
+        {
+            return .lifecycle_failure;
+        }
+        if (active.full_request_timeout_work_cancelled)
+            return .full_request_timeout;
+        if (active.peer_reset_work_cancelled)
+            return .peer_reset;
+        if (active.peer_send_close_work_cancelled or
+            active.peer_send_close_observed)
+        {
+            return .peer_send_close;
+        }
+        if (active.preexisting_work_stop_selected)
+            return .preexisting_work_stop;
+        if (decision == .reject_unpublished)
+            return .reject_unpublished;
+        if (decision == .abort_selected)
+            return .drain;
+        if (succeeded) return .normal_completion;
+        if (self.state == .failed) return .lifecycle_failure;
+        return .application_failure;
+    }
+
+    fn recordDrainLogicalSettlementLockedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+        active: *const ActiveConnectionV1,
+        succeeded: bool,
+        completed_counter_ordinal: u64,
+        failed_counter_ordinal: u64,
+        evidence_complete: bool,
+        terminal_cause_override: ?ManagedDrainConnectionTerminalCauseV1,
+    ) LifecycleError!void {
+        if (self.drain_settlement_session == null) return;
+        if (lease.slot_index >= self.connection_capacity)
+            return LifecycleError.ConnectionSlotMismatch;
+        const slot = &self.connection_slots[lease.slot_index];
+        if (slot.generation != lease.slot_generation)
+            return LifecycleError.ConnectionSlotGenerationMismatch;
+        const member = if (slot.drain_member) |*tracked|
+            tracked
+        else
+            return LifecycleError.DrainSettlementMismatch;
+        const owner = transportOwnerTokenV1(lease);
+        if (!std.meta.eql(owner, member.selection.owner))
+            return LifecycleError.DrainSettlementMismatch;
+        if (member.logical != null)
+            return LifecycleError.DrainSettlementMismatch;
+        const next_ordinal = std.math.add(
+            u8,
+            self.drain_logical_retirement_count,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        member.logical = .{
+            .phase = active.phase,
+            .ordinal = next_ordinal,
+            .terminal_status = if (succeeded) .completed else .failed,
+            .terminal_cause = terminal_cause_override orelse
+                self.terminalCauseForDrainConnectionLockedV1(
+                    active,
+                    succeeded,
+                    member.selection.latest_decision,
+                ),
+            .completed_counter_ordinal = completed_counter_ordinal,
+            .failed_counter_ordinal = failed_counter_ordinal,
+            .work_identity = active.work_identity,
+            .work_cancellation = active.work_stop_outcome,
+            .work_cancellation_winner = active.work_stop_winner,
+            .receive_retired = active.receive_retired,
+            .full_request_timeout_retired = active.full_request_timeout_retired,
+            .work_retired = active.work_retired,
+            .response_retired = active.response_retired,
+            .response_write_progress_bytes = active.response_write_progress_bytes,
+            .local_write_completed = active.phase == .response_written and
+                active.response_retired and
+                active.response_write_failure == null,
+            .evidence_complete = evidence_complete,
+        };
+        self.drain_logical_retirement_count = next_ordinal;
+        if (member.transport_close_confirmed)
+            try self.finalizeDrainSettlementMemberLockedV1(member);
+    }
+
+    fn finalizeDrainSettlementMemberLockedV1(
+        self: *ManagedLifecycleV1,
+        member: *ManagedDrainTrackedConnectionV1,
+    ) LifecycleError!void {
+        if (member.settlement != null) return;
+        const session = self.drain_settlement_session orelse
+            return LifecycleError.DrainSettlementUnavailable;
+        const logical = member.logical orelse return;
+        if (!member.transport_close_confirmed) return;
+        const close_evidence =
+            member.transport_close_evidence orelse
+            return LifecycleError.DrainSettlementMismatch;
+        const next_ordinal = std.math.add(
+            u8,
+            self.drain_settlement_count,
+            1,
+        ) catch return LifecycleError.CounterOverflow;
+        member.settlement = .{
+            .process_generation = self.process_generation,
+            .drain_epoch = session.drain_epoch,
+            .member_index = member.selection.member_index,
+            .owner = member.selection.owner,
+            .phase_at_first_linearization = member.selection.phase_at_first_linearization,
+            .initial_decision = member.selection.initial_decision,
+            .initial_effective_policy = member.selection.initial_effective_policy,
+            .latest_decision = member.selection.latest_decision,
+            .latest_effective_policy = member.selection.latest_effective_policy,
+            .latest_policy_revision = member.selection.latest_policy_revision,
+            .phase_at_logical_retirement = logical.phase,
+            .logical_retirement_ordinal = logical.ordinal,
+            .settlement_ordinal = next_ordinal,
+            .terminal_status = logical.terminal_status,
+            .terminal_cause = logical.terminal_cause,
+            .completed_counter_ordinal = logical.completed_counter_ordinal,
+            .failed_counter_ordinal = logical.failed_counter_ordinal,
+            .work_identity = logical.work_identity,
+            .work_cancellation = logical.work_cancellation,
+            .work_cancellation_winner = logical.work_cancellation_winner,
+            .receive_retired = logical.receive_retired,
+            .full_request_timeout_retired = logical.full_request_timeout_retired,
+            .work_retired = logical.work_retired,
+            .response_retired = logical.response_retired,
+            .response_write_progress_bytes = logical.response_write_progress_bytes,
+            .local_write_completed = logical.local_write_completed,
+            .transport_close_confirmed = true,
+            .transport_close_evidence = close_evidence,
+            .evidence_complete = logical.evidence_complete and
+                close_evidence != .forced_after_join,
+        };
+        self.drain_settlement_count = next_ordinal;
+    }
+
+    fn confirmTransportClosedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+        evidence: ManagedDrainTransportCloseEvidenceV1,
+    ) LifecycleError!bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.confirmTransportClosedLockedV1(
+            lease,
+            evidence,
+        );
+    }
+
+    fn confirmTransportClosedLockedV1(
+        self: *ManagedLifecycleV1,
+        lease: ManagedConnectionLeaseV1,
+        evidence: ManagedDrainTransportCloseEvidenceV1,
+    ) LifecycleError!bool {
+        if (self.drain_settlement_session == null) return false;
+        if (lease.process_generation != self.process_generation)
+            return LifecycleError.InvalidGeneration;
+        if (lease.slot_index >= self.connection_capacity)
+            return LifecycleError.ConnectionSlotMismatch;
+        const slot = &self.connection_slots[lease.slot_index];
+        const member = if (slot.drain_member) |*tracked|
+            tracked
+        else
+            return false;
+        if (!std.meta.eql(
+            transportOwnerTokenV1(lease),
+            member.selection.owner,
+        )) {
+            // A connection may retire before the drain linearizes, then close
+            // after the cohort is captured or after its slot is reused. It is
+            // not a settlement member and must not poison the retained cohort.
+            return false;
+        }
+        if (member.transport_close_confirmed) return false;
+        member.transport_close_confirmed = true;
+        member.transport_close_evidence = evidence;
+        if (member.logical != null)
+            try self.finalizeDrainSettlementMemberLockedV1(member);
+        return true;
+    }
+
+    fn inspectDrainSettlementsLockedV1(
+        self: *ManagedLifecycleV1,
+        session: *const ManagedDrainSettlementSessionV1,
+    ) LifecycleError!ManagedDrainSettlementsInspectionV1 {
+        try validateManagedDrainSettlementSessionShapeV1(session);
+        const retained = self.drain_settlement_session orelse
+            return LifecycleError.DrainSettlementUnavailable;
+        if (!std.meta.eql(retained, session.*))
+            return LifecycleError.DrainSettlementMismatch;
+        if (self.completed_connections <
+            session.completed_connections or
+            self.failed_connections < session.failed_connections)
+        {
+            return LifecycleError.DrainSettlementMismatch;
+        }
+        var member_count: u8 = 0;
+        var active_count: u8 = 0;
+        var closing_count: u8 = 0;
+        var settled_count: u8 = 0;
+        var completed_count: u8 = 0;
+        var failed_count: u8 = 0;
+        var logical_ordinals =
+            [_]bool{false} **
+            (maximum_managed_connection_slots_v1 + 1);
+        var settlement_ordinals =
+            [_]bool{false} **
+            (maximum_managed_connection_slots_v1 + 1);
+        var completed_counter_ordinals =
+            [_]bool{false} **
+            (maximum_managed_connection_slots_v1 + 1);
+        var failed_counter_ordinals =
+            [_]bool{false} **
+            (maximum_managed_connection_slots_v1 + 1);
+        for (
+            self.connection_slots[0..self.connection_capacity],
+        ) |slot| {
+            const member = slot.drain_member orelse continue;
+            if (member.selection.member_index != member_count or
+                member.selection.resumable or
+                member.selection.initial_effective_policy !=
+                    session.initial_effective_policy or
+                member.selection.latest_policy_revision <
+                    session.initial_policy_revision or
+                member.selection.latest_policy_revision >
+                    self.drain_policy_revision)
+            {
+                return LifecycleError.DrainSettlementMismatch;
+            }
+            member_count += 1;
+            if (member.logical) |logical| {
+                if (logical.ordinal == 0 or
+                    logical.ordinal > session.cohort_connections or
+                    logical_ordinals[logical.ordinal])
+                {
+                    return LifecycleError.DrainSettlementMismatch;
+                }
+                logical_ordinals[logical.ordinal] = true;
+                switch (logical.terminal_status) {
+                    .completed => {
+                        if (logical.completed_counter_ordinal <=
+                            session.completed_connections or
+                            logical.completed_counter_ordinal >
+                                self.completed_connections or
+                            logical.failed_counter_ordinal != 0)
+                        {
+                            return LifecycleError.DrainSettlementMismatch;
+                        }
+                        const ordinal = logical.completed_counter_ordinal -
+                            session.completed_connections;
+                        if (ordinal >
+                            maximum_managed_connection_slots_v1 or
+                            completed_counter_ordinals[
+                                @intCast(ordinal)
+                            ])
+                        {
+                            return LifecycleError.DrainSettlementMismatch;
+                        }
+                        completed_counter_ordinals[
+                            @intCast(ordinal)
+                        ] = true;
+                        completed_count += 1;
+                    },
+                    .failed => {
+                        if (logical.failed_counter_ordinal <=
+                            session.failed_connections or
+                            logical.failed_counter_ordinal >
+                                self.failed_connections or
+                            logical.completed_counter_ordinal != 0)
+                        {
+                            return LifecycleError.DrainSettlementMismatch;
+                        }
+                        const ordinal = logical.failed_counter_ordinal -
+                            session.failed_connections;
+                        if (ordinal >
+                            maximum_managed_connection_slots_v1 or
+                            failed_counter_ordinals[
+                                @intCast(ordinal)
+                            ])
+                        {
+                            return LifecycleError.DrainSettlementMismatch;
+                        }
+                        failed_counter_ordinals[
+                            @intCast(ordinal)
+                        ] = true;
+                        failed_count += 1;
+                    },
+                }
+                if (member.settlement) |settlement| {
+                    if (!member.transport_close_confirmed)
+                        return LifecycleError.DrainSettlementMismatch;
+                    const close_evidence =
+                        member.transport_close_evidence orelse
+                        return LifecycleError.DrainSettlementMismatch;
+                    try validateManagedDrainConnectionSettlementReceiptShapeV1(
+                        &settlement,
+                        session,
+                        self.drain_policy_revision,
+                    );
+                    if (settlement.settlement_ordinal >
+                        session.cohort_connections or
+                        settlement_ordinals[
+                            settlement.settlement_ordinal
+                        ] or
+                        settlement.member_index !=
+                            member.selection.member_index or
+                        !std.meta.eql(
+                            settlement.owner,
+                            member.selection.owner,
+                        ) or
+                        settlement.phase_at_first_linearization !=
+                            member.selection.phase_at_first_linearization or
+                        settlement.initial_decision !=
+                            member.selection.initial_decision or
+                        settlement.initial_effective_policy !=
+                            member.selection.initial_effective_policy or
+                        settlement.latest_decision !=
+                            member.selection.latest_decision or
+                        settlement.latest_effective_policy !=
+                            member.selection.latest_effective_policy or
+                        settlement.latest_policy_revision !=
+                            member.selection.latest_policy_revision or
+                        settlement.phase_at_logical_retirement !=
+                            logical.phase or
+                        settlement.logical_retirement_ordinal !=
+                            logical.ordinal or
+                        settlement.terminal_status !=
+                            logical.terminal_status or
+                        settlement.terminal_cause !=
+                            logical.terminal_cause or
+                        settlement.completed_counter_ordinal !=
+                            logical.completed_counter_ordinal or
+                        settlement.failed_counter_ordinal !=
+                            logical.failed_counter_ordinal or
+                        !std.meta.eql(
+                            settlement.work_identity,
+                            logical.work_identity,
+                        ) or
+                        settlement.work_cancellation !=
+                            logical.work_cancellation or
+                        settlement.work_cancellation_winner !=
+                            logical.work_cancellation_winner or
+                        settlement.receive_retired !=
+                            logical.receive_retired or
+                        settlement.full_request_timeout_retired !=
+                            logical.full_request_timeout_retired or
+                        settlement.work_retired !=
+                            logical.work_retired or
+                        settlement.response_retired !=
+                            logical.response_retired or
+                        settlement.response_write_progress_bytes !=
+                            logical.response_write_progress_bytes or
+                        settlement.local_write_completed !=
+                            logical.local_write_completed or
+                        settlement.transport_close_evidence !=
+                            close_evidence or
+                        settlement.evidence_complete !=
+                            (logical.evidence_complete and
+                                settlement.transport_close_evidence !=
+                                    .forced_after_join))
+                    {
+                        return LifecycleError.DrainSettlementMismatch;
+                    }
+                    settlement_ordinals[
+                        settlement.settlement_ordinal
+                    ] = true;
+                    settled_count += 1;
+                } else {
+                    closing_count += 1;
+                }
+            } else {
+                if (member.settlement != null)
+                    return LifecycleError.DrainSettlementMismatch;
+                active_count += 1;
+            }
+        }
+        if (member_count != session.cohort_connections or
+            active_count != self.active_connections or
+            @as(u16, active_count) +
+                @as(u16, closing_count) +
+                @as(u16, settled_count) !=
+                @as(u16, member_count) or
+            @as(u16, completed_count) +
+                @as(u16, failed_count) !=
+                @as(u16, closing_count) +
+                    @as(u16, settled_count) or
+            self.completed_connections -
+                session.completed_connections !=
+                @as(u64, completed_count) or
+            self.failed_connections -
+                session.failed_connections !=
+                @as(u64, failed_count) or
+            self.drain_logical_retirement_count !=
+                completed_count + failed_count or
+            self.drain_settlement_count != settled_count)
+        {
+            return LifecycleError.DrainSettlementMismatch;
+        }
+        return .{
+            .process_generation = self.process_generation,
+            .drain_epoch = session.drain_epoch,
+            .current_policy_revision = self.drain_policy_revision,
+            .effective_policy = self.effective_drain_policy orelse
+                session.initial_effective_policy,
+            .state = self.state,
+            .cohort_connections = member_count,
+            .active_connections = active_count,
+            .transport_closing_connections = closing_count,
+            .settled_connections = settled_count,
+            .logically_completed_connections = completed_count,
+            .logically_failed_connections = failed_count,
+            .resumable_connections = 0,
+            .settled = active_count == 0 and
+                closing_count == 0 and
+                settled_count == member_count and
+                (self.state == .stopped or
+                    self.state == .failed),
+        };
     }
 
     pub fn snapshotV1(
@@ -2739,13 +3705,10 @@ pub const ManagedLifecycleV1 = struct {
         self: *ManagedLifecycleV1,
         lease: ManagedConnectionLeaseV1,
     ) LifecycleError!void {
-        const active =
-            try self.activeConnectionForLeaseLockedV1(lease);
-        active.receive_retired = true;
-        active.full_request_timeout_retired = true;
-        active.work_retired = true;
-        active.response_retired = true;
-        return self.finishConnectionLockedV1(lease, false);
+        return self.forceRetireConnectionForCleanupLockedV1(
+            lease,
+            .lifecycle_failure,
+        );
     }
 };
 
@@ -2818,9 +3781,14 @@ fn managedConcurrentMonotonicNsV1() u64 {
 const maximum_managed_concurrent_batch_events_v1: usize =
     maximum_managed_pending_connections_v1 * 2;
 
+const ManagedConcurrentDetachedConnectionV1 = struct {
+    connection: std.net.Server.Connection,
+    lease: ManagedConnectionLeaseV1,
+};
+
 const ManagedConcurrentDetachedBatchV1 = struct {
-    connections: [maximum_managed_pending_connections_v1]?std.net.Server.Connection =
-        [_]?std.net.Server.Connection{null} **
+    connections: [maximum_managed_pending_connections_v1]?ManagedConcurrentDetachedConnectionV1 =
+        [_]?ManagedConcurrentDetachedConnectionV1{null} **
         maximum_managed_pending_connections_v1,
     connection_count: u8 = 0,
     events: [maximum_managed_concurrent_batch_events_v1]?ManagedConcurrentPendingEventV1 =
@@ -2830,14 +3798,24 @@ const ManagedConcurrentDetachedBatchV1 = struct {
 
     fn appendConnection(
         self: *ManagedConcurrentDetachedBatchV1,
+        lifecycle: *ManagedConcurrentLifecycleV1,
         connection: std.net.Server.Connection,
+        lease: ManagedConnectionLeaseV1,
     ) void {
         std.debug.assert(
             self.connection_count <
                 maximum_managed_pending_connections_v1,
         );
-        self.connections[self.connection_count] = connection;
+        std.debug.assert(
+            lifecycle.detached_close_in_flight <
+                maximum_managed_connection_slots_v1,
+        );
+        self.connections[self.connection_count] = .{
+            .connection = connection,
+            .lease = lease,
+        };
         self.connection_count += 1;
+        lifecycle.detached_close_in_flight += 1;
     }
 
     fn appendEvent(
@@ -2854,16 +3832,33 @@ const ManagedConcurrentDetachedBatchV1 = struct {
 
     fn closeConnections(
         self: *ManagedConcurrentDetachedBatchV1,
-    ) void {
+        lifecycle: *ManagedConcurrentLifecycleV1,
+    ) LifecycleError!void {
+        var first_error: ?LifecycleError = null;
         var connection_index: usize = 0;
         while (connection_index < self.connection_count) : (connection_index += 1) {
-            var connection =
+            var detached =
                 self.connections[connection_index] orelse
                 continue;
-            connection.stream.close();
+            detached.connection.stream.close();
+            lifecycle.managed.mutex.lock();
+            _ = lifecycle.managed.confirmTransportClosedLockedV1(
+                detached.lease,
+                .detached_owner_confirmed,
+            ) catch |err| blk: {
+                if (first_error == null) first_error = err;
+                break :blk false;
+            };
+            std.debug.assert(
+                lifecycle.detached_close_in_flight != 0,
+            );
+            lifecycle.detached_close_in_flight -= 1;
+            lifecycle.settled.broadcast();
+            lifecycle.managed.mutex.unlock();
             self.connections[connection_index] = null;
         }
         self.connection_count = 0;
+        if (first_error) |err| return err;
     }
 
     fn emitEvents(
@@ -2879,9 +3874,16 @@ const ManagedConcurrentDetachedBatchV1 = struct {
         self.event_count = 0;
     }
 
-    fn release(self: *ManagedConcurrentDetachedBatchV1) void {
-        self.closeConnections();
+    fn release(
+        self: *ManagedConcurrentDetachedBatchV1,
+        lifecycle: *ManagedConcurrentLifecycleV1,
+    ) LifecycleError!void {
+        var close_error: ?LifecycleError = null;
+        self.closeConnections(lifecycle) catch |err| {
+            close_error = err;
+        };
         self.emitEvents();
+        if (close_error) |err| return err;
     }
 };
 
@@ -2919,6 +3921,7 @@ pub const ManagedConcurrentLifecycleV1 = struct {
     serving: bool = false,
     observer: ?ManagedConcurrentObserverV1 = null,
     observer_in_flight: usize = 0,
+    detached_close_in_flight: u8 = 0,
     fatal_error: ?anyerror = null,
     cleanup_error: ?anyerror = null,
 
@@ -3216,7 +4219,11 @@ pub const ManagedConcurrentLifecycleV1 = struct {
                 1,
             ) catch return LifecycleError.CounterOverflow;
             _ = self.removeQueueAtLockedV1(0);
-            batch.appendConnection(queued.connection);
+            batch.appendConnection(
+                self,
+                queued.connection,
+                queued.lease,
+            );
             active.receive_retired = true;
             active.full_request_timeout_retired = true;
             switch (cause) {
@@ -3347,7 +4354,11 @@ pub const ManagedConcurrentLifecycleV1 = struct {
                 next_timeout_count;
         }
         _ = self.removeQueueAtLockedV1(index);
-        batch.appendConnection(queued.connection);
+        batch.appendConnection(
+            self,
+            queued.connection,
+            queued.lease,
+        );
         try self.managed.finishConnectionLockedV1(
             queued.lease,
             false,
@@ -3458,49 +4469,72 @@ pub const ManagedConcurrentLifecycleV1 = struct {
     fn forceConvergeAfterJoinLockedV1(
         self: *ManagedConcurrentLifecycleV1,
         batch: *ManagedConcurrentDetachedBatchV1,
-    ) void {
+    ) LifecycleError!void {
+        var first_error: ?LifecycleError = null;
         while (self.queue_len != 0) {
             const queued = self.removeQueueAtLockedV1(0);
-            batch.appendConnection(queued.connection);
-            self.failure_cancelled_queued_connections +|= 1;
-            if (queued.lease.slot_index <
-                self.managed.connection_capacity)
-            {
-                const slot =
-                    &self.managed
-                        .connection_slots[queued.lease.slot_index];
-                if (slot.generation ==
-                    queued.lease.slot_generation)
-                {
-                    if (slot.active) |active| {
-                        if (active.process_generation ==
-                            queued.lease.process_generation and
-                            active.sequence ==
-                                queued.lease.connection_sequence and
-                            active.handle == queued.lease.handle)
-                        {
-                            self.managed.failed_connections +|= 1;
-                            self.managed.active_connections -|= 1;
-                            slot.active = null;
-                        }
-                    }
-                }
-            }
+            batch.appendConnection(
+                self,
+                queued.connection,
+                queued.lease,
+            );
+            self.failure_cancelled_queued_connections = std.math.add(
+                u64,
+                self.failure_cancelled_queued_connections,
+                1,
+            ) catch blk: {
+                if (first_error == null)
+                    first_error = LifecycleError.CounterOverflow;
+                break :blk self.failure_cancelled_queued_connections;
+            };
+            self.managed
+                .forceRetireConnectionForCleanupLockedV1(
+                queued.lease,
+                .lifecycle_failure,
+            ) catch |err| {
+                self.recordCleanupErrorLockedV1(err);
+                if (first_error == null) first_error = err;
+            };
         }
         for (
             self.managed
                 .connection_slots[0..self.managed.connection_capacity],
-        ) |*slot| {
-            if (slot.active == null) continue;
-            self.managed.failed_connections +|= 1;
-            self.managed.active_connections -|= 1;
-            slot.active = null;
+            0..,
+        ) |*slot, slot_index| {
+            const active = slot.active orelse continue;
+            if (active.phase == .queued) continue;
+            const lease =
+                self.managed.leaseForSlotLockedV1(
+                    slot_index,
+                ) catch |err| {
+                    self.recordCleanupErrorLockedV1(err);
+                    if (first_error == null) first_error = err;
+                    continue;
+                };
+            self.managed
+                .forceRetireConnectionForCleanupLockedV1(
+                lease,
+                .lifecycle_failure,
+            ) catch |err| {
+                self.recordCleanupErrorLockedV1(err);
+                if (first_error == null) first_error = err;
+                continue;
+            };
+            _ = self.managed.confirmTransportClosedLockedV1(
+                lease,
+                .forced_after_join,
+            ) catch |err| blk: {
+                self.recordCleanupErrorLockedV1(err);
+                if (first_error == null) first_error = err;
+                break :blk false;
+            };
         }
         self.accept_paused = false;
         self.work_available.broadcast();
         self.queue_capacity_available.broadcast();
         self.deadline_changed.broadcast();
         self.settled.broadcast();
+        if (first_error) |err| return err;
     }
 };
 
@@ -3666,9 +4700,20 @@ pub fn serveManagedListenerWithObserversV1(
             response_observer,
             .per_connection,
         ) catch |err| {
+            _ = lifecycle.confirmTransportClosedV1(
+                lease,
+                .owner_confirmed,
+            ) catch |confirm_error| {
+                lifecycle.markFailedV1();
+                return confirm_error;
+            };
             lifecycle.markFailedV1();
             return err;
         };
+        _ = try lifecycle.confirmTransportClosedV1(
+            lease,
+            .owner_confirmed,
+        );
         if (remaining) |*count| count.* -= 1;
         if (remaining == 0) {
             _ = try beginManagedDrainV1(
@@ -3785,6 +4830,25 @@ fn beginManagedDrainWithPolicyV1(
         decision_policy,
         drain_receipt,
     );
+    if (state_before == .ready) {
+        lifecycle.captureDrainSettlementCohortLockedV1(
+            policy_resolution.effective_policy,
+            drain_receipt,
+            phase_counts,
+            decisions,
+        ) catch |err| {
+            lifecycle.state = .failed;
+            return err;
+        };
+    } else if (policy_resolution.policy_was_escalated) {
+        lifecycle.reviseDrainSettlementCohortLockedV1(
+            policy_resolution.effective_policy,
+            drain_receipt,
+        ) catch |err| {
+            lifecycle.state = .failed;
+            return err;
+        };
+    }
     const accepted_connections = lifecycle.accepted_connections;
     const completed_connections = lifecycle.completed_connections;
     const failed_connections = lifecycle.failed_connections;
@@ -3800,30 +4864,36 @@ fn beginManagedDrainWithPolicyV1(
         };
     }
     lifecycle.state = .draining;
+    const receipt: ManagedDrainInitiationReceiptV1 = .{
+        .process_generation = lifecycle.process_generation,
+        .requested_policy = requested_policy,
+        .effective_policy = policy_resolution.effective_policy,
+        .drain_was_new = state_before == .ready,
+        .policy_was_escalated = policy_resolution.policy_was_escalated,
+        .connection_actions_applied = connection_actions_applied,
+        .admission_was_open = drain_receipt.admission_was_open,
+        .state_before = state_before,
+        .state_at_linearization = .draining,
+        .accepted_connections = accepted_connections,
+        .completed_connections = completed_connections,
+        .failed_connections = failed_connections,
+        .phase_counts = phase_counts,
+        .decisions = decisions,
+        .pending_settlement_connections = lifecycle.active_connections,
+        .active_work = drain_receipt.active_work,
+        .active_work_owner = drain_receipt.transport_owner,
+        .work_cancellation = drain_receipt.cancellation,
+        .work_cancellation_winner = drain_receipt.cancellation_winner,
+        .work_cancellation_was_new = drain_receipt.cancellation_was_new,
+    };
+    if (state_before == .ready) {
+        if (lifecycle.drain_opening_receipt != null)
+            return LifecycleError.DrainSettlementMismatch;
+        lifecycle.drain_opening_receipt = receipt;
+    }
     return .{
         .active_was_present = active_was_present,
-        .receipt = .{
-            .process_generation = lifecycle.process_generation,
-            .requested_policy = requested_policy,
-            .effective_policy = policy_resolution.effective_policy,
-            .drain_was_new = state_before == .ready,
-            .policy_was_escalated = policy_resolution.policy_was_escalated,
-            .connection_actions_applied = connection_actions_applied,
-            .admission_was_open = drain_receipt.admission_was_open,
-            .state_before = state_before,
-            .state_at_linearization = .draining,
-            .accepted_connections = accepted_connections,
-            .completed_connections = completed_connections,
-            .failed_connections = failed_connections,
-            .phase_counts = phase_counts,
-            .decisions = decisions,
-            .pending_settlement_connections = lifecycle.active_connections,
-            .active_work = drain_receipt.active_work,
-            .active_work_owner = drain_receipt.transport_owner,
-            .work_cancellation = drain_receipt.cancellation,
-            .work_cancellation_winner = drain_receipt.cancellation_winner,
-            .work_cancellation_was_new = drain_receipt.cancellation_was_new,
-        },
+        .receipt = receipt,
     };
 }
 
@@ -3857,6 +4927,11 @@ fn applyDrainWorkReceiptWithPolicyLockedV1(
     );
     if (receipt.cancellation == .recovery_required)
         return LifecycleError.WorkCancellationRecoveryRequired;
+    try retainWorkStopReceiptOnActiveV1(
+        active,
+        receipt.cancellation,
+        receipt.cancellation_winner,
+    );
     active.preexisting_work_stop_selected =
         active.preexisting_work_stop_selected or
         drainReceiptSelectsPreexistingWorkStopV1(receipt);
@@ -3892,6 +4967,34 @@ fn drainReceiptSelectsPreexistingWorkStopV1(
         .recovery_required,
         => false,
     };
+}
+
+fn retainWorkStopReceiptOnActiveV1(
+    active: *ActiveConnectionV1,
+    outcome: prepared_http.DrainCancellationOutcomeV1,
+    winner: ?prepared_http.WorkCancellationCauseV1,
+) LifecycleError!void {
+    const selects_stop = switch (outcome) {
+        .cancelled,
+        .already_cancelled,
+        .start_rolled_back,
+        => true,
+        .none,
+        .already_terminal,
+        .recovery_required,
+        => false,
+    };
+    if (!selects_stop) return;
+    if (active.work_stop_outcome == .none) {
+        active.work_stop_outcome = outcome;
+        active.work_stop_winner = winner;
+        return;
+    }
+    if (active.work_stop_outcome != outcome or
+        active.work_stop_winner != winner)
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
 }
 
 /// Returns current aggregate progress for a managed drain receipt.
@@ -3938,6 +5041,113 @@ fn inspectManagedDrainLockedV1(
             (lifecycle.state == .stopped or
                 lifecycle.state == .failed),
     };
+}
+
+/// Opens the retained per-connection cohort for the first drain receipt.
+///
+/// Repeated or escalation receipts cannot replace the original counter
+/// baselines. The returned source value is unkeyed correlation evidence.
+pub fn openManagedDrainSettlementSessionV1(
+    lifecycle: *ManagedLifecycleV1,
+    receipt: *const ManagedDrainInitiationReceiptV1,
+) LifecycleError!ManagedDrainSettlementSessionV1 {
+    try validateManagedDrainReceiptShapeV1(receipt);
+    if (!receipt.drain_was_new or
+        receipt.state_before != .ready or
+        receipt.state_at_linearization != .draining)
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
+    lifecycle.mutex.lock();
+    defer lifecycle.mutex.unlock();
+    if (receipt.process_generation != lifecycle.process_generation)
+        return LifecycleError.InvalidGeneration;
+    const session = lifecycle.drain_settlement_session orelse
+        return LifecycleError.DrainSettlementUnavailable;
+    const opening_receipt = lifecycle.drain_opening_receipt orelse
+        return LifecycleError.DrainSettlementUnavailable;
+    if (!std.meta.eql(opening_receipt, receipt.*))
+        return LifecycleError.DrainSettlementMismatch;
+    if (session.accepted_connections !=
+        receipt.accepted_connections or
+        session.completed_connections !=
+            receipt.completed_connections or
+        session.failed_connections != receipt.failed_connections or
+        @as(u16, session.cohort_connections) !=
+            managedDrainPhaseTotalV1(receipt.phase_counts) or
+        session.initial_effective_policy !=
+            receipt.effective_policy)
+    {
+        return LifecycleError.DrainSettlementMismatch;
+    }
+    return session;
+}
+
+pub fn inspectManagedDrainSettlementsV1(
+    lifecycle: *ManagedLifecycleV1,
+    session: *const ManagedDrainSettlementSessionV1,
+) LifecycleError!ManagedDrainSettlementsInspectionV1 {
+    lifecycle.mutex.lock();
+    defer lifecycle.mutex.unlock();
+    return lifecycle.inspectDrainSettlementsLockedV1(session);
+}
+
+pub fn inspectManagedDrainConnectionAtV1(
+    lifecycle: *ManagedLifecycleV1,
+    session: *const ManagedDrainSettlementSessionV1,
+    member_index: u8,
+) LifecycleError!ManagedDrainConnectionInspectionV1 {
+    lifecycle.mutex.lock();
+    defer lifecycle.mutex.unlock();
+    _ = try lifecycle.inspectDrainSettlementsLockedV1(session);
+    if (member_index >= session.cohort_connections)
+        return LifecycleError.DrainSettlementMemberOutOfRange;
+    for (
+        lifecycle.connection_slots[0..lifecycle.connection_capacity],
+    ) |slot| {
+        const member = slot.drain_member orelse continue;
+        if (member.selection.member_index != member_index)
+            continue;
+        return .{
+            .selection = member.selection,
+            .retirement_state = if (member.settlement != null)
+                .settled
+            else if (member.logical != null)
+                .transport_closing
+            else
+                .active,
+            .settlement = member.settlement,
+        };
+    }
+    return LifecycleError.DrainSettlementMismatch;
+}
+
+pub fn inspectManagedDrainConnectionByOwnerV1(
+    lifecycle: *ManagedLifecycleV1,
+    session: *const ManagedDrainSettlementSessionV1,
+    owner: prepared_http.TransportOwnerTokenV1,
+) LifecycleError!ManagedDrainConnectionInspectionV1 {
+    lifecycle.mutex.lock();
+    defer lifecycle.mutex.unlock();
+    _ = try lifecycle.inspectDrainSettlementsLockedV1(session);
+    for (
+        lifecycle.connection_slots[0..lifecycle.connection_capacity],
+    ) |slot| {
+        const member = slot.drain_member orelse continue;
+        if (!std.meta.eql(member.selection.owner, owner))
+            continue;
+        return .{
+            .selection = member.selection,
+            .retirement_state = if (member.settlement != null)
+                .settled
+            else if (member.logical != null)
+                .transport_closing
+            else
+                .active,
+            .settlement = member.settlement,
+        };
+    }
+    return LifecycleError.DrainSettlementMismatch;
 }
 
 const ManagedDeadlineAuthorityV1 = enum {
@@ -4126,6 +5336,11 @@ pub fn serveManagedConcurrentListenerWithControlsV1(
 
     var final_cleanup_batch: ManagedConcurrentDetachedBatchV1 = .{};
     lifecycle.managed.mutex.lock();
+    while (lifecycle.detached_close_in_flight != 0) {
+        lifecycle.settled.wait(
+            &lifecycle.managed.mutex,
+        );
+    }
     if (listener_restore_error) |err| {
         lifecycle.recordCleanupErrorLockedV1(err);
         lifecycle.recordFatalLockedV1(err);
@@ -4138,7 +5353,33 @@ pub fn serveManagedConcurrentListenerWithControlsV1(
                 LifecycleError.InvalidTransition,
             );
         } else {
-            lifecycle.managed.state = .stopped;
+            var settlement_ready = true;
+            if (lifecycle.managed.drain_settlement_session) |*session| {
+                const settlement = lifecycle.managed
+                    .inspectDrainSettlementsLockedV1(
+                    session,
+                ) catch |err| blk: {
+                    lifecycle.recordCleanupErrorLockedV1(err);
+                    break :blk null;
+                };
+                if (settlement) |inspection| {
+                    settlement_ready =
+                        inspection.active_connections == 0 and
+                        inspection
+                            .transport_closing_connections == 0 and
+                        inspection.settled_connections ==
+                            inspection.cohort_connections;
+                } else {
+                    settlement_ready = false;
+                }
+            }
+            if (settlement_ready) {
+                lifecycle.managed.state = .stopped;
+            } else {
+                lifecycle.recordFatalLockedV1(
+                    LifecycleError.DrainSettlementMismatch,
+                );
+            }
         }
     } else if (lifecycle.managed.state == .ready) {
         lifecycle.recordFatalLockedV1(
@@ -4151,15 +5392,18 @@ pub fn serveManagedConcurrentListenerWithControlsV1(
     {
         lifecycle.forceConvergeAfterJoinLockedV1(
             &final_cleanup_batch,
+        ) catch |err| {
+            lifecycle.recordCleanupErrorLockedV1(err);
+        };
+    }
+    if (lifecycle.queue_len != 0 or
+        lifecycle.managed.active_connections != 0 or
+        lifecycle.managed.hasOccupiedConnectionSlotLockedV1())
+    {
+        lifecycle.recordCleanupErrorLockedV1(
+            LifecycleError.InvalidTransition,
         );
     }
-    std.debug.assert(lifecycle.queue_len == 0);
-    std.debug.assert(
-        lifecycle.managed.active_connections == 0,
-    );
-    std.debug.assert(
-        !lifecycle.managed.hasOccupiedConnectionSlotLockedV1(),
-    );
     while (lifecycle.observer_in_flight != 0) {
         lifecycle.settled.wait(
             &lifecycle.managed.mutex,
@@ -4171,7 +5415,7 @@ pub fn serveManagedConcurrentListenerWithControlsV1(
     lifecycle.accept_paused = false;
     lifecycle.settled.broadcast();
     lifecycle.managed.mutex.unlock();
-    final_cleanup_batch.release();
+    try final_cleanup_batch.release(lifecycle);
 
     if (fatal_error) |err| return err;
     if (lifecycle.snapshotV1().managed.state != .stopped)
@@ -4451,11 +5695,15 @@ fn managedConcurrentWorkerLoopV1(
                 &dispatch_events,
             ) catch |err| {
                 lifecycle.managed.mutex.unlock();
-                dispatch_events.release();
+                dispatch_events.release(
+                    lifecycle,
+                ) catch |release_error| {
+                    return release_error;
+                };
                 return err;
             };
         lifecycle.managed.mutex.unlock();
-        dispatch_events.release();
+        try dispatch_events.release(lifecycle);
 
         const receive_timer =
             if (context.config.receive_timeout_ns == 0)
@@ -4503,6 +5751,15 @@ fn managedConcurrentWorkerLoopV1(
                 },
             };
         }
+        _ = lifecycle.managed.confirmTransportClosedLockedV1(
+            dispatched.queued.lease,
+            .owner_confirmed,
+        ) catch |err| blk: {
+            if (connection_error == null)
+                connection_error = err;
+            lifecycle.recordCleanupErrorLockedV1(err);
+            break :blk false;
+        };
         const retired_event = lifecycle.makeEventLockedV1(
             .retired,
             dispatched.queued.lease,
@@ -4587,11 +5844,15 @@ fn managedConcurrentWatchdogLoopV1(
                 &timeout_batch,
             ) catch |err| {
                 lifecycle.managed.mutex.unlock();
-                timeout_batch.release();
+                timeout_batch.release(
+                    lifecycle,
+                ) catch |release_error| {
+                    return release_error;
+                };
                 return err;
             };
             lifecycle.managed.mutex.unlock();
-            timeout_batch.release();
+            try timeout_batch.release(lifecycle);
             continue;
         }
 
@@ -4844,6 +6105,7 @@ fn beginManagedConcurrentDrainWithPolicyV1(
         );
         lifecycle.managed.mutex.unlock();
         releaseManagedConcurrentFailureV1(
+            lifecycle,
             &detached_batch,
         );
         return err;
@@ -4863,6 +6125,7 @@ fn beginManagedConcurrentDrainWithPolicyV1(
             );
             lifecycle.managed.mutex.unlock();
             releaseManagedConcurrentFailureV1(
+                lifecycle,
                 &detached_batch,
             );
             return err;
@@ -4890,6 +6153,27 @@ fn beginManagedConcurrentDrainWithPolicyV1(
     const failed_connections =
         lifecycle.managed.failed_connections;
     const queued_before = lifecycle.queue_len;
+    if (drain_error == null) {
+        if (state_before == .ready) {
+            lifecycle.managed
+                .captureDrainSettlementCohortLockedV1(
+                policy_resolution.effective_policy,
+                drain_receipt,
+                phase_counts,
+                decisions,
+            ) catch |err| {
+                drain_error = err;
+            };
+        } else if (policy_resolution.policy_was_escalated) {
+            lifecycle.managed
+                .reviseDrainSettlementCohortLockedV1(
+                policy_resolution.effective_policy,
+                drain_receipt,
+            ) catch |err| {
+                drain_error = err;
+            };
+        }
+    }
     if (drain_error == null) {
         lifecycle.detachQueuedForStopLockedV1(
             .drain,
@@ -4931,7 +6215,7 @@ fn beginManagedConcurrentDrainWithPolicyV1(
         lifecycle.queue_capacity_available.broadcast();
         lifecycle.deadline_changed.broadcast();
         lifecycle.settled.broadcast();
-        initiation_receipt = .{
+        const receipt: ManagedDrainInitiationReceiptV1 = .{
             .process_generation = lifecycle.managed.process_generation,
             .requested_policy = requested_policy,
             .effective_policy = policy_resolution.effective_policy,
@@ -4954,11 +6238,29 @@ fn beginManagedConcurrentDrainWithPolicyV1(
             .work_cancellation_winner = drain_receipt.cancellation_winner,
             .work_cancellation_was_new = drain_receipt.cancellation_was_new,
         };
+        if (state_before == .ready and
+            lifecycle.managed.drain_opening_receipt != null)
+        {
+            drain_error = LifecycleError.DrainSettlementMismatch;
+            lifecycle.recordFatalLockedV1(
+                LifecycleError.DrainSettlementMismatch,
+            );
+        } else {
+            if (state_before == .ready)
+                lifecycle.managed.drain_opening_receipt = receipt;
+            initiation_receipt = receipt;
+        }
     }
     lifecycle.managed.mutex.unlock();
-    detached_batch.closeConnections();
+    var close_error: ?anyerror = null;
+    detached_batch.closeConnections(
+        lifecycle,
+    ) catch |err| {
+        close_error = err;
+    };
     detached_batch.emitEvents();
     if (drain_error) |err| return err;
+    if (close_error) |err| return err;
     return initiation_receipt.?;
 }
 
@@ -5007,12 +6309,17 @@ fn applyConcurrentFailureWorkReceiptLockedV1(
         return LifecycleError.MissingTransportOwner;
     const lease = try lifecycle.managed
         .leaseForTransportOwnerLockedV1(owner);
-    _ = try lifecycle.managed.bindActiveWorkLockedV1(
+    const active = try lifecycle.managed.bindActiveWorkLockedV1(
         lease,
         work_identity,
     );
     if (receipt.cancellation == .recovery_required)
         return LifecycleError.WorkCancellationRecoveryRequired;
+    try retainWorkStopReceiptOnActiveV1(
+        active,
+        receipt.cancellation,
+        receipt.cancellation_winner,
+    );
     if (receipt.cancellation_was_new and
         receipt.cancellation_winner == .transport_failure)
     {
@@ -5060,6 +6367,50 @@ pub fn inspectManagedConcurrentDrainV1(
     return inspectManagedDrainV1(&lifecycle.managed, receipt);
 }
 
+pub fn openManagedConcurrentDrainSettlementSessionV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    receipt: *const ManagedDrainInitiationReceiptV1,
+) LifecycleError!ManagedDrainSettlementSessionV1 {
+    return openManagedDrainSettlementSessionV1(
+        &lifecycle.managed,
+        receipt,
+    );
+}
+
+pub fn inspectManagedConcurrentDrainSettlementsV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    session: *const ManagedDrainSettlementSessionV1,
+) LifecycleError!ManagedDrainSettlementsInspectionV1 {
+    return inspectManagedDrainSettlementsV1(
+        &lifecycle.managed,
+        session,
+    );
+}
+
+pub fn inspectManagedConcurrentDrainConnectionAtV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    session: *const ManagedDrainSettlementSessionV1,
+    member_index: u8,
+) LifecycleError!ManagedDrainConnectionInspectionV1 {
+    return inspectManagedDrainConnectionAtV1(
+        &lifecycle.managed,
+        session,
+        member_index,
+    );
+}
+
+pub fn inspectManagedConcurrentDrainConnectionByOwnerV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
+    session: *const ManagedDrainSettlementSessionV1,
+    owner: prepared_http.TransportOwnerTokenV1,
+) LifecycleError!ManagedDrainConnectionInspectionV1 {
+    return inspectManagedDrainConnectionByOwnerV1(
+        &lifecycle.managed,
+        session,
+        owner,
+    );
+}
+
 fn failManagedConcurrentV1(
     lifecycle: *ManagedConcurrentLifecycleV1,
     runtime: *prepared_http.RuntimeV1,
@@ -5083,6 +6434,7 @@ fn failManagedConcurrentV1(
     );
     lifecycle.managed.mutex.unlock();
     releaseManagedConcurrentFailureV1(
+        lifecycle,
         &detached_batch,
     );
 }
@@ -5121,9 +6473,16 @@ fn convergeManagedConcurrentFailureLockedV1(
 }
 
 fn releaseManagedConcurrentFailureV1(
+    lifecycle: *ManagedConcurrentLifecycleV1,
     detached_batch: *ManagedConcurrentDetachedBatchV1,
 ) void {
-    detached_batch.closeConnections();
+    detached_batch.closeConnections(
+        lifecycle,
+    ) catch |err| {
+        lifecycle.managed.mutex.lock();
+        lifecycle.recordCleanupErrorLockedV1(err);
+        lifecycle.managed.mutex.unlock();
+    };
     detached_batch.emitEvents();
 }
 
@@ -6253,6 +7612,29 @@ fn applyDrainWorkReceiptForTestV1(
     );
 }
 
+const DetachedBatchObserverTestV1 = struct {
+    observed: usize = 0,
+
+    fn observeOpaque(
+        context: *anyopaque,
+        event: ManagedConcurrentEventV1,
+    ) void {
+        _ = event;
+        const self: *DetachedBatchObserverTestV1 =
+            @ptrCast(@alignCast(context));
+        self.observed += 1;
+    }
+
+    fn observer(
+        self: *DetachedBatchObserverTestV1,
+    ) ManagedConcurrentObserverV1 {
+        return .{
+            .context = self,
+            .event_fn = observeOpaque,
+        };
+    }
+};
+
 const ManagedAcceptFallbackTestContextV1 = struct {
     lifecycle: *ManagedConcurrentLifecycleV1,
     wait_entered: *std.Thread.ResetEvent,
@@ -7200,6 +8582,410 @@ test "drain receipt classifies a sticky runtime stop before its callback" {
     try lifecycle.retireActiveConnectionWorkV1(lease, identity);
     try lifecycle.finishConnectionV1(lease, false);
     try lifecycle.markStoppedV1();
+}
+
+test "per-connection drain settlement waits for close confirmation" {
+    var lifecycle =
+        try ManagedLifecycleV1.initWithConnectionCapacityV1(89, 2);
+    try lifecycle.markReadyV1();
+    const rejected =
+        try lifecycle.beginConnectionV1(@intCast(330));
+    const written =
+        try lifecycle.beginConnectionV1(@intCast(331));
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        rejected,
+        .request_received,
+        true,
+    );
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        written,
+        .response_written,
+        true,
+    );
+    lifecycle.mutex.lock();
+    const written_active =
+        lifecycle.activeConnectionForLeaseLockedV1(
+            written,
+        ) catch |err| {
+            lifecycle.mutex.unlock();
+            return err;
+        };
+    written_active.response_retired = true;
+    lifecycle.mutex.unlock();
+
+    var runtime: prepared_http.RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+    };
+    const initiation = (try beginManagedDrainWithPolicyV1(
+        &lifecycle,
+        &runtime,
+        .finish_published,
+    )).receipt;
+    const session = try openManagedDrainSettlementSessionV1(
+        &lifecycle,
+        &initiation,
+    );
+    var forged_initiation = initiation;
+    forged_initiation.phase_counts.request_received -= 1;
+    forged_initiation.phase_counts.request_head_received += 1;
+    try std.testing.expectError(
+        LifecycleError.DrainSettlementMismatch,
+        openManagedDrainSettlementSessionV1(
+            &lifecycle,
+            &forged_initiation,
+        ),
+    );
+    try std.testing.expectEqual(@as(u8, 2), session.cohort_connections);
+    var progress = try inspectManagedDrainSettlementsV1(
+        &lifecycle,
+        &session,
+    );
+    try std.testing.expectEqual(@as(u8, 2), progress.active_connections);
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        progress.transport_closing_connections,
+    );
+    const rejected_initial =
+        try inspectManagedDrainConnectionAtV1(
+            &lifecycle,
+            &session,
+            0,
+        );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionDecisionV1.reject_unpublished,
+        rejected_initial.selection.initial_decision,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionRetirementStateV1.active,
+        rejected_initial.retirement_state,
+    );
+
+    try lifecycle.finishConnectionV1(rejected, true);
+    progress = try inspectManagedDrainSettlementsV1(
+        &lifecycle,
+        &session,
+    );
+    try std.testing.expectEqual(@as(u8, 1), progress.active_connections);
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        progress.transport_closing_connections,
+    );
+    const rejected_closing =
+        try inspectManagedDrainConnectionByOwnerV1(
+            &lifecycle,
+            &session,
+            transportOwnerTokenV1(rejected),
+        );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionRetirementStateV1.transport_closing,
+        rejected_closing.retirement_state,
+    );
+    try std.testing.expect(rejected_closing.settlement == null);
+    try std.testing.expect(
+        try lifecycle.confirmTransportClosedV1(
+            rejected,
+            .owner_confirmed,
+        ),
+    );
+    try std.testing.expect(
+        !(try lifecycle.confirmTransportClosedV1(
+            rejected,
+            .owner_confirmed,
+        )),
+    );
+
+    try lifecycle.finishConnectionV1(written, true);
+    _ = try lifecycle.confirmTransportClosedV1(
+        written,
+        .owner_confirmed,
+    );
+    try lifecycle.markStoppedV1();
+    progress = try inspectManagedDrainSettlementsV1(
+        &lifecycle,
+        &session,
+    );
+    try std.testing.expect(progress.settled);
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        progress.settled_connections,
+    );
+    try std.testing.expectEqual(
+        @as(u8, 2),
+        progress.logically_completed_connections,
+    );
+    const rejected_final =
+        (try inspectManagedDrainConnectionAtV1(
+            &lifecycle,
+            &session,
+            0,
+        )).settlement.?;
+    try std.testing.expectEqual(
+        ManagedDrainConnectionTerminalCauseV1.reject_unpublished,
+        rejected_final.terminal_cause,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionTerminalStatusV1.completed,
+        rejected_final.terminal_status,
+    );
+    const written_final =
+        (try inspectManagedDrainConnectionAtV1(
+            &lifecycle,
+            &session,
+            1,
+        )).settlement.?;
+    try std.testing.expectEqual(
+        ManagedDrainConnectionTerminalCauseV1.normal_completion,
+        written_final.terminal_cause,
+    );
+    try std.testing.expect(written_final.local_write_completed);
+    try std.testing.expect(written_final.evidence_complete);
+    try std.testing.expectError(
+        LifecycleError.DrainSettlementMemberOutOfRange,
+        inspectManagedDrainConnectionAtV1(
+            &lifecycle,
+            &session,
+            2,
+        ),
+    );
+    var forged = session;
+    forged.drain_epoch += 1;
+    try std.testing.expectError(
+        LifecycleError.DrainSettlementMismatch,
+        inspectManagedDrainSettlementsV1(
+            &lifecycle,
+            &forged,
+        ),
+    );
+}
+
+test "pre-cohort close cannot settle a reused drain member slot" {
+    var lifecycle = try ManagedLifecycleV1.initV1(91);
+    try lifecycle.markReadyV1();
+    const pre_cohort =
+        try lifecycle.beginConnectionV1(@intCast(333));
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        pre_cohort,
+        .request_received,
+        true,
+    );
+    try lifecycle.finishConnectionV1(pre_cohort, true);
+
+    const cohort_member =
+        try lifecycle.beginConnectionV1(@intCast(334));
+    try std.testing.expectEqual(
+        pre_cohort.slot_index,
+        cohort_member.slot_index,
+    );
+    try std.testing.expect(
+        pre_cohort.slot_generation !=
+            cohort_member.slot_generation,
+    );
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        cohort_member,
+        .request_received,
+        true,
+    );
+
+    var runtime: prepared_http.RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+    };
+    const initiation = (try beginManagedDrainWithPolicyV1(
+        &lifecycle,
+        &runtime,
+        .finish_published,
+    )).receipt;
+    const session = try openManagedDrainSettlementSessionV1(
+        &lifecycle,
+        &initiation,
+    );
+    try std.testing.expect(
+        !(try lifecycle.confirmTransportClosedV1(
+            pre_cohort,
+            .owner_confirmed,
+        )),
+    );
+    const active =
+        try inspectManagedDrainConnectionByOwnerV1(
+            &lifecycle,
+            &session,
+            transportOwnerTokenV1(cohort_member),
+        );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionRetirementStateV1.active,
+        active.retirement_state,
+    );
+    try std.testing.expect(active.settlement == null);
+
+    try lifecycle.finishConnectionV1(cohort_member, true);
+    try std.testing.expect(
+        try lifecycle.confirmTransportClosedV1(
+            cohort_member,
+            .owner_confirmed,
+        ),
+    );
+    try lifecycle.markStoppedV1();
+    const settled =
+        try inspectManagedDrainConnectionByOwnerV1(
+            &lifecycle,
+            &session,
+            transportOwnerTokenV1(cohort_member),
+        );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionRetirementStateV1.settled,
+        settled.retirement_state,
+    );
+    try std.testing.expect(settled.settlement != null);
+}
+
+test "emergency worker retirement stays incomplete lifecycle evidence" {
+    var lifecycle = try ManagedLifecycleV1.initV1(94);
+    try lifecycle.markReadyV1();
+    const lease =
+        try lifecycle.beginConnectionV1(@intCast(335));
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        lease,
+        .request_received,
+        true,
+    );
+    var runtime: prepared_http.RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+    };
+    const initiation = (try beginManagedDrainWithPolicyV1(
+        &lifecycle,
+        &runtime,
+        .finish_published,
+    )).receipt;
+    const session = try openManagedDrainSettlementSessionV1(
+        &lifecycle,
+        &initiation,
+    );
+
+    lifecycle.mutex.lock();
+    lifecycle.forceFinishConnectionLockedV1(
+        lease,
+    ) catch |err| {
+        lifecycle.mutex.unlock();
+        return err;
+    };
+    lifecycle.mutex.unlock();
+    _ = try lifecycle.confirmTransportClosedV1(
+        lease,
+        .owner_confirmed,
+    );
+    try lifecycle.markStoppedV1();
+
+    const settlement =
+        (try inspectManagedDrainConnectionAtV1(
+            &lifecycle,
+            &session,
+            0,
+        )).settlement.?;
+    try std.testing.expectEqual(
+        ManagedDrainConnectionTerminalStatusV1.failed,
+        settlement.terminal_status,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionTerminalCauseV1.lifecycle_failure,
+        settlement.terminal_cause,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainTransportCloseEvidenceV1.owner_confirmed,
+        settlement.transport_close_evidence,
+    );
+    try std.testing.expect(!settlement.evidence_complete);
+}
+
+test "per-connection settlement retains finish to cancel revision" {
+    var lifecycle = try ManagedLifecycleV1.initV1(90);
+    try lifecycle.markReadyV1();
+    const lease =
+        try lifecycle.beginConnectionV1(@intCast(332));
+    try setConnectionPhaseForTestV1(
+        &lifecycle,
+        lease,
+        .response_ready,
+        true,
+    );
+    var runtime: prepared_http.RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+    };
+    const finish = (try beginManagedDrainWithPolicyV1(
+        &lifecycle,
+        &runtime,
+        .finish_published,
+    )).receipt;
+    const session = try openManagedDrainSettlementSessionV1(
+        &lifecycle,
+        &finish,
+    );
+    const escalation = (try beginManagedDrainWithPolicyV1(
+        &lifecycle,
+        &runtime,
+        .cancel_active,
+    )).receipt;
+    try std.testing.expect(escalation.policy_was_escalated);
+    const revised = try inspectManagedDrainConnectionAtV1(
+        &lifecycle,
+        &session,
+        0,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionDecisionV1.finish_selected,
+        revised.selection.initial_decision,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainConnectionDecisionV1.abort_selected,
+        revised.selection.latest_decision,
+    );
+    try std.testing.expectEqual(
+        @as(u16, 2),
+        revised.selection.latest_policy_revision,
+    );
+    try std.testing.expectEqual(
+        prepared_http.ResponseWriteOutcomeV1.cancelled_before_write,
+        try lifecycle.retireResponseV1(
+            lease,
+            .cancelled_before_write,
+        ),
+    );
+    try lifecycle.finishConnectionV1(lease, true);
+    _ = try lifecycle.confirmTransportClosedV1(
+        lease,
+        .owner_confirmed,
+    );
+    try lifecycle.markStoppedV1();
+    const final =
+        (try inspectManagedDrainConnectionAtV1(
+            &lifecycle,
+            &session,
+            0,
+        )).settlement.?;
+    try std.testing.expectEqual(
+        ManagedDrainConnectionTerminalCauseV1.drain,
+        final.terminal_cause,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainPolicyV1.finish_published,
+        final.initial_effective_policy,
+    );
+    try std.testing.expectEqual(
+        ManagedDrainPolicyV1.cancel_active,
+        final.latest_effective_policy,
+    );
+    try std.testing.expectEqual(@as(u16, 2), final.latest_policy_revision);
 }
 
 test "managed drain receipt conserves phases and permits escalation" {
@@ -9629,6 +11415,95 @@ test "managed drain signals every occupied connection slot" {
     try lifecycle.markStoppedV1();
 }
 
+test "detached close errors still release observer ownership" {
+    const bind_address =
+        try std.net.Address.parseIp("127.0.0.1", 0);
+    var listener = try bind_address.listen(.{
+        .reuse_address = true,
+    });
+    defer listener.deinit();
+    const peer = try std.net.tcpConnectToAddress(
+        listener.listen_address,
+    );
+    defer peer.close();
+    const connection = try listener.accept();
+
+    var lifecycle = try ManagedConcurrentLifecycleV1.initV1(
+        92,
+        .{
+            .worker_count = 1,
+            .pending_connection_capacity = 1,
+        },
+    );
+    try lifecycle.markReadyV1();
+    var runtime: prepared_http.RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+    };
+    _ = try beginManagedConcurrentDrainWithPolicyV1(
+        &lifecycle,
+        &runtime,
+        .cancel_active,
+    );
+
+    var observer: DetachedBatchObserverTestV1 = .{};
+    var batch: ManagedConcurrentDetachedBatchV1 = .{};
+    lifecycle.managed.mutex.lock();
+    lifecycle.observer = observer.observer();
+    batch.appendConnection(
+        &lifecycle,
+        connection,
+        .{
+            .process_generation = 93,
+            .connection_sequence = 1,
+            .slot_index = 0,
+            .slot_generation = 1,
+            .handle = connection.stream.handle,
+        },
+    );
+    batch.appendEvent(lifecycle.captureEventLockedV1(.{
+        .ordinal = 1,
+        .kind = .queued_failure,
+        .queued_connections = 0,
+        .running_connections = 0,
+    }));
+    lifecycle.managed.mutex.unlock();
+
+    try std.testing.expectEqual(
+        @as(u8, 1),
+        lifecycle.detached_close_in_flight,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        lifecycle.observer_in_flight,
+    );
+    try std.testing.expectError(
+        LifecycleError.InvalidGeneration,
+        batch.release(&lifecycle),
+    );
+    lifecycle.managed.mutex.lock();
+    const detached_close_in_flight =
+        lifecycle.detached_close_in_flight;
+    const observer_in_flight =
+        lifecycle.observer_in_flight;
+    lifecycle.observer = null;
+    lifecycle.managed.mutex.unlock();
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        detached_close_in_flight,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        observer_in_flight,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        observer.observed,
+    );
+    try lifecycle.managed.markStoppedV1();
+}
+
 test "concurrent accept wait is bounded and restores caller listener mode" {
     const bind_address =
         try std.net.Address.parseIp("127.0.0.1", 0);
@@ -9898,7 +11773,7 @@ test "concurrent fatal convergence has distinct running failure evidence" {
         @as(u8, 0),
         first_batch.connection_count,
     );
-    first_batch.release();
+    try first_batch.release(&lifecycle);
 
     const failed = lifecycle.snapshotV1();
     try std.testing.expectEqual(
@@ -9953,7 +11828,7 @@ test "concurrent fatal convergence has distinct running failure evidence" {
         @as(u8, 0),
         repeated_batch.event_count,
     );
-    repeated_batch.release();
+    try repeated_batch.release(&lifecycle);
     try std.testing.expectEqual(
         @as(u64, 1),
         lifecycle.snapshotV1()

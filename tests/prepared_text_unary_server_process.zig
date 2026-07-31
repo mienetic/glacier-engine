@@ -35,6 +35,7 @@ const drain_body_command = "drain-body\n";
 const drain_request_received_command =
     "drain-request-received\n";
 const drain_work_command = "drain-work\n";
+const finish_cancel_work_command = "finish-cancel-work\n";
 const drain_terminal_work_command = "drain-terminal-work\n";
 const peer_reset_arm_command = "peer-reset-arm\n";
 const peer_reset_release_command = "peer-reset-release\n";
@@ -118,6 +119,8 @@ const generation_drain_request_received: u64 =
     0x4753_5052_0000_0122;
 const generation_drain_response_written: u64 =
     0x4753_5052_0000_0123;
+const generation_finish_cancel_work: u64 =
+    0x4753_5052_0000_0124;
 const generation_death_base: u64 =
     0x4753_5052_0000_0200;
 const death_receipt_abi: u64 =
@@ -3723,14 +3726,19 @@ fn runWorker(
         }
     }
     var drain_error: ?anyerror = null;
-    server_api.requestDrainAndWakeV1(
-        &lifecycle,
-        &runtime,
-        listen_address,
-    ) catch |err| {
-        drain_error = err;
-    };
-    if (drain_error == null and drain_control.repeatsDrain()) {
+    var finish_cancel_proof: ?NativeFinishCancelDrainProofV1 = null;
+    if (drain_control == .finish_then_cancel_work) {
+        const expected_work_identity = work_barrier.identity orelse
+            return error.MissingDrainWorkCheckpoint;
+        finish_cancel_proof =
+            try initiateNativeFinishCancelDrainProofV1(
+                &lifecycle,
+                &runtime,
+                listen_address,
+                generation,
+                expected_work_identity,
+            );
+    } else {
         server_api.requestDrainAndWakeV1(
             &lifecycle,
             &runtime,
@@ -3738,6 +3746,15 @@ fn runWorker(
         ) catch |err| {
             drain_error = err;
         };
+        if (drain_error == null and drain_control.repeatsDrain()) {
+            server_api.requestDrainAndWakeV1(
+                &lifecycle,
+                &runtime,
+                listen_address,
+            ) catch |err| {
+                drain_error = err;
+            };
+        }
     }
     if (drain_error == null and
         (drain_control == .request_received or
@@ -3843,6 +3860,13 @@ fn runWorker(
             work_barrier.retire_identity_mismatch))
     {
         return error.InvalidWorkRetirementReceipt;
+    }
+    if (finish_cancel_proof) |proof| {
+        try validateNativeFinishCancelDrainSettlementV1(
+            &lifecycle,
+            proof,
+            generation,
+        );
     }
 
     const stopped = lifecycle.snapshotV1();
@@ -6388,6 +6412,7 @@ const DrainControl = enum {
     partial_body,
     request_received,
     admitted_work,
+    finish_then_cancel_work,
     terminal_work,
     response_ready,
     response_completed,
@@ -6407,6 +6432,7 @@ const DrainControl = enum {
             .partial_body => .request_head_received,
             .request_received => .request_received,
             .admitted_work,
+            .finish_then_cancel_work,
             .terminal_work,
             => .request_admitted,
             .response_ready => .response_ready,
@@ -6427,11 +6453,13 @@ const DrainControl = enum {
 
     fn usesWorkBarrier(self: DrainControl) bool {
         return self == .admitted_work or
+            self == .finish_then_cancel_work or
             self == .terminal_work;
     }
 
     fn expectsWorkCancellation(self: DrainControl) bool {
-        return self == .admitted_work;
+        return self == .admitted_work or
+            self == .finish_then_cancel_work;
     }
 
     fn usesResponseBarrier(self: DrainControl) bool {
@@ -6453,13 +6481,285 @@ const DrainControl = enum {
     }
 };
 
+const NativeFinishCancelDrainProofV1 = struct {
+    session: server_api.ManagedDrainSettlementSessionV1,
+    owner: http_server.TransportOwnerTokenV1,
+    work_identity: http_server.WorkIdentityV1,
+};
+
+fn initiateNativeFinishCancelDrainProofV1(
+    lifecycle: *server_api.ManagedLifecycleV1,
+    runtime: *http_server.RuntimeV1,
+    listen_address: std.net.Address,
+    generation: u64,
+    expected_work_identity: http_server.WorkIdentityV1,
+) !NativeFinishCancelDrainProofV1 {
+    const finish = try server_api.requestDrainAndWakeWithPolicyV1(
+        lifecycle,
+        runtime,
+        listen_address,
+        .finish_published,
+    );
+    const finish_work = finish.active_work orelse
+        return error.MissingFinishDrainWork;
+    const finish_owner = finish.active_work_owner orelse
+        return error.MissingFinishDrainOwner;
+    if (finish.process_generation != generation or
+        finish.requested_policy != .finish_published or
+        finish.effective_policy != .finish_published or
+        !finish.drain_was_new or
+        finish.policy_was_escalated or
+        !finish.connection_actions_applied or
+        !finish.admission_was_open or
+        finish.state_before != .ready or
+        finish.state_at_linearization != .draining or
+        finish.synchronously_retired_connections != 0 or
+        finish.pending_settlement_connections != 1 or
+        finish.phase_counts.queued != 0 or
+        finish.phase_counts.receiving_head != 0 or
+        finish.phase_counts.request_head_received != 0 or
+        finish.phase_counts.request_received != 0 or
+        finish.phase_counts.request_admitted != 1 or
+        finish.phase_counts.response_ready != 0 or
+        finish.phase_counts.response_writing != 0 or
+        finish.phase_counts.response_written != 0 or
+        finish.decisions.abort_selected != 0 or
+        finish.decisions.finish_selected != 1 or
+        finish.decisions.reject_unpublished != 0 or
+        finish.decisions.preexisting_stop != 0 or
+        finish.decisions.resumable != 0 or
+        !std.meta.eql(finish_work, expected_work_identity) or
+        finish.work_cancellation != .none or
+        finish.work_cancellation_winner != null or
+        finish.work_cancellation_was_new)
+    {
+        return error.InvalidNativeFinishDrainInitiation;
+    }
+
+    const session =
+        try server_api.openManagedDrainSettlementSessionV1(
+            lifecycle,
+            &finish,
+        );
+    if (session.process_generation != generation or
+        session.drain_epoch != 1 or
+        session.initial_policy_revision != 1 or
+        session.initial_effective_policy != .finish_published or
+        session.cohort_connections != 1)
+    {
+        return error.InvalidNativeFinishDrainSession;
+    }
+    const finish_progress =
+        try server_api.inspectManagedDrainSettlementsV1(
+            lifecycle,
+            &session,
+        );
+    if (finish_progress.process_generation != generation or
+        finish_progress.drain_epoch != session.drain_epoch or
+        finish_progress.current_policy_revision != 1 or
+        finish_progress.effective_policy != .finish_published or
+        finish_progress.state != .draining or
+        finish_progress.cohort_connections != 1 or
+        finish_progress.active_connections != 1 or
+        finish_progress.transport_closing_connections != 0 or
+        finish_progress.settled_connections != 0 or
+        finish_progress.logically_completed_connections != 0 or
+        finish_progress.logically_failed_connections != 0 or
+        finish_progress.resumable_connections != 0 or
+        finish_progress.settled)
+    {
+        return error.InvalidNativeFinishDrainProgress;
+    }
+    const initial =
+        try server_api.inspectManagedDrainConnectionAtV1(
+            lifecycle,
+            &session,
+            0,
+        );
+    const initial_work = initial.selection.work_identity orelse
+        return error.MissingNativeFinishDrainMemberWork;
+    if (initial.selection.member_index != 0 or
+        !std.meta.eql(initial.selection.owner, finish_owner) or
+        initial.selection.phase_at_first_linearization !=
+            .request_admitted or
+        initial.selection.initial_decision != .finish_selected or
+        initial.selection.initial_effective_policy !=
+            .finish_published or
+        initial.selection.latest_decision != .finish_selected or
+        initial.selection.latest_effective_policy !=
+            .finish_published or
+        initial.selection.latest_policy_revision != 1 or
+        !std.meta.eql(initial_work, expected_work_identity) or
+        initial.selection.work_cancellation != .none or
+        initial.selection.work_cancellation_winner != null or
+        initial.selection.resumable or
+        initial.retirement_state != .active or
+        initial.settlement != null)
+    {
+        return error.InvalidNativeFinishDrainMember;
+    }
+
+    const escalation =
+        try server_api.requestDrainAndWakeWithPolicyV1(
+            lifecycle,
+            runtime,
+            listen_address,
+            .cancel_active,
+        );
+    const escalation_work = escalation.active_work orelse
+        return error.MissingEscalatedDrainWork;
+    const escalation_owner = escalation.active_work_owner orelse
+        return error.MissingEscalatedDrainOwner;
+    if (escalation.process_generation != generation or
+        escalation.requested_policy != .cancel_active or
+        escalation.effective_policy != .cancel_active or
+        escalation.drain_was_new or
+        !escalation.policy_was_escalated or
+        !escalation.connection_actions_applied or
+        escalation.admission_was_open or
+        escalation.state_before != .draining or
+        escalation.state_at_linearization != .draining or
+        escalation.synchronously_retired_connections != 0 or
+        escalation.pending_settlement_connections != 1 or
+        escalation.phase_counts.request_admitted != 1 or
+        escalation.decisions.abort_selected != 1 or
+        escalation.decisions.finish_selected != 0 or
+        escalation.decisions.reject_unpublished != 0 or
+        escalation.decisions.preexisting_stop != 0 or
+        escalation.decisions.resumable != 0 or
+        !std.meta.eql(escalation_work, expected_work_identity) or
+        !std.meta.eql(escalation_owner, finish_owner) or
+        escalation.work_cancellation != .cancelled or
+        escalation.work_cancellation_winner != .drain or
+        !escalation.work_cancellation_was_new)
+    {
+        return error.InvalidNativeDrainEscalation;
+    }
+
+    const escalation_progress =
+        try server_api.inspectManagedDrainSettlementsV1(
+            lifecycle,
+            &session,
+        );
+    if (escalation_progress.current_policy_revision != 2 or
+        escalation_progress.effective_policy != .cancel_active or
+        escalation_progress.state != .draining or
+        escalation_progress.cohort_connections != 1 or
+        escalation_progress.active_connections != 1 or
+        escalation_progress.transport_closing_connections != 0 or
+        escalation_progress.settled_connections != 0 or
+        escalation_progress.settled)
+    {
+        return error.InvalidNativeEscalatedDrainProgress;
+    }
+    const revised =
+        try server_api.inspectManagedDrainConnectionAtV1(
+            lifecycle,
+            &session,
+            0,
+        );
+    const revised_work = revised.selection.work_identity orelse
+        return error.MissingNativeEscalatedDrainMemberWork;
+    if (!std.meta.eql(revised.selection.owner, finish_owner) or
+        revised.selection.initial_decision != .finish_selected or
+        revised.selection.initial_effective_policy !=
+            .finish_published or
+        revised.selection.latest_decision != .abort_selected or
+        revised.selection.latest_effective_policy !=
+            .cancel_active or
+        revised.selection.latest_policy_revision != 2 or
+        !std.meta.eql(revised_work, expected_work_identity) or
+        revised.selection.work_cancellation != .cancelled or
+        revised.selection.work_cancellation_winner != .drain or
+        revised.selection.resumable or
+        revised.retirement_state != .active or
+        revised.settlement != null)
+    {
+        return error.InvalidNativeEscalatedDrainMember;
+    }
+    return .{
+        .session = session,
+        .owner = finish_owner,
+        .work_identity = expected_work_identity,
+    };
+}
+
+fn validateNativeFinishCancelDrainSettlementV1(
+    lifecycle: *server_api.ManagedLifecycleV1,
+    proof: NativeFinishCancelDrainProofV1,
+    generation: u64,
+) !void {
+    const progress =
+        try server_api.inspectManagedDrainSettlementsV1(
+            lifecycle,
+            &proof.session,
+        );
+    if (progress.process_generation != generation or
+        progress.drain_epoch != proof.session.drain_epoch or
+        progress.current_policy_revision != 2 or
+        progress.effective_policy != .cancel_active or
+        progress.state != .stopped or
+        progress.cohort_connections != 1 or
+        progress.active_connections != 0 or
+        progress.transport_closing_connections != 0 or
+        progress.settled_connections != 1 or
+        progress.logically_completed_connections != 1 or
+        progress.logically_failed_connections != 0 or
+        progress.resumable_connections != 0 or
+        !progress.settled)
+    {
+        return error.InvalidNativeDrainFinalProgress;
+    }
+    const inspected =
+        try server_api.inspectManagedDrainConnectionAtV1(
+            lifecycle,
+            &proof.session,
+            0,
+        );
+    const settlement = inspected.settlement orelse
+        return error.MissingNativeDrainFinalSettlement;
+    const final_work = settlement.work_identity orelse
+        return error.MissingNativeDrainFinalWork;
+    if (inspected.retirement_state != .settled or
+        !std.meta.eql(inspected.selection.owner, proof.owner) or
+        inspected.selection.initial_decision != .finish_selected or
+        inspected.selection.latest_decision != .abort_selected or
+        inspected.selection.latest_policy_revision != 2 or
+        settlement.process_generation != generation or
+        settlement.drain_epoch != proof.session.drain_epoch or
+        settlement.member_index != 0 or
+        !std.meta.eql(settlement.owner, proof.owner) or
+        settlement.phase_at_first_linearization !=
+            .request_admitted or
+        settlement.initial_decision != .finish_selected or
+        settlement.initial_effective_policy != .finish_published or
+        settlement.latest_decision != .abort_selected or
+        settlement.latest_effective_policy != .cancel_active or
+        settlement.latest_policy_revision != 2 or
+        settlement.logical_retirement_ordinal != 1 or
+        settlement.settlement_ordinal != 1 or
+        settlement.terminal_status != .completed or
+        settlement.terminal_cause != .drain or
+        !std.meta.eql(final_work, proof.work_identity) or
+        settlement.work_cancellation != .cancelled or
+        settlement.work_cancellation_winner != .drain or
+        !settlement.transport_close_confirmed or
+        settlement.transport_close_evidence != .owner_confirmed or
+        !settlement.evidence_complete or
+        settlement.resumable)
+    {
+        return error.InvalidNativeDrainFinalSettlement;
+    }
+}
+
 fn profileMatchesControl(
     profile: WorkerProfile,
     control: DrainControl,
 ) bool {
     return switch (profile) {
         .drain_request_received => control == .request_received,
-        .drain_work => control == .admitted_work,
+        .drain_work => control == .admitted_work or
+            control == .finish_then_cancel_work,
         .drain_terminal_work => control == .terminal_work,
         .drain_response_ready => control == .response_ready,
         .complete_response_ready => control == .response_completed,
@@ -6544,6 +6844,13 @@ fn readDrainControl(stdin: std.fs.File) !DrainControl {
         drain_work_command,
     )) {
         return .admitted_work;
+    }
+    if (std.mem.eql(
+        u8,
+        command[0..count],
+        finish_cancel_work_command,
+    )) {
+        return .finish_then_cancel_work;
     }
     if (std.mem.eql(
         u8,
@@ -12640,6 +12947,7 @@ fn exerciseManagedDrainPhaseMatrix(
                 fixture,
                 generation_drain_work,
                 &oracle.model_id,
+                drain_work_command,
             ),
             .request_admitted_terminal => try exerciseTerminalWorkDrain(
                 allocator,
@@ -12702,6 +13010,14 @@ fn runSupervisor(allocator: std.mem.Allocator) !void {
         executable,
         &fixture,
         oracle,
+    );
+    try exerciseAdmittedWorkDrain(
+        allocator,
+        executable,
+        &fixture,
+        generation_finish_cancel_work,
+        &oracle.model_id,
+        finish_cancel_work_command,
     );
     try exerciseReceiveTimeout(
         allocator,
@@ -14094,6 +14410,7 @@ fn exerciseAdmittedWorkDrain(
     fixture: *const Fixture,
     generation: u64,
     expected_model_id: *const [protocol.model_id_bytes]u8,
+    control_command: []const u8,
 ) !void {
     var child = try spawnWorker(
         allocator,
@@ -14142,7 +14459,7 @@ fn exerciseAdmittedWorkDrain(
         client_thread.join();
     };
 
-    try child.stdin.?.writeAll(drain_work_command);
+    try child.stdin.?.writeAll(control_command);
     child.stdin.?.close();
     child.stdin = null;
 
