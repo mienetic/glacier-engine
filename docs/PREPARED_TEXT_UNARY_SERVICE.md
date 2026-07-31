@@ -681,9 +681,58 @@ Service, Scheduler, and Bank ownership. The late `request_received` and
 `response_written` cases intentionally retain no drain-action phase counter
 because receive or response work has already retired; their held-phase
 snapshots and client outcomes provide the evidence instead. This establishes
-the current phase-aware bounded-cleanup policy. It does not expose a stable
-host-facing checkpoint receipt, checkpoint ordinal, committed-token progress,
-resumable state, peer delivery, or a finish-all-in-flight policy.
+the legacy cancel policy's phase-aware bounded-cleanup evidence. The retained
+matrix does not yet exercise the new finish policy, expose a checkpoint
+ordinal, bind committed-token progress, recover resumable state, or prove peer
+delivery.
+
+The production adapter now exposes a separate versioned source-level drain
+initiation contract. `requestDrainAndWakeWithPolicyV1` and
+`requestManagedConcurrentDrainAndWakeWithPolicyV1` accept
+`ManagedDrainPolicyV1.cancel_active` or
+`ManagedDrainPolicyV1.finish_published`; the existing `!void` entry points
+remain compatibility wrappers for `cancel_active`. `finish_published` closes
+runtime admission at the same lifecycle linearization boundary without
+creating a new cancellation decision for exact work already published. It
+also allows already materialized `response_ready`, `response_writing`, and
+`response_written` phases to settle. Queued and partial-receive connections
+still abort, while a complete request that has not published work is fenced
+from admission and classified `reject_unpublished`.
+
+`ManagedDrainInitiationReceiptV1` reports its receipt ABI version, process
+generation, requested and effective policy, new-versus-repeated initiation,
+one-way finish-to-cancel escalation, whether that call applied connection
+actions, admission state, lifecycle state and counter baselines, exact phase
+counts, synchronous retirement, pending settlement, and exact active-work
+cancellation evidence. Serial repeated calls with the same effective policy
+retain the legacy no-resignal response window; an actual finish-to-cancel
+escalation applies cancellation actions. Concurrent repeated drain retains its
+existing idempotent queued/running action pass. Its decision counts are
+mutually exclusive:
+
+```text
+abort_selected
++ finish_selected
++ reject_unpublished
++ preexisting_stop
++ resumable
+== sum(phase_counts)
+```
+
+`resumable` is fixed at zero in V1. The runtime does not yet retain a committed
+progress identity that could authorize continuation. `finish_selected` means
+the drain policy allows local settlement; timeout, reset, peer close, or send
+failure may still win, and `response_written` proves only local write
+completion. `inspectManagedDrainV1` and
+`inspectManagedConcurrentDrainV1` return aggregate counter deltas, remaining
+active and queued connections, current effective policy, and whether lifecycle
+convergence is final. They do not attribute each connection to a final outcome.
+A receipt is an unkeyed caller-owned source value: inspection checks its
+version, conservation shape, process generation, and monotonic lifecycle
+counters, but does not authenticate it as external authority.
+A later `cancel_active` call can bound a `finish_published` wait; a later finish
+request cannot undo cancellation already selected. The next contract slice is
+a per-connection final settlement receipt plus committed continuation binding.
 
 Generation B then loads the same package with a new process generation and
 idempotency key, proves the same model, binding, content, and output identity,
@@ -727,6 +776,19 @@ zig build unary-server-process-test \
 zig build unary-server-process-compile \
   -Dmetal=false -Doptimize=ReleaseSafe -j2
 ```
+
+When one change touches both the adapter and managed lifecycle, request both
+focused roots in one Zig invocation so they share one build graph:
+
+```sh
+zig build unary-http-test unary-server-process-test \
+  -Dmetal=false -Doptimize=ReleaseSafe -j2
+```
+
+Do not repeat the two individual test commands after that combined invocation.
+Ordinary CI uses the same affected-root principle in Debug; foreign-target
+compile-only companions and broad, Metal, load, or full gates remain explicit
+promotion work.
 
 Run the separate native-load profile only on an otherwise quiet native host:
 
@@ -1065,9 +1127,9 @@ compilation is not native Windows or FreeBSD serving proof, and native reset,
 FIN, response-write, deadline, queue, watchdog, and drain behavior on those
 systems remains unproven. The next serving slices are:
 
-1. expose a stable host-facing drain policy and receipt that distinguishes
-   abort, finish, and resumable outcomes and binds resumable work to committed
-   progress;
+1. add a per-connection final drain settlement receipt, retain native-process
+   finish-then-escalate evidence, and bind any nonzero resumable result to
+   committed progress;
 2. add durable restart with honest terminal-or-resumable request state;
 3. retain longer and repeated captures of the fixed all-completed,
    retained-record-capacity, queued-receive-timeout, and scheduled

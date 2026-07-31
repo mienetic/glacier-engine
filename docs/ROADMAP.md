@@ -2178,9 +2178,23 @@ Next slices:
   ownership. This is phase-aware bounded-cleanup evidence, not a stable
   host-facing checkpoint receipt, resumable execution, peer delivery, or a
   finish-all-in-flight policy;
-- **Next:** expose a stable host-facing drain policy and receipt that
-  distinguishes abort, finish, and resumable outcomes and binds any resumable
-  result to committed progress before durable restart work;
+- [x] Expose a versioned source-level host drain initiation contract without a
+  new file, compile root, or CI lane. Serial and concurrent hosts can select
+  monotonic `cancel_active` or `finish_published`; the latter closes admission
+  while preserving exact work published before the lifecycle linearization
+  point and any response already materialized. The receipt binds requested and
+  effective policy, exact phase counts, mutually exclusive abort/finish/reject/
+  preexisting-stop decisions, synchronous retirement, pending settlement, and
+  exact active-work cancellation evidence. A host can inspect aggregate
+  progress and escalate finish to cancel; cancellation cannot be downgraded.
+  Legacy entry points retain their existing cancel behavior. ABI V1 fixes
+  resumable selection at zero because no committed-progress continuation
+  authority exists. This is initiation and aggregate inspection, not a wire/C
+  ABI, per-connection final settlement, successful delivery, retained
+  real-process evidence for `finish_published`, or durable restart;
+- **Next:** add a per-connection final drain settlement receipt, retain native
+  process evidence for finish-then-escalate behavior, and bind any nonzero
+  resumable result to committed progress before durable restart work;
 - add durable restart and honest terminal-or-resumable request reporting;
 - add committed-token streaming where every emitted token cites one committed
   publication sequence and disconnect cannot expose an unpublished token;

@@ -499,6 +499,37 @@ pub fn beginDrainV1(
     );
 }
 
+/// Closes admission at the same control-mutex boundary as `beginDrainV1`
+/// without creating a new cancellation decision for already published work.
+///
+/// A previously selected stop decision remains sticky and is returned in the
+/// receipt. The caller must still bind `active_work` to its exact transport
+/// owner before allowing that work to finish.
+pub fn beginDrainPreservingActiveV1(
+    runtime: *RuntimeV1,
+) DrainReceiptV1 {
+    runtime.control_mutex.lock();
+    defer runtime.control_mutex.unlock();
+    const was_accepting = runtime.accepting_completions;
+    runtime.accepting_completions = false;
+    const active = runtime.active_work orelse return .{
+        .admission_was_open = was_accepting,
+    };
+    const identity = active.identity();
+    const decision = active.stop_decision orelse return .{
+        .admission_was_open = was_accepting,
+        .active_work = identity,
+        .transport_owner = active.transport_owner,
+    };
+    return .{
+        .admission_was_open = was_accepting,
+        .active_work = identity,
+        .transport_owner = active.transport_owner,
+        .cancellation = decision.outcome,
+        .cancellation_winner = decision.winner,
+    };
+}
+
 /// Closes completion admission after a transport-runtime infrastructure
 /// failure and generation-fences cancellation of the exact active unary
 /// handle. The distinct cause prevents failure convergence from being
@@ -1656,6 +1687,57 @@ test "drain receipt preserves the opaque active work transport owner" {
         first.cancellation_winner,
         repeated.cancellation_winner,
     );
+}
+
+test "preserving drain closes admission without selecting cancellation" {
+    const handle: unary.HandleV1 = .{
+        .service_epoch = 45,
+        .record_index = 4,
+        .record_generation = 21,
+        .intent_sha256 = [_]u8{0x36} ** 32,
+        .handle_sha256 = [_]u8{0x57} ** 32,
+    };
+    const owner: TransportOwnerTokenV1 = .{
+        .process_generation = 49,
+        .connection_sequence = 55,
+        .slot_index = 2,
+        .slot_generation = 63,
+    };
+    var runtime: RuntimeV1 = .{
+        .service = undefined,
+        .model_binding_sha256 = [_]u8{0} ** 32,
+        .model_id = undefined,
+        .next_work_sequence = 65,
+        .active_work = .{
+            .sequence = 65,
+            .handle = handle,
+            .transport_owner = owner,
+        },
+    };
+
+    const first = beginDrainPreservingActiveV1(&runtime);
+    try std.testing.expect(first.admission_was_open);
+    try std.testing.expectEqualDeep(
+        runtime.active_work.?.identity(),
+        first.active_work.?,
+    );
+    try std.testing.expectEqualDeep(owner, first.transport_owner.?);
+    try std.testing.expectEqual(
+        DrainCancellationOutcomeV1.none,
+        first.cancellation,
+    );
+    try std.testing.expect(first.cancellation_winner == null);
+    try std.testing.expect(!first.cancellation_was_new);
+    try std.testing.expect(runtime.active_work.?.stop_decision == null);
+
+    const repeated = beginDrainPreservingActiveV1(&runtime);
+    try std.testing.expect(!repeated.admission_was_open);
+    try std.testing.expectEqualDeep(first.active_work, repeated.active_work);
+    try std.testing.expectEqualDeep(
+        first.transport_owner,
+        repeated.transport_owner,
+    );
+    try std.testing.expect(runtime.active_work.?.stop_decision == null);
 }
 
 test "transport failure receipt preserves its distinct sticky winner" {
